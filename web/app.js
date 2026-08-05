@@ -394,7 +394,7 @@
       } else {
         diffMode = getSetting('diffMode', 'split');
       }
-      renderAllFiles();
+      renderAllFilesKeepingPlace();
     });
   }
   let diffScope = getSetting('diffScope', null); // null = no preference saved yet
@@ -1774,6 +1774,208 @@
     applyHideResolved();
   }
 
+  // A full rebuild hands back sections whose bodies are deferred, so every file
+  // the reader had already scrolled past collapses to nothing, the document
+  // ends up shorter than the current offset, and the browser clamps to the top.
+  // Use this for view toggles that must rebuild diffs (split/unified, rendered
+  // diff) but should leave the reader where they were. Remounts only bodies at
+  // or above the reading position — below-fold stays deferred — and pins the
+  // mid-viewport line (falling back to the topmost intersecting file section).
+  // Not for hide-resolved (CSS + highlight sync) or initial load / scope change.
+  function renderAllFilesKeepingPlace() {
+    const mounted = mountedFilePaths();
+    const sectionAnchor = topVisibleSectionAnchor();
+    const lineAnchor = readingLineAnchor();
+
+    renderAllFiles();
+
+    const remountThrough = remountThroughIndex(sectionAnchor, lineAnchor);
+    let remounted = false;
+    for (let i = 0; i < mounted.length; i++) {
+      const path = mounted[i];
+      const idx = files.findIndex(function(f) { return f.path === path; });
+      if (remountThrough >= 0 && idx > remountThrough) continue;
+      const file = getFileByPath(path);
+      const section = document.getElementById('file-section-' + path);
+      if (!file || !section || !section.open || file.lazy) continue;
+      mountDeferredBody(section, file);
+      remounted = true;
+    }
+    if (remounted) {
+      renderMermaidBlocks();
+      rebuildNavList();
+      applyHideResolved();
+    }
+
+    if (restoreReadingLineAnchor(lineAnchor)) return;
+    if (!sectionAnchor) return;
+    const section = document.getElementById(sectionAnchor.id);
+    if (!section) return;
+    const delta = section.getBoundingClientRect().top - sectionAnchor.top;
+    if (Math.abs(delta) < 1) return;
+    window.scrollBy({ top: delta, left: 0, behavior: 'instant' });
+  }
+
+  function remountThroughIndex(sectionAnchor, lineAnchor) {
+    let through = -1;
+    if (sectionAnchor) {
+      const path = sectionAnchor.id.replace('file-section-', '');
+      through = Math.max(through, files.findIndex(function(f) { return f.path === path; }));
+    }
+    if (lineAnchor && lineAnchor.filePath) {
+      through = Math.max(through, files.findIndex(function(f) { return f.path === lineAnchor.filePath; }));
+    }
+    return through;
+  }
+
+  function mountedFilePaths() {
+    const paths = [];
+    const sections = document.querySelectorAll('#filesContainer .file-section[id]');
+    for (let i = 0; i < sections.length; i++) {
+      const body = sections[i].querySelector(':scope > .file-body');
+      if (body && body.getAttribute('data-body-deferred') !== '1') {
+        paths.push(sections[i].id.replace('file-section-', ''));
+      }
+    }
+    return paths;
+  }
+
+  // The first file section still touching the viewport, plus where its top sits
+  // relative to it — fallback when no mid-viewport line is available.
+  function topVisibleSectionAnchor() {
+    const sections = document.querySelectorAll('#filesContainer .file-section[id]');
+    for (let i = 0; i < sections.length; i++) {
+      const rect = sections[i].getBoundingClientRect();
+      if (rect.bottom > 0) return { id: sections[i].id, top: rect.top };
+    }
+    return null;
+  }
+
+  // The line/block closest to the vertical center of the viewport — preferred
+  // restore target so split↔unified doesn't slide the hunk the reader was on.
+  // Prefer the new/right side when both halves of a split row sit at the same
+  // Y: unified tags context/add lines by NewNum with an empty side, so an
+  // old-side capture often has nothing to restore to after the switch.
+  function readingLineAnchor() {
+    const midY = (window.innerHeight || 0) / 2;
+    const nodes = document.querySelectorAll(
+      '#filesContainer .diff-line[data-diff-line-num], ' +
+      '#filesContainer .diff-split-side[data-diff-line-num], ' +
+      '#filesContainer .line-block[data-start-line]'
+    );
+    let best = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < nodes.length; i++) {
+      const el = nodes[i];
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom <= 0 || rect.top >= (window.innerHeight || 0)) continue;
+      const dist = Math.abs((rect.top + rect.bottom) / 2 - midY);
+      const isBlock = el.classList.contains('line-block');
+      const side = el.dataset.diffSide || '';
+      const preferNew = !isBlock && side === '';
+      const bestPreferNew = best && best.kind === 'diff' && best.side === '';
+      if (dist > bestDist + 0.5) continue;
+      if (Math.abs(dist - bestDist) <= 0.5 && best && !(preferNew && !bestPreferNew)) continue;
+      bestDist = dist;
+      best = {
+        kind: isBlock ? 'block' : 'diff',
+        filePath: el.dataset.diffFilePath || el.dataset.filePath || '',
+        lineNum: parseInt(isBlock ? el.dataset.startLine : el.dataset.diffLineNum, 10),
+        side: side,
+        top: rect.top,
+      };
+    }
+    return best && best.filePath && best.lineNum > 0 ? best : null;
+  }
+
+  function restoreReadingLineAnchor(anchor) {
+    if (!anchor) return false;
+    let el = null;
+    if (anchor.kind === 'block') {
+      const blocks = document.querySelectorAll(
+        '#filesContainer .line-block[data-file-path="' + CSS.escape(anchor.filePath) + '"]'
+      );
+      for (let i = 0; i < blocks.length; i++) {
+        const start = parseInt(blocks[i].dataset.startLine, 10);
+        const end = parseInt(blocks[i].dataset.endLine, 10);
+        if (anchor.lineNum >= start && anchor.lineNum <= end) { el = blocks[i]; break; }
+      }
+    } else {
+      const base =
+        '#filesContainer [data-diff-file-path="' + CSS.escape(anchor.filePath) + '"]' +
+        '[data-diff-line-num="' + anchor.lineNum + '"]';
+      el = document.querySelector(base + '[data-diff-side="' + CSS.escape(anchor.side) + '"]') ||
+        document.querySelector(base);
+    }
+    if (!el) return false;
+    const delta = el.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(delta) >= 1) window.scrollBy({ top: delta, left: 0, behavior: 'instant' });
+    return true;
+  }
+
+  // Hide-resolved: cards are CSS (`body.hide-resolved`). Line highlights are
+  // baked in at render time via isHideResolved(), so toggle them in place on
+  // currently-mounted bodies instead of wiping #filesContainer.
+  function refreshHideResolvedView() {
+    applyHideResolved();
+    const root = storyActive()
+      ? document.getElementById('storyPane')
+      : document.getElementById('filesContainer');
+    if (!root) return;
+    const sections = root.querySelectorAll('.file-section[id]');
+    for (let i = 0; i < sections.length; i++) {
+      const section = sections[i];
+      const path = section.dataset.storyFile ||
+        (section.id.indexOf('file-section-') === 0
+          ? section.id.slice('file-section-'.length)
+          : null);
+      if (!path) continue;
+      syncCommentHighlightsInSection(section, getFileByPath(path));
+    }
+  }
+
+  function syncCommentHighlightsInSection(section, file) {
+    if (!section || !file) return;
+    const body = section.querySelector(':scope > .file-body');
+    if (!body || body.getAttribute('data-body-deferred') === '1') return;
+
+    const lineBlocks = body.querySelectorAll('.line-block[data-start-line]');
+    if (lineBlocks.length > 0) {
+      const rangeSet = buildCommentIndices(file.comments || []).rangeSet;
+      for (let i = 0; i < lineBlocks.length; i++) {
+        const el = lineBlocks[i];
+        const start = parseInt(el.dataset.startLine, 10);
+        const end = parseInt(el.dataset.endLine, 10);
+        let inRange = false;
+        for (let ln = start; ln <= end; ln++) {
+          if (rangeSet.has(ln + ':')) { inRange = true; break; }
+        }
+        el.classList.toggle('has-comment', inRange);
+      }
+    }
+
+    const unified = body.querySelector('.diff-container.unified');
+    if (unified) {
+      const visualSet = buildUnifiedCommentVisualSet(file.diffHunks || [], file.comments || []);
+      const lines = unified.querySelectorAll('.diff-line[data-diff-visual-idx]');
+      for (let i = 0; i < lines.length; i++) {
+        const el = lines[i];
+        el.classList.toggle('has-comment', visualSet.has(parseInt(el.dataset.diffVisualIdx, 10)));
+      }
+    }
+
+    const split = body.querySelector('.diff-container.split');
+    if (split) {
+      const rangeSet = buildCommentIndices(file.comments || []).rangeSet;
+      const sides = split.querySelectorAll('.diff-split-side[data-diff-line-num]');
+      for (let i = 0; i < sides.length; i++) {
+        const el = sides[i];
+        const key = parseInt(el.dataset.diffLineNum, 10) + ':' + (el.dataset.diffSide || '');
+        el.classList.toggle('has-comment', rangeSet.has(key));
+      }
+    }
+  }
+
   function rebuildNavList() {
     navElements = Array.from(document.querySelectorAll('.kb-nav'));
     buildChangeGroups();
@@ -2310,7 +2512,11 @@
     }
   }
 
-  function renderFileByPath(filePath) {
+  // opts.preserveDeferred keeps an off-screen body deferred across the
+  // re-render instead of mounting it, so a section above the viewport doesn't
+  // suddenly grow and shift what the reader is looking at. The mount observer
+  // fills it in once it scrolls near the viewport.
+  function renderFileByPath(filePath, opts) {
     const file = getFileByPath(filePath);
     if (!file) return;
     saveOpenFormContent(filePath);
@@ -2320,9 +2526,12 @@
     }
     const oldSection = document.getElementById('file-section-' + file.path);
     if (!oldSection) { renderAllFiles(); return; }
+    const oldBody = oldSection.querySelector(':scope > .file-body');
+    const keepDeferred = !!(opts && opts.preserveDeferred) &&
+      !!oldBody && oldBody.getAttribute('data-body-deferred') === '1';
     const newSection = renderFileSection(file);
     oldSection.replaceWith(newSection);
-    if (newSection.open) {
+    if (newSection.open && !keepDeferred) {
       if (file.lazy) loadLazyFile(newSection, file);
       else ensureFileBodyMounted(newSection, file);
     }
@@ -7617,6 +7826,7 @@
         for (let i = 0; i < files.length; i++) {
           previousCommentSignatures.set(files[i].path, JSON.stringify(files[i].comments || []));
         }
+        const previousReviewSignature = JSON.stringify(reviewComments || []);
         await Promise.all(files.map(async function(f) {
           return fetch('/api/file/comments?path=' + enc(f.path))
             .then(function(r) { return r.ok ? r.json() : []; })
@@ -7646,14 +7856,19 @@
           saveOpenFormContent(files[i].path);
         }
         checkAgentReplies(reviewComments);
-        if (storyActive()) {
-          for (let i = 0; i < files.length; i++) {
-            const before = previousCommentSignatures.get(files[i].path) || '[]';
-            const after = JSON.stringify(files[i].comments || []);
-            if (before !== after) renderStoryFileByPath(files[i].path);
-          }
-        } else {
-          renderAllFiles();
+        // Re-render only the files whose comments actually changed. Rebuilding
+        // every section would re-defer all off-screen bodies, collapsing the
+        // document height and throwing the reader back to the top.
+        const inStory = storyActive();
+        for (let i = 0; i < files.length; i++) {
+          const before = previousCommentSignatures.get(files[i].path) || '[]';
+          const after = JSON.stringify(files[i].comments || []);
+          if (before === after) continue;
+          if (inStory) renderStoryFileByPath(files[i].path);
+          else renderFileByPath(files[i].path, { preserveDeferred: true });
+        }
+        if (!inStory && JSON.stringify(reviewComments || []) !== previousReviewSignature) {
+          renderReviewConversation();
         }
         updateCommentCount();
         updateTreeCommentBadges();
@@ -8057,7 +8272,7 @@
       document.querySelectorAll('#diffModeToggle .toggle-btn').forEach(function(b) {
         b.classList.toggle('active', b.dataset.mode === mode);
       });
-      if (storyActive()) renderStory(); else renderAllFiles();
+      if (storyActive()) renderStory(); else renderAllFilesKeepingPlace();
     });
   });
 
@@ -8065,7 +8280,7 @@
   document.getElementById('diffToggle').addEventListener('click', function() {
     diffActive = !diffActive;
     updateDiffModeToggle();
-    renderAllFiles();
+    renderAllFilesKeepingPlace();
   });
 
   // ===== Compare chrome (target + commit range) =====
@@ -9073,7 +9288,7 @@
         applyWidth: applyWidth,
         getHideResolved: isHideResolved,
         setHideResolved: setHideResolved,
-        onHideResolvedChange: function () { renderAllFiles(); },
+        onHideResolvedChange: function () { refreshHideResolvedView(); },
         hasActivePendingUpdates: hasActivePendingUpdates,
         announceCopy: announceCopy,
         escape: escapeHtml,
@@ -9282,7 +9497,7 @@
     if (hideResolvedToggle) {
       hideResolvedToggle.addEventListener('change', function() {
         setHideResolved(hideResolvedToggle.checked);
-        renderAllFiles();
+        refreshHideResolvedView();
       });
     }
 
@@ -9503,7 +9718,7 @@
       case 'toggle_resolved': {
         e.preventDefault();
         setHideResolved(!isHideResolved());
-        renderAllFiles();
+        refreshHideResolvedView();
         const ht = document.getElementById('hideResolvedToggle');
         if (ht) ht.checked = isHideResolved();
         break;
