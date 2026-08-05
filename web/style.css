@@ -6292,3 +6292,176 @@ body.crit-story-active .crit-story-rail-resizer { display: block; }
   .crit-story-next { min-height: 44px; }
   .crit-story-chapter__mark { min-height: 32px; }
 }
+
+/* ===== LSP (hover tooltip, jump flash, definition peek) ===== */
+
+.lsp-tooltip {
+  position: fixed;
+  z-index: 300;
+  max-width: 560px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--crit-bg-elevated);
+  border: 1px solid var(--crit-border-strong);
+  border-radius: 8px;
+  box-shadow: var(--crit-shadow);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--crit-fg-primary);
+}
+.lsp-tooltip pre,
+.lsp-tooltip code {
+  font-family: var(--crit-font-mono);
+  font-size: 12px;
+}
+.lsp-tooltip pre {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: var(--crit-editor-code-bg);
+  border-radius: 6px;
+}
+.lsp-tooltip p { margin: 4px 0; }
+.lsp-tooltip-hint {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--crit-border);
+  font-size: 11px;
+  color: var(--crit-fg-muted);
+}
+
+.diff-line.lsp-jump-flash,
+.diff-split-side.lsp-jump-flash {
+  animation: lsp-jump-flash 1.6s ease-out;
+}
+@keyframes lsp-jump-flash {
+  0%, 40% { background: var(--crit-comment-ref-flash-bg); }
+  100% { background: transparent; }
+}
+
+.lsp-peek {
+  position: fixed;
+  z-index: 300;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  width: min(720px, calc(100vw - 32px));
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--crit-bg-elevated);
+  border: 1px solid var(--crit-border-strong);
+  border-radius: 10px;
+  box-shadow: var(--crit-shadow);
+  overflow: hidden;
+}
+.lsp-peek-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--crit-border);
+  background: var(--crit-bg-card);
+}
+.lsp-peek-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--crit-font-mono);
+  font-size: 12px;
+  color: var(--crit-fg-primary);
+}
+.lsp-peek-open {
+  font-size: 12px;
+  color: var(--crit-comment-ref-color);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.lsp-peek-open:hover { text-decoration: underline; }
+.lsp-peek-close {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--crit-fg-muted);
+  cursor: pointer;
+}
+.lsp-peek-close:hover { color: var(--crit-fg-primary); }
+.lsp-peek-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--crit-border);
+}
+.lsp-peek-tab {
+  border: 1px solid var(--crit-border);
+  border-radius: 6px;
+  background: none;
+  padding: 2px 8px;
+  font-family: var(--crit-font-mono);
+  font-size: 11px;
+  color: var(--crit-fg-secondary);
+  cursor: pointer;
+}
+.lsp-peek-tab:hover { background: var(--crit-l-hover); }
+.lsp-peek-body {
+  overflow: auto;
+  font-family: var(--crit-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 0;
+}
+.lsp-peek-line { display: flex; white-space: pre; }
+.lsp-peek-target { background: var(--crit-line-focus-bg); }
+.lsp-peek-num {
+  flex: 0 0 48px;
+  padding-right: 12px;
+  text-align: right;
+  color: var(--crit-fg-muted);
+  user-select: none;
+}
+.lsp-peek-code { flex: 1; }
+.lsp-peek-empty {
+  padding: 16px;
+  color: var(--crit-fg-muted);
+  font-size: 12px;
+}
+
+.lsp-tooltip-loading {
+  color: var(--crit-fg-muted);
+  font-style: italic;
+}
+html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
+
+.lsp-peek-truncated {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--crit-fg-muted);
+}
+
+.lsp-peek-back {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--crit-fg-secondary);
+  cursor: pointer;
+}
+.lsp-peek-back:hover { color: var(--crit-fg-primary); }
+.lsp-peek-tab.active {
+  background: var(--crit-l-active);
+  color: var(--crit-fg-primary);
+}
+.lsp-peek-hint {
+  padding: 5px 12px;
+  border-top: 1px solid var(--crit-border);
+  font-size: 11px;
+  color: var(--crit-fg-muted);
+}

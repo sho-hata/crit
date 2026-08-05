@@ -48,7 +48,12 @@ type Config struct {
 	// NotifyOnRoundReady controls desktop notifications when a review round
 	// becomes ready for the human. Defaults to false when unset (opt-in).
 	NotifyOnRoundReady *bool `json:"notify_on_round_ready,omitempty"`
-	DisableStats       bool  `json:"disable_stats,omitempty"`
+	// LSP controls language-server features (hover, go-to-definition) in the
+	// review UI. Defaults to true when unset; features only activate when the
+	// language server binary (gopls) is on PATH. Mergeable from project config —
+	// the spawned binary name is fixed, so a repo cannot hijack the command.
+	LSP          *bool `json:"lsp,omitempty"`
+	DisableStats bool  `json:"disable_stats,omitempty"`
 	// CloseOnApproveAfterMs, when set, auto-closes the review tab this many
 	// milliseconds after an Approve. Global-only (like open_cmd/agent_cmd) so
 	// a project repo cannot force tabs to close. Nil means disabled; the CLI
@@ -103,6 +108,15 @@ func (c Config) CloseOnApproveAfterMsEnabled() (ms int, enabled bool) {
 	return *c.CloseOnApproveAfterMs, true
 }
 
+// LSPEnabled returns whether language-server features (hover, definition)
+// are enabled. Defaults to true if not explicitly set.
+func (c Config) LSPEnabled() bool {
+	if c.LSP != nil {
+		return *c.LSP
+	}
+	return true
+}
+
 // NotifyOnRoundReadyEnabled returns whether desktop notifications should fire
 // when a review round becomes ready. Defaults to false if not explicitly set.
 func (c Config) NotifyOnRoundReadyEnabled() bool {
@@ -150,6 +164,7 @@ func defaultConfig() generatedConfig {
 		PlanApproveMode:    "",
 		CleanupOnApprove:   true,
 		NotifyOnRoundReady: false,
+		LSP:                true,
 		VCS:                "",
 		Prompts:            map[string]string{},
 		Hooks:              map[string]string{},
@@ -180,6 +195,7 @@ type generatedConfig struct {
 	PlanApproveMode    string            `json:"plan_approve_mode"`
 	CleanupOnApprove   bool              `json:"cleanup_on_approve"`
 	NotifyOnRoundReady bool              `json:"notify_on_round_ready"`
+	LSP                bool              `json:"lsp"`
 	VCS                string            `json:"vcs"`
 	Prompts            map[string]string `json:"prompts"`
 	Hooks              map[string]string `json:"hooks"`
@@ -283,18 +299,7 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	if project.VCS != "" {
 		merged.VCS = project.VCS
 	}
-	if projectPresence.NoIntegrationCheck {
-		merged.NoIntegrationCheck = project.NoIntegrationCheck
-	}
-	if projectPresence.NoUpdateCheck {
-		merged.NoUpdateCheck = project.NoUpdateCheck
-	}
-	if projectPresence.CleanupOnApprove {
-		merged.CleanupOnApprove = project.CleanupOnApprove
-	}
-	if projectPresence.NotifyOnRoundReady {
-		merged.NotifyOnRoundReady = project.NotifyOnRoundReady
-	}
+	mergeProjectToggles(&merged, project, projectPresence)
 	if project.LiveCookie != "" {
 		merged.LiveCookie = project.LiveCookie
 	}
@@ -328,6 +333,28 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	mergeProjectPrompts(&merged, project)
 	mergeProjectHooks(&merged, project)
 	return merged
+}
+
+// mergeProjectToggles merges the boolean feature toggles that projects may
+// override. Presence tracking distinguishes "not set" from "explicitly false"
+// for plain bools; *bool fields (cleanup_on_approve, notify_on_round_ready,
+// lsp) carry presence implicitly (nil = unset).
+func mergeProjectToggles(merged *Config, project Config, projectPresence ConfigPresence) {
+	if projectPresence.NoIntegrationCheck {
+		merged.NoIntegrationCheck = project.NoIntegrationCheck
+	}
+	if projectPresence.NoUpdateCheck {
+		merged.NoUpdateCheck = project.NoUpdateCheck
+	}
+	if projectPresence.CleanupOnApprove {
+		merged.CleanupOnApprove = project.CleanupOnApprove
+	}
+	if projectPresence.NotifyOnRoundReady {
+		merged.NotifyOnRoundReady = project.NotifyOnRoundReady
+	}
+	if project.LSP != nil {
+		merged.LSP = project.LSP
+	}
 }
 
 func mergeProjectPrompts(merged *Config, project Config) {

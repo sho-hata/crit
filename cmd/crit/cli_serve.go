@@ -313,6 +313,7 @@ func runServe(args []string) {
 
 	removeSessionFile(key)
 
+	srv.ShutdownLSP()
 	sess.Shutdown()
 
 	var shutWG sync.WaitGroup

@@ -1,0 +1,384 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/tomasz-tomczyk/crit/internal/config"
+	"github.com/tomasz-tomczyk/crit/internal/lsp"
+)
+
+// fakeLSPProvider implements lspProvider without spawning gopls.
+type fakeLSPProvider struct {
+	hoverContents string
+	hoverErr      error
+	locations     []lsp.Location
+	definitionErr error
+	goroot        string
+	gomodcache    string
+	shutdowns     int
+}
+
+func (f *fakeLSPProvider) Hover(string, int, int) (string, error) {
+	return f.hoverContents, f.hoverErr
+}
+
+func (f *fakeLSPProvider) Definition(string, int, int) ([]lsp.Location, error) {
+	return f.locations, f.definitionErr
+}
+
+func (f *fakeLSPProvider) GoEnv() (string, string) { return f.goroot, f.gomodcache }
+func (f *fakeLSPProvider) Shutdown()               { f.shutdowns++ }
+
+// newLSPTestServer builds a test server whose session contains main.go and
+// whose LSP provider is the given fake.
+func newLSPTestServer(t *testing.T, fake *fakeLSPProvider) (*Server, *Session) {
+	t.Helper()
+	srv, sess := NewTestServer(t)
+	goPath := filepath.Join(sess.RepoRoot, "main.go")
+	if err := os.WriteFile(goPath, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess.Files = append(sess.Files, &FileEntry{
+		Path: "main.go", AbsPath: goPath, Status: "modified", FileType: "code",
+	})
+	srv.lsp.binaryAvailable = func() bool { return true }
+	srv.lsp.newProvider = func() lspProvider { return fake }
+	return srv, sess
+}
+
+func doLSPRequest(t *testing.T, srv *Server, url string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	return w
+}
+
+func TestLSPHoverHappyPath(t *testing.T) {
+	fake := &fakeLSPProvider{hoverContents: "```go\nfunc main()\n```"}
+	srv, _ := newLSPTestServer(t, fake)
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=3&char=5")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Contents string `json:"contents"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Contents != fake.hoverContents {
+		t.Errorf("contents = %q, want %q", resp.Contents, fake.hoverContents)
+	}
+}
+
+func TestLSPHoverErrors(t *testing.T) {
+	fake := &fakeLSPProvider{}
+	srv, _ := newLSPTestServer(t, fake)
+
+	tests := []struct {
+		name string
+		url  string
+		code int
+	}{
+		{"missing path", "/api/lsp/hover?line=1&char=0", http.StatusBadRequest},
+		{"non-go file", "/api/lsp/hover?path=test.md&line=1&char=0", http.StatusBadRequest},
+		{"bad line", "/api/lsp/hover?path=main.go&line=0&char=0", http.StatusBadRequest},
+		{"negative char", "/api/lsp/hover?path=main.go&line=1&char=-1", http.StatusBadRequest},
+		{"traversal", "/api/lsp/hover?path=..%2Fmain.go&line=1&char=0", http.StatusBadRequest},
+		// Absolute paths are allowed for chained peek jumps but scoped to
+		// repo root / GOROOT / GOMODCACHE — anything else is denied.
+		{"absolute path outside roots", "/api/lsp/hover?path=%2Fetc%2Fpasswd.go&line=1&char=0", http.StatusForbidden},
+		{"file outside root", "/api/lsp/hover?path=missing.go&line=1&char=0", http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if w := doLSPRequest(t, srv, tt.url); w.Code != tt.code {
+				t.Errorf("status = %d, want %d (body: %s)", w.Code, tt.code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestLSPHoverMethodNotAllowed(t *testing.T) {
+	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
+	req := httptest.NewRequest(http.MethodPost, "/api/lsp/hover?path=main.go&line=1&char=0", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestLSPDisabledByConfig(t *testing.T) {
+	fake := &fakeLSPProvider{}
+	srv, _ := newLSPTestServer(t, fake)
+	disabled := false
+	srv.cfg = Config{LSP: &disabled}
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 when lsp disabled", w.Code)
+	}
+	if srv.lspAvailable() {
+		t.Error("lspAvailable must be false when config disables lsp")
+	}
+}
+
+func TestLSPDefinitionInSessionAndPeek(t *testing.T) {
+	srv, sess := newLSPTestServer(t, nil)
+	fake := &fakeLSPProvider{
+		locations: []lsp.Location{
+			{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 2, Character: 5},
+		},
+	}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/definition?path=main.go&line=1&char=0")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Locations []lspLocationResponse `json:"locations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Locations) != 1 {
+		t.Fatalf("got %d locations, want 1", len(resp.Locations))
+	}
+	loc := resp.Locations[0]
+	if loc.Path != "main.go" || !loc.InRepo || !loc.InSession {
+		t.Errorf("location = %+v; want in-repo in-session main.go", loc)
+	}
+	if loc.Line != 3 {
+		t.Errorf("line = %d, want 3 (1-based)", loc.Line)
+	}
+	if loc.PeekStart != 1 || len(loc.Peek) == 0 {
+		t.Errorf("peek = start %d, %d lines; want start 1 with content", loc.PeekStart, len(loc.Peek))
+	}
+	if !strings.Contains(strings.Join(loc.Peek, "\n"), "func main()") {
+		t.Errorf("peek missing target content: %v", loc.Peek)
+	}
+}
+
+func TestLSPDefinitionInRepoNotInSession(t *testing.T) {
+	srv, sess := newLSPTestServer(t, nil)
+	otherPath := filepath.Join(sess.RepoRoot, "helper.go")
+	if err := os.WriteFile(otherPath, []byte("package main\n\nfunc helper() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeLSPProvider{locations: []lsp.Location{{Path: otherPath, Line: 2}}}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/definition?path=main.go&line=1&char=0")
+	var resp struct {
+		Locations []lspLocationResponse `json:"locations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	loc := resp.Locations[0]
+	if !loc.InRepo || loc.InSession {
+		t.Errorf("location = %+v; want in-repo, NOT in-session", loc)
+	}
+	if len(loc.Peek) == 0 {
+		t.Error("in-repo target must carry a peek")
+	}
+}
+
+func TestLSPDefinitionOutsideAllowedRootsHasNoPeek(t *testing.T) {
+	srv, _ := newLSPTestServer(t, nil)
+	outside := filepath.Join(t.TempDir(), "secret.go")
+	if err := os.WriteFile(outside, []byte("package secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// goroot/gomodcache empty: the outside dir matches no allowed root.
+	fake := &fakeLSPProvider{locations: []lsp.Location{{Path: outside, Line: 0}}}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/definition?path=main.go&line=1&char=0")
+	var resp struct {
+		Locations []lspLocationResponse `json:"locations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	loc := resp.Locations[0]
+	if loc.InRepo || loc.InSession {
+		t.Errorf("location = %+v; want outside repo/session", loc)
+	}
+	if len(loc.Peek) != 0 {
+		t.Error("peek must be withheld for paths outside repo/GOROOT/GOMODCACHE")
+	}
+}
+
+func TestLSPDefinitionPeekTruncatesLargeFiles(t *testing.T) {
+	srv, sess := newLSPTestServer(t, nil)
+	bigPath := filepath.Join(sess.RepoRoot, "generated.go")
+	var b strings.Builder
+	b.WriteString("package main\n")
+	for i := 0; i < 3000; i++ {
+		b.WriteString("// filler line\n")
+	}
+	if err := os.WriteFile(bigPath, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeLSPProvider{locations: []lsp.Location{{Path: bigPath, Line: 1500}}}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/definition?path=main.go&line=1&char=0")
+	var resp struct {
+		Locations []lspLocationResponse `json:"locations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	loc := resp.Locations[0]
+	if !loc.PeekTruncated {
+		t.Error("large file peek must set peek_truncated")
+	}
+	if len(loc.Peek) != 2*100+1 {
+		t.Errorf("windowed peek = %d lines, want %d", len(loc.Peek), 2*100+1)
+	}
+	if loc.PeekStart != 1501-100 {
+		t.Errorf("peek_start = %d, want %d", loc.PeekStart, 1501-100)
+	}
+
+	// Small files come back whole and untruncated. Fresh response struct:
+	// peek_truncated is omitempty, and json.Unmarshal into a reused struct
+	// would keep the previous true.
+	fake.locations = []lsp.Location{{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 0}}
+	w = doLSPRequest(t, srv, "/api/lsp/definition?path=main.go&line=1&char=0")
+	var resp2 struct {
+		Locations []lspLocationResponse `json:"locations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp2); err != nil {
+		t.Fatal(err)
+	}
+	if resp2.Locations[0].PeekTruncated {
+		t.Error("small file peek must not be truncated")
+	}
+	if resp2.Locations[0].PeekStart != 1 {
+		t.Errorf("small file peek_start = %d, want 1 (whole file)", resp2.Locations[0].PeekStart)
+	}
+}
+
+func TestLSPDefinitionGorootPeek(t *testing.T) {
+	srv, _ := newLSPTestServer(t, nil)
+	goroot := t.TempDir()
+	stdlibFile := filepath.Join(goroot, "src", "fmt", "print.go")
+	if err := os.MkdirAll(filepath.Dir(stdlibFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stdlibFile, []byte("package fmt\n\nfunc Println() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeLSPProvider{
+		locations: []lsp.Location{{Path: stdlibFile, Line: 2}},
+		goroot:    goroot,
+	}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/definition?path=main.go&line=1&char=0")
+	var resp struct {
+		Locations []lspLocationResponse `json:"locations"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	loc := resp.Locations[0]
+	if loc.InRepo {
+		t.Errorf("stdlib target must not be in-repo: %+v", loc)
+	}
+	if loc.DisplayPath != "$GOROOT/src/fmt/print.go" {
+		t.Errorf("display_path = %q", loc.DisplayPath)
+	}
+	if len(loc.Peek) == 0 {
+		t.Error("GOROOT target must carry a peek")
+	}
+}
+
+// TestLSPAbsolutePathScoping covers chained jumps from the peek popup:
+// absolute paths are accepted only under repo root / GOROOT / GOMODCACHE.
+func TestLSPAbsolutePathScoping(t *testing.T) {
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, sess := newLSPTestServer(t, fake)
+
+	goroot := t.TempDir()
+	stdlibFile := filepath.Join(goroot, "src", "fmt", "print.go")
+	if err := os.MkdirAll(filepath.Dir(stdlibFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stdlibFile, []byte("package fmt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake.goroot = goroot
+
+	outside := filepath.Join(t.TempDir(), "secret.go")
+	if err := os.WriteFile(outside, []byte("package secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		path string
+		code int
+	}{
+		{"absolute in repo", filepath.Join(sess.RepoRoot, "main.go"), http.StatusOK},
+		{"absolute in GOROOT", stdlibFile, http.StatusOK},
+		{"absolute outside allowed roots", outside, http.StatusForbidden},
+		{"absolute traversal into repo stays allowed after Clean", sess.RepoRoot + "/sub/../main.go", http.StatusOK},
+		{"absolute traversal escaping repo", sess.RepoRoot + "/../escape.go", http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := doLSPRequest(t, srv, "/api/lsp/hover?path="+url.QueryEscape(tt.path)+"&line=1&char=0")
+			if w.Code != tt.code {
+				t.Errorf("status = %d, want %d (body: %s)", w.Code, tt.code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestLSPConfigExposesAvailability(t *testing.T) {
+	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
+	w := doLSPRequest(t, srv, "/api/config")
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["lsp_available"] != true {
+		t.Errorf("lsp_available = %v, want true", resp["lsp_available"])
+	}
+}
+
+func TestShutdownLSPStopsProvider(t *testing.T) {
+	fake := &fakeLSPProvider{}
+	srv, _ := newLSPTestServer(t, fake)
+	// Provider is created lazily; trigger it, then shut down.
+	doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0")
+	srv.ShutdownLSP()
+	if fake.shutdowns != 1 {
+		t.Errorf("shutdowns = %d, want 1", fake.shutdowns)
+	}
+	// Idempotent when nothing is running.
+	srv.ShutdownLSP()
+	if fake.shutdowns != 1 {
+		t.Errorf("shutdowns after second call = %d, want 1", fake.shutdowns)
+	}
+}
+
+func TestLSPEnabledConfigDefault(t *testing.T) {
+	var c config.Config
+	if !c.LSPEnabled() {
+		t.Error("LSPEnabled must default to true")
+	}
+}
