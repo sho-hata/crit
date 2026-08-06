@@ -22,7 +22,6 @@ type (
 	SessionFileInfo = session.SessionFileInfo
 	PRInfo          = github.PRInfo
 	Status          = session.Status
-	ShareFile       = session.ShareFile
 	DiffHunk        = session.DiffHunk
 	DOMAnchor       = session.DOMAnchor
 	Story           = session.Story

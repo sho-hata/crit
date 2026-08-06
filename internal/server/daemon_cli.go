@@ -30,9 +30,6 @@ type DaemonCLIConfig struct {
 	OpenCmd                     string
 	Quiet                       bool
 	NotifyOnRoundReady          bool
-	ShareURL                    string
-	ProxyAuth                   bool
-	AuthToken                   string
 	OutputDir                   string
 	Author                      string
 	BaseBranch                  string
@@ -62,8 +59,6 @@ type daemonFlagSet struct {
 	allowUnauthenticatedNetwork bool
 	noOpen                      bool
 	showVersion                 bool
-	shareURL                    string
-	proxyAuth                   bool
 	outputDir                   string
 	quiet                       bool
 	noIgnore                    bool
@@ -93,7 +88,6 @@ func parseDaemonFlags(args []string) daemonFlagSet {
 	noOpen := fs.Bool("no-open", false, "Don't auto-open browser")
 	showVersion := fs.Bool("version", false, "Print version and exit")
 	fs.BoolVar(showVersion, "v", false, "Print version and exit (shorthand)")
-	shareURL := fs.String("share-url", "", "Base URL of hosted Crit service for sharing reviews (overrides CRIT_SHARE_URL env var)")
 	outputDir := fs.String("output", "", "Crit data root for reviews (default: ~/.crit); reviews live in <root>/reviews/<key>/")
 	fs.StringVar(outputDir, "o", "", "Crit data root for reviews (shorthand)")
 	quiet := fs.Bool("quiet", false, "On success, suppress connect/start status, tips, and session summary")
@@ -137,7 +131,6 @@ func parseDaemonFlags(args []string) daemonFlagSet {
 		allowUnauthenticatedNetwork: *allowUnauthNet,
 		noOpen:                      *noOpen,
 		showVersion:                 *showVersion,
-		shareURL:                    *shareURL,
 		outputDir:                   *outputDir,
 		quiet:                       *quiet,
 		noIgnore:                    *noIgnore,
@@ -165,8 +158,6 @@ func applyDaemonConfigDefaults(sf *daemonFlagSet, cfg config.Config) {
 	if !sf.noOpen && cfg.NoOpen {
 		sf.noOpen = true
 	}
-	sf.shareURL = config.ResolveShareURL(sf.shareURL, cfg, "")
-	sf.proxyAuth = cfg.ProxyAuth
 	if !sf.quiet && cfg.Quiet {
 		sf.quiet = true
 	}
@@ -262,9 +253,6 @@ func ResolveDaemonCLIConfig(args []string) (*DaemonCLIConfig, error) {
 		OpenCmd:                     cfg.OpenCmd,
 		Quiet:                       sf.quiet,
 		NotifyOnRoundReady:          cfg.NotifyOnRoundReadyEnabled(),
-		ShareURL:                    sf.shareURL,
-		ProxyAuth:                   sf.proxyAuth,
-		AuthToken:                   cfg.AuthToken,
 		OutputDir:                   sf.outputDir,
 		Author:                      cfg.Author,
 		BaseBranch:                  sf.baseBranch,

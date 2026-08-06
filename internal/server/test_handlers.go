@@ -2,16 +2,6 @@ package server
 
 import "net/http"
 
-// HandlePreviewPayloadForTest exposes handlePreviewPayload for cross-package tests.
-func (s *Server) HandlePreviewPayloadForTest(w http.ResponseWriter, r *http.Request) {
-	s.handlePreviewPayload(w, r)
-}
-
-// HandleUpsertPayloadForTest exposes handleUpsertPayload for cross-package tests.
-func (s *Server) HandleUpsertPayloadForTest(w http.ResponseWriter, r *http.Request) {
-	s.handleUpsertPayload(w, r)
-}
-
 // HandleFileCommentsForTest exposes handleFileComments for cross-package tests.
 func (s *Server) HandleFileCommentsForTest(w http.ResponseWriter, r *http.Request) {
 	s.handleFileComments(w, r)

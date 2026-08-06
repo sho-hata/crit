@@ -23,16 +23,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/auth"
 	"github.com/tomasz-tomczyk/crit/internal/comment"
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/diff"
 	"github.com/tomasz-tomczyk/crit/internal/prompt"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/share"
 	"github.com/tomasz-tomczyk/crit/internal/vcs"
-	"rsc.io/qr"
 )
 
 // sseHeartbeatInterval is the cadence for SSE keepalive comments. It's a var
@@ -59,10 +56,6 @@ type Server struct {
 	session             atomic.Pointer[Session]
 	mux                 *http.ServeMux
 	assets              fs.FS
-	shareURL            string
-	proxyAuth           bool
-	authMu              sync.RWMutex // guards authToken + cfg.Auth* fields
-	authToken           string
 	prInfo              *PRInfo
 	prInfoMu            sync.RWMutex
 	author              string
@@ -112,8 +105,8 @@ type Server struct {
 }
 
 // NewServer creates a Server with the given session and configuration.
-func NewServer(session *Session, frontendFS embed.FS, shareURL string, proxyAuth bool, authToken string, author string, currentVersion string, port int, agentCmd string) (*Server, error) {
-	s := &Server{assets: frontendFS, shareURL: shareURL, proxyAuth: proxyAuth, authToken: authToken, author: author, agentCmd: agentCmd, currentVersion: currentVersion, port: port, prList: &PRListCache{}}
+func NewServer(session *Session, frontendFS embed.FS, author string, currentVersion string, port int, agentCmd string) (*Server, error) {
+	s := &Server{assets: frontendFS, author: author, agentCmd: agentCmd, currentVersion: currentVersion, port: port, prList: &PRListCache{}}
 	if session != nil {
 		s.session.Store(session)
 	}
@@ -122,7 +115,6 @@ func NewServer(session *Session, frontendFS embed.FS, shareURL string, proxyAuth
 
 	// Endpoints that work without a ready session
 	mux.HandleFunc("/api/health", s.handleHealth)
-	mux.HandleFunc("/api/qr", s.handleQR)
 
 	// Preview-mode routes — NOT wrapped in withReady (page loads before session).
 	mux.HandleFunc("/preview", s.serveIndexHTML())
@@ -155,17 +147,7 @@ func NewServer(session *Session, frontendFS embed.FS, shareURL string, proxyAuth
 	mux.HandleFunc("/api/review-cycle", s.withReady(s.handleReviewCycle))
 	mux.HandleFunc("/api/config", s.withReady(s.handleConfig))
 	mux.HandleFunc("/api/session", s.withReady(s.handleSession))
-	mux.HandleFunc("/api/share", s.withReady(s.handleShare))
-	mux.HandleFunc("/api/share-consent", s.withReady(s.handleShareConsent))
 	mux.HandleFunc("/api/project-prompts/trust", s.withReady(s.handleProjectPromptTrust))
-	mux.HandleFunc("/api/share/payload", s.withReady(s.handleSharePayload))
-	mux.HandleFunc("/api/share/preview-payload", s.withReady(s.handlePreviewPayload))
-	mux.HandleFunc("/api/share/upsert-payload", s.withReady(s.handleUpsertPayload))
-	mux.HandleFunc("/api/share/pull", s.withReady(s.handleSharePull))
-	mux.HandleFunc("/api/share/reshare", s.withReady(s.handleShareReshare))
-	mux.HandleFunc("/api/share-policy", s.withReady(s.handleSharePolicy))
-	mux.HandleFunc("/api/share-url", s.withReady(s.handleShareURL))
-	mux.HandleFunc("/api/comments/merge", s.withReady(s.handleMergeComments))
 	mux.HandleFunc("/api/finish", s.withReady(s.handleFinish))
 	mux.HandleFunc("/api/events", s.withReady(s.handleEvents))
 	mux.HandleFunc("/api/wait-for-event", s.withReady(s.handleWaitForEvent))
@@ -174,7 +156,6 @@ func NewServer(session *Session, frontendFS embed.FS, shareURL string, proxyAuth
 	mux.HandleFunc("/api/focus", s.withReady(s.handleFocus))
 	mux.HandleFunc("/api/picker", s.withReady(s.handlePicker))
 
-	mux.HandleFunc("/api/auth/orgs", s.withReady(s.handleAuthOrgs))
 	mux.HandleFunc("/api/agent/request", s.withReady(s.handleAgentRequest))
 	mux.HandleFunc("/api/branches", s.withReady(s.handleBranches))
 	mux.HandleFunc("/api/base-branch", s.withReady(s.handleBaseBranch))
@@ -462,28 +443,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	latestVersion := s.latestVersion
 	s.versionMu.RUnlock()
 	sess := s.session.Load()
-	shareOrg, shareOrgName, shareVis := sess.GetShareOrgInfo()
 	resp := map[string]interface{}{
-		"share_url":         s.shareURL,
-		"needs_consent":     s.consentNeeded(),
-		"proxy_auth":        s.proxyAuth,
-		"hosted_url":        sess.GetSharedURL(),
-		"hosted_token":      sess.GetToken(),
-		"delete_token":      sess.GetDeleteToken(),
-		"share_org":         shareOrg,
-		"share_org_name":    shareOrgName,
-		"share_visibility":  shareVis,
 		"version":           s.currentVersion,
 		"latest_version":    latestVersion,
 		"author":            s.author,
 		"agent_cmd_enabled": s.agentCmd != "",
 		"agent_name":        agentName(s.agentCmd),
 		"agent_cmd":         s.agentCmd,
-
-		// Auth status
-		"auth_logged_in":  s.authLoggedIn(),
-		"auth_user_name":  s.authUserName(),
-		"auth_user_email": s.authUserEmail(),
 
 		// Review file path
 		"review_path": s.reviewPath,
@@ -719,27 +685,6 @@ func filterFilesAtRound(session *Session, files []SessionFileInfo, round int) []
 	return session.FilterFilesAtRound(files, round)
 }
 
-// handleShareConsent records that the user has consented to sharing with the
-// default crit.md service. Called by the browser before the first share upload.
-// POST /api/share-consent
-func (s *Server) handleShareConsent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if err := config.SaveGlobalConfig(func(m map[string]json.RawMessage) error {
-		m["share_consented"] = json.RawMessage("true")
-		return nil
-	}); err != nil {
-		http.Error(w, "failed to persist consent", http.StatusInternalServerError)
-		return
-	}
-	s.authMu.Lock()
-	s.cfg.ShareConsented = true
-	s.authMu.Unlock()
-	writeJSON(w, map[string]bool{"ok": true})
-}
-
 // handleProjectPromptTrust records the user's trust choice for project prompt hooks.
 // POST /api/project-prompts/trust
 // Body: {"mode":"until_change"|"always"|"defaults"}
@@ -770,213 +715,6 @@ func (s *Server) handleProjectPromptTrust(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
-}
-
-// consentNeeded reports whether the user must still confirm before sharing.
-// It guards reads of s.cfg.ShareConsented under s.authMu and, if the in-memory
-// flag is false, re-checks the on-disk global config so consent granted by the
-// CLI (crit share) on a separate process is picked up by the running daemon.
-func (s *Server) consentNeeded() bool {
-	s.authMu.RLock()
-	consented := s.cfg.ShareConsented
-	s.authMu.RUnlock()
-	if consented {
-		return false
-	}
-	if s.shareURL != config.DefaultShareURL {
-		return false
-	}
-	if globalCfg, _, err := config.LoadConfigFile(config.GlobalConfigPath()); err == nil && globalCfg.ShareConsented {
-		s.authMu.Lock()
-		s.cfg.ShareConsented = true
-		s.authMu.Unlock()
-		return false
-	}
-	return true
-}
-
-func (s *Server) handleShareURL(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB
-		var body struct {
-			URL         string `json:"url"`
-			DeleteToken string `json:"delete_token"`
-			Org         string `json:"org"`
-			OrgName     string `json:"org_name"`
-			Visibility  string `json:"visibility"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
-			http.Error(w, "Bad request", http.StatusBadRequest)
-			return
-		}
-		s.session.Load().SetSharedURLAndToken(body.URL, body.DeleteToken)
-		s.session.Load().SetShareOrgInfo(body.Org, body.OrgName, body.Visibility)
-		// Persist the share scope from the session's file identity (matches the
-		// direct POST /api/share path) so the shared status is restored on
-		// restart in proxy-auth mode too, not just direct mode.
-		s.session.Load().SetShareScope(share.ShareScope(s.session.Load().FilePathsSnapshot()))
-		writeJSON(w, map[string]string{
-			"ok":           "true",
-			"hosted_token": tokenFromHostedURL(body.URL),
-		})
-
-	case http.MethodDelete:
-		// Unpublish from crit-web unless the caller already deleted remotely
-		// (proxy_auth popup path passes local_only=1 after the relay DELETE).
-		localOnly := r.URL.Query().Get("local_only") == "1"
-		if !localOnly && s.shareURL != "" {
-			if _, dt := s.session.Load().GetShareState(); dt != "" {
-				if err := share.UnpublishFromWeb(s.shareURL, dt, s.authTokenSnapshot()); err != nil {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusBadGateway)
-					json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-					return
-				}
-			}
-		}
-		s.session.Load().SetSharedURLAndToken("", "")
-		s.session.Load().SetShareOrgInfo("", "", "")
-		w.WriteHeader(http.StatusNoContent)
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// shareFilesForSession returns the files to upload for the active session plus
-// the review_type to tag the share with. For preview sessions it crawls the
-// previewed HTML origin and its local assets; otherwise it loads the on-disk
-// review files unchanged. Single source of truth for both the direct Share
-// button path (handleShare) and the proxy-auth relay (handlePreviewPayload).
-func (s *Server) shareFilesForSession() (files []ShareFile, reviewType string, err error) {
-	sess := s.session.Load()
-	if sess != nil && sess.ReviewType == "preview" {
-		files, err = session.CrawlPreview(sess.Origin)
-		if err != nil {
-			return nil, "", fmt.Errorf("crawling preview assets: %w", err)
-		}
-		return files, "preview", nil
-	}
-	return sess.LoadShareFilesFromDisk(), "", nil
-}
-
-func (s *Server) writeExistingShareIfPresent(w http.ResponseWriter) (bool, error) {
-	// Uses GetShareState() to read both fields under a single lock (avoids TOCTOU race
-	// where a concurrent DELETE /api/share-url could clear the token between two calls).
-	existingURL, existingToken := s.session.Load().GetShareState()
-	if existingURL == "" {
-		return false, nil
-	}
-
-	_, err := share.FetchWebComments(existingURL, map[string]bool{}, map[string]bool{}, map[string]string{}, s.authTokenSnapshot())
-	if errors.Is(err, share.ErrShareNotFound) {
-		s.session.Load().SetSharedURLAndToken("", "")
-		s.session.Load().SetShareScope("")
-		s.session.Load().SetShareOrgInfo("", "", "")
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-
-	writeJSON(w, map[string]any{
-		"url":          existingURL,
-		"delete_token": existingToken,
-	})
-	return true, nil
-}
-
-// handleShare uploads the current session to crit-web and returns the share URL.
-// POST /api/share
-func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.shareURL == "" {
-		http.Error(w, "share_url not configured", http.StatusBadRequest)
-		return
-	}
-	if s.consentNeeded() {
-		http.Error(w, "share consent required", http.StatusForbidden)
-		return
-	}
-
-	// Idempotent: if already shared and still present on crit-web, return the
-	// existing URL without uploading. If the remote review was deleted, clear the
-	// stale local state and create a fresh share below.
-	if handled, err := s.writeExistingShareIfPresent(w); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	} else if handled {
-		return
-	}
-
-	// Read file content for the share. Preview sessions crawl the previewed
-	// HTML origin + assets; other sessions use the on-disk review files (kept
-	// current by review.SaveCritJSON). shareFilesForSession is the single source of
-	// truth shared with the proxy-auth relay path.
-	files, reviewType, err := s.shareFilesForSession()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if len(files) == 0 {
-		http.Error(w, "no files in session", http.StatusBadRequest)
-		return
-	}
-
-	filePaths := make([]string, len(files))
-	for i, f := range files {
-		filePaths[i] = f.Path
-	}
-
-	// Parse optional org + visibility from request body.
-	var shareReq struct {
-		Org        string `json:"org"`
-		OrgName    string `json:"org_name"`
-		Visibility string `json:"visibility"`
-	}
-	if r.Body != nil && r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&shareReq); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
-	}
-
-	critPath := s.session.Load().CritJSONPath()
-
-	// Comments are loaded from the review file by their session path. For a
-	// preview the uploaded files are crawled (keyed "index.html"), but the
-	// comments live under the session's previewed-file path — pass that so they
-	// load, then shareReviewFiles re-keys them to the crawl entry. The scope is
-	// always the session's file identity so restoreShareStateLocked matches it
-	// on restart (it recomputes scope from s.Files, not from the crawled set).
-	scopePaths := s.session.Load().FilePathsSnapshot()
-	commentPaths := filePaths
-	if reviewType == "preview" {
-		commentPaths = scopePaths
-	}
-
-	res, err := share.ShareReviewFiles(critPath, files, commentPaths, s.shareURL, s.authTokenSnapshot(), s.author, shareReq.Org, shareReq.Visibility, reviewType)
-	if err != nil {
-		if errors.Is(err, share.ErrShareUnauthorized) {
-			auth.ClearAuthIdentity()
-			s.clearAuthState()
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	s.session.Load().SetSharedURLAndToken(res.URL, res.DeleteToken)
-	s.session.Load().SetShareScope(share.ShareScope(scopePaths))
-	s.session.Load().SetShareOrgInfo(shareReq.Org, shareReq.OrgName, shareReq.Visibility)
-	writeJSON(w, map[string]any{"url": res.URL, "delete_token": res.DeleteToken})
 }
 
 // handleRounds returns the per-round timeline for files-mode sessions. In
@@ -1101,390 +839,6 @@ func lineStatsForRound(session *Session, n int) (int, int) {
 		}
 	}
 	return adds, dels
-}
-
-// handleSharePayload returns the JSON payload that would be POSTed to crit-web
-// /api/reviews for a fresh share. Used by the popup-relay path (proxy_auth=
-// true) so the browser can forward it through the authenticated popup
-// instead of the Go server contacting crit-web directly. Same payload shape
-// as POST /api/share would build internally.
-func (s *Server) handleSharePayload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	sess := s.session.Load()
-	files := sess.LoadShareFilesFromDisk()
-	if len(files) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "no files in session"})
-		return
-	}
-	filePaths := make([]string, len(files))
-	for i, f := range files {
-		filePaths[i] = f.Path
-	}
-	critPath := sess.CritJSONPath()
-	comments, reviewRound := share.LoadCommentsForShare(critPath, filePaths, s.author)
-	cliArgs := share.LoadCliArgsFromReviewFile(critPath)
-	writeJSON(w, share.BuildSharePayload(files, comments, reviewRound, cliArgs, "", "", ""))
-}
-
-// handlePreviewPayload returns the share payload for a preview session: it
-// crawls the previewed HTML origin and its local assets, then builds the same
-// POST /api/reviews payload the direct Share path produces, tagged with
-// review_type=preview. Used by the proxy-auth relay so the browser popup can
-// forward the snapshot through an authenticated session (relay is transport,
-// not protocol — same endpoint, same payload shape).
-func (s *Server) handlePreviewPayload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	sess := s.session.Load()
-	if sess == nil || sess.ReviewType != "preview" {
-		http.Error(w, "not a preview session", http.StatusBadRequest)
-		return
-	}
-	files, err := session.CrawlPreview(sess.Origin)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Include the previewed file's comments, re-keyed to the crawl entry, so the
-	// proxy relay uploads the same payload (files + comments) as the direct
-	// POST /api/share path. Comments span all session paths (DOM pins live on
-	// live-route entries, not the HTML's "code" entry), so load across all of
-	// them — not just the first. Without this, sharing via popup loses comments.
-	comments, reviewRound := share.LoadPreviewShareComments(sess.CritJSONPath(), sess.FilePathsSnapshot(), s.author)
-	if reviewRound == 0 {
-		reviewRound = 1
-	}
-	writeJSON(w, share.BuildSharePayload(files, comments, reviewRound, nil, "", "", "preview"))
-}
-
-// handleUpsertPayload returns the JSON payload that would be PUT to
-// crit-web /api/reviews/:token for a re-share. Used by the popup-relay path.
-func (s *Server) handleUpsertPayload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	sess := s.session.Load()
-	// Preview sessions have no on-disk review files (the FileEntry has no AbsPath),
-	// so LoadShareFilesFromDisk returns empty → "no files in session". Use
-	// shareFilesForSession, which crawls the preview HTML origin + assets (the same
-	// source as the initial share) and returns on-disk files for other modes.
-	files, reviewType, err := s.shareFilesForSession()
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	if len(files) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "no files in session"})
-		return
-	}
-	critPath := sess.CritJSONPath()
-	var comments []shareComment
-	var reviewRound int
-	if reviewType == "preview" {
-		// Load comments across all session paths (DOM pins on live-route entries)
-		// and collapse onto the crawl entry, matching the initial-share payload.
-		comments, reviewRound = share.LoadPreviewShareComments(critPath, sess.FilePathsSnapshot(), s.author)
-	} else {
-		filePaths := make([]string, len(files))
-		for i, f := range files {
-			filePaths[i] = f.Path
-		}
-		comments, reviewRound = share.LoadCommentsForShare(critPath, filePaths, s.author)
-	}
-	cliArgs := share.LoadCliArgsFromReviewFile(critPath)
-	deleteToken := sess.GetDeleteToken()
-	writeJSON(w, buildUpsertPayload(files, comments, deleteToken, reviewRound, cliArgs))
-}
-
-// handleSharePull fetches remote comments from crit-web (with the local bearer
-// token) and merges them into the review file. Used by the browser Share UI
-// when proxy_auth is off — the browser must not call crit-web cross-origin
-// (CORS + missing Authorization on selfhosted OAuth instances).
-//
-// POST /api/share/pull
-func (s *Server) handleSharePull(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	merged, repliesUpdated, err := s.pullAndMergeRemoteComments()
-	if err != nil {
-		s.writeShareTransportError(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"merged": merged, "replies_updated": repliesUpdated})
-}
-
-// handleShareReshare pulls remote comments, merges them locally, then upserts
-// the merged review to crit-web. Same direct-transport path the CLI uses for
-// re-share; the browser calls this instead of cross-origin PUT/GET.
-//
-// POST /api/share/reshare
-func (s *Server) handleShareReshare(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	merged, repliesUpdated := s.softPullForReshare(w)
-	if merged < 0 {
-		return // fatal pull error already written
-	}
-
-	sess := s.session.Load()
-	hostedURL, deleteToken := sess.GetShareState()
-	if hostedURL == "" || deleteToken == "" {
-		s.writeShareTransportError(w, errNoSharedReview)
-		return
-	}
-
-	files, comments, existingCfg, err := s.reshareUpsertInputs(sess, hostedURL, deleteToken)
-	if err != nil {
-		status := http.StatusBadRequest
-		if !errors.Is(err, errNoFilesInSession) {
-			status = http.StatusInternalServerError
-		}
-		s.writeJSONError(w, status, err.Error())
-		return
-	}
-
-	result, err := share.UpsertShareToWeb(existingCfg, files, comments, s.authTokenSnapshot())
-	if err != nil {
-		s.writeShareTransportError(w, err)
-		return
-	}
-	// Non-fatal if local hash/round persistence fails — remote upsert already succeeded.
-	_ = share.UpdateShareState(sess.CritJSONPath(), share.ComputeShareHash(files, comments), result.ReviewRound)
-	sess.SyncCommentsFromDisk()
-
-	writeJSON(w, map[string]any{
-		"url":             result.URL,
-		"changed":         result.Changed,
-		"review_round":    result.ReviewRound,
-		"merged":          merged,
-		"replies_updated": repliesUpdated,
-	})
-}
-
-// softPullForReshare runs pull+merge. Fatal auth/not-found errors are written
-// to w and return merged=-1. Other pull errors soft-fail (0, 0) like the CLI.
-func (s *Server) softPullForReshare(w http.ResponseWriter) (merged, repliesUpdated int) {
-	merged, repliesUpdated, err := s.pullAndMergeRemoteComments()
-	if err == nil {
-		return merged, repliesUpdated
-	}
-	if errors.Is(err, share.ErrShareUnauthorized) || errors.Is(err, share.ErrShareNotFound) {
-		s.writeShareTransportError(w, err)
-		return -1, 0
-	}
-	return 0, 0
-}
-
-// reshareUpsertInputs loads files + comments and builds the CritJSON used for
-// UpsertShareToWeb, preferring on-disk LastShareHash / ReviewRound / CliArgs.
-func (s *Server) reshareUpsertInputs(sess *Session, hostedURL, deleteToken string) ([]ShareFile, []shareComment, CritJSON, error) {
-	files, reviewType, err := s.shareFilesForSession()
-	if err != nil {
-		return nil, nil, CritJSON{}, err
-	}
-	if len(files) == 0 {
-		return nil, nil, CritJSON{}, errNoFilesInSession
-	}
-
-	critPath := sess.CritJSONPath()
-	var comments []shareComment
-	if reviewType == "preview" {
-		comments, _ = share.LoadPreviewShareComments(critPath, sess.FilePathsSnapshot(), s.author)
-	} else {
-		filePaths := make([]string, len(files))
-		for i, f := range files {
-			filePaths[i] = f.Path
-		}
-		comments, _ = share.LoadCommentsForShare(critPath, filePaths, s.author)
-	}
-
-	existingCfg := CritJSON{
-		ShareURL:    hostedURL,
-		DeleteToken: deleteToken,
-		ReviewRound: sess.ReviewRound,
-		CliArgs:     share.LoadCliArgsFromReviewFile(critPath),
-	}
-	if data, readErr := session.ReadFileShared(review.ReviewPathsFor(critPath).Review); readErr == nil {
-		var onDisk CritJSON
-		if json.Unmarshal(data, &onDisk) == nil {
-			existingCfg.LastShareHash = onDisk.LastShareHash
-			if onDisk.ReviewRound > 0 {
-				existingCfg.ReviewRound = onDisk.ReviewRound
-			}
-			if len(onDisk.CliArgs) > 0 {
-				existingCfg.CliArgs = onDisk.CliArgs
-			}
-		}
-	}
-	return files, comments, existingCfg, nil
-}
-
-func (s *Server) writeJSONError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
-
-// pullAndMergeRemoteComments is the shared pull+merge used by /api/share/pull
-// and the first half of /api/share/reshare. Returns merged/replies_updated
-// counts. Caller must SyncCommentsFromDisk if they need a fresh in-memory view
-// after a successful merge (pull does; reshare does after upsert).
-func (s *Server) pullAndMergeRemoteComments() (merged, repliesUpdated int, err error) {
-	sess := s.session.Load()
-	hostedURL := sess.GetSharedURL()
-	if tokenFromHostedURL(hostedURL) == "" {
-		return 0, 0, errNoSharedReview
-	}
-	critPath := sess.CritJSONPath()
-	data, readErr := session.ReadFileShared(review.ReviewPathsFor(critPath).Review)
-	if readErr != nil {
-		if os.IsNotExist(readErr) {
-			return 0, 0, fmt.Errorf("review file not found")
-		}
-		return 0, 0, readErr
-	}
-	var cj CritJSON
-	if err := json.Unmarshal(data, &cj); err != nil {
-		return 0, 0, err
-	}
-
-	localIDs := share.BuildLocalIDSet(cj)
-	localFingerprints, localFingerprintIDs := share.BuildLocalFingerprintIndex(cj)
-	fetched, err := share.FetchWebComments(hostedURL, localIDs, localFingerprints, localFingerprintIDs, s.authTokenSnapshot())
-	if err != nil {
-		return 0, 0, err
-	}
-	if len(fetched.NewComments) == 0 && len(fetched.ReplyUpdates) == 0 {
-		sess.SyncCommentsFromDisk()
-		return 0, 0, nil
-	}
-	if err := share.MergeWebComments(critPath, fetched.NewComments, fetched.ReplyUpdates); err != nil {
-		return 0, 0, err
-	}
-	sess.SyncCommentsFromDisk()
-	return len(fetched.NewComments), len(fetched.ReplyUpdates), nil
-}
-
-var (
-	errNoSharedReview   = errors.New("no shared review in this session")
-	errNoFilesInSession = errors.New("no files in session")
-)
-
-func (s *Server) writeShareTransportError(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	switch {
-	case errors.Is(err, errNoSharedReview):
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-	case errors.Is(err, share.ErrShareUnauthorized):
-		auth.ClearAuthIdentity()
-		s.clearAuthState()
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-	case errors.Is(err, share.ErrShareNotFound):
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-	default:
-		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-	}
-}
-
-// handleMergeComments accepts comments fetched from crit-web (via the popup
-// relay) and merges them into the local review file. The token is derived
-// server-side from the session's hosted URL — the client never supplies it.
-func (s *Server) handleMergeComments(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 10*1024*1024)
-	var req struct {
-		Comments []webComment `json:"comments"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// http.MaxBytesError surfaces as a generic error from the decoder; we
-		// translate over-limit explicitly so clients can distinguish.
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON: " + err.Error()})
-		return
-	}
-	sess := s.session.Load()
-	if tokenFromHostedURL(sess.GetSharedURL()) == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "no shared review in this session"})
-		return
-	}
-	critPath := sess.CritJSONPath()
-	if _, err := os.Stat(review.ReviewPathsFor(critPath).Review); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		if os.IsNotExist(err) {
-			json.NewEncoder(w).Encode(map[string]string{"error": "review file not found"})
-		} else {
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		}
-		return
-	}
-	data, err := session.ReadFileShared(review.ReviewPathsFor(critPath).Review)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	var cj CritJSON
-	if err := json.Unmarshal(data, &cj); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	newComments, replyUpdates := dedupWebComments(cj, req.Comments)
-	if len(newComments) == 0 && len(replyUpdates) == 0 {
-		// Comments may already be on disk from a prior pull while memory is
-		// still stale (e.g. pendingWrite blocked the file watcher).
-		sess.SyncCommentsFromDisk()
-		writeJSON(w, map[string]any{"merged": 0, "replies_updated": 0})
-		return
-	}
-	if err := mergeWebComments(critPath, newComments, replyUpdates); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	// mergeWebComments writes review.json outside WriteFiles; sync in-memory
-	// state immediately so /api/file/comments and the UI refresh path see
-	// pulled comments without waiting for the 1s file watcher tick (which can
-	// also miss same-second mtime updates).
-	sess.SyncCommentsFromDisk()
-	writeJSON(w, map[string]any{"merged": len(newComments), "replies_updated": len(replyUpdates)})
 }
 
 // handleFile returns file content + metadata for a single file.
@@ -1694,7 +1048,7 @@ func (s *Server) handleFileComments(w http.ResponseWriter, r *http.Request) {
 				author = s.author
 			}
 			sess := s.session.Load()
-			c, ok := sess.AddLivePin(path, req.Body, author, s.authUserID(), req.DOMAnchor)
+			c, ok := sess.AddLivePin(path, req.Body, author, "", req.DOMAnchor)
 			if !ok {
 				http.Error(w, "Live pin rejected", http.StatusBadRequest)
 				return
@@ -1717,7 +1071,7 @@ func (s *Server) handleFileComments(w http.ResponseWriter, r *http.Request) {
 		s.session.Load().EnsureFileEntry(path)
 
 		if req.Scope == "file" {
-			c, ok := s.session.Load().AddFileComment(path, req.Body, req.Author, s.authUserID())
+			c, ok := s.session.Load().AddFileComment(path, req.Body, req.Author, "")
 			if !ok {
 				http.Error(w, "File not found", http.StatusNotFound)
 				return
@@ -1732,7 +1086,7 @@ func (s *Server) handleFileComments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		c, ok := s.session.Load().AddComment(path, req.StartLine, req.EndLine, normalizeCommentSide(req.Side), req.Body, req.Quote, req.Author, s.authUserID())
+		c, ok := s.session.Load().AddComment(path, req.StartLine, req.EndLine, normalizeCommentSide(req.Side), req.Body, req.Quote, req.Author, "")
 		if !ok {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
@@ -1907,7 +1261,7 @@ func (s *Server) handleFileCommentUpdate(w http.ResponseWriter, r *http.Request,
 		// compatibility with file-mode reviews where AuthUserID is unset.
 		// Replies cascade automatically because they're nested inside the
 		// parent Comment struct.
-		switch sess.DeleteFileCommentAs(path, id, s.authUserID()) {
+		switch sess.DeleteFileCommentAs(path, id, "") {
 		case DeleteResultNotFound:
 			http.Error(w, "Comment not found", http.StatusNotFound)
 			return
@@ -2062,7 +1416,7 @@ func (s *Server) handleReplyRoute(w http.ResponseWriter, r *http.Request, filePa
 	notify := func() { sess.Notify(SSEEvent{Type: "comments-changed"}) }
 	handleReplyCRUD(w, r, replyID, replyOps{
 		add: func(body, author string) (Reply, bool) {
-			rep, ok := sess.AddReply(filePath, commentID, body, author, s.authUserID())
+			rep, ok := sess.AddReply(filePath, commentID, body, author, "")
 			if ok {
 				notify()
 			}
@@ -2088,7 +1442,7 @@ func (s *Server) handleReplyRoute(w http.ResponseWriter, r *http.Request, filePa
 func (s *Server) handleReviewCommentReplyRoute(w http.ResponseWriter, r *http.Request, commentID, replyID string) {
 	handleReplyCRUD(w, r, replyID, replyOps{
 		add: func(body, author string) (Reply, bool) {
-			return s.session.Load().AddReviewCommentReply(commentID, body, author, s.authUserID())
+			return s.session.Load().AddReviewCommentReply(commentID, body, author, "")
 		},
 		update: func(rid, body string) (Reply, bool) {
 			return s.session.Load().UpdateReviewCommentReply(commentID, rid, body)
@@ -2126,7 +1480,7 @@ func (s *Server) handleReviewComments(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Comment body is required", http.StatusBadRequest)
 			return
 		}
-		c := s.session.Load().AddReviewComment(req.Body, req.Author, s.authUserID())
+		c := s.session.Load().AddReviewComment(req.Body, req.Author, "")
 		w.WriteHeader(http.StatusCreated)
 		writeJSON(w, c)
 
@@ -2712,42 +2066,6 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, cleanPath)
 }
 
-func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	url := r.URL.Query().Get("url")
-	if url == "" {
-		http.Error(w, "Missing url parameter", http.StatusBadRequest)
-		return
-	}
-	code, err := qr.Encode(url, qr.L)
-	if err != nil {
-		http.Error(w, "QR generation failed", http.StatusInternalServerError)
-		return
-	}
-
-	size := code.Size
-	scale := 4
-	imgSize := size * scale
-	padding := 16
-
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">`, imgSize+padding*2, imgSize+padding*2))
-	for y := 0; y < size; y++ {
-		for x := 0; x < size; x++ {
-			if code.Black(x, y) {
-				b.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d"/>`, x*scale+padding, y*scale+padding, scale, scale))
-			}
-		}
-	}
-	b.WriteString(`</svg>`)
-
-	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Write([]byte(b.String()))
-}
-
 func (s *Server) handleFilesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -3052,141 +2370,6 @@ func (s *Server) runAgentCmd(prompt string, commentID string, filePath string) {
 		}
 		sess.Notify(SSEEvent{Type: "comments-changed"})
 	}
-}
-
-// handleAuthOrgs proxies GET /api/auth/orgs to the configured crit-web service,
-// forwarding the stored auth token. Returns an empty JSON array when the share
-// URL is not configured, the user is not authenticated, or the upstream request
-// fails — so the frontend always receives a valid orgs list.
-func (s *Server) handleAuthOrgs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	emptyArray := func() { writeJSON(w, []any{}) }
-
-	if s.shareURL == "" {
-		emptyArray()
-		return
-	}
-	token := s.authTokenSnapshot()
-	if token == "" {
-		emptyArray()
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.shareURL+"/api/auth/orgs", nil)
-	if err != nil {
-		emptyArray()
-		return
-	}
-	share.SetBearer(req, token)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		emptyArray()
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		emptyArray()
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
-}
-
-// handleSharePolicy proxies GET /api/share-policy to the configured crit-web
-// service. Older self-hosted instances do not expose it, so every failure falls
-// back to the historical client behaviour: all current share options allowed.
-func (s *Server) handleSharePolicy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	defaultPolicy := func() {
-		writeJSON(w, map[string]any{
-			"allowed_comment_policies":    []string{"open", "logged_in_only", "disallowed"},
-			"allowed_review_visibilities": []string{"organization", "unlisted", "public"},
-		})
-	}
-
-	if s.shareURL == "" {
-		defaultPolicy()
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.shareURL+"/api/share-policy", nil)
-	if err != nil {
-		defaultPolicy()
-		return
-	}
-	share.SetBearer(req, s.authTokenSnapshot())
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		defaultPolicy()
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		defaultPolicy()
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
-}
-
-func (s *Server) authTokenSnapshot() string {
-	s.authMu.RLock()
-	defer s.authMu.RUnlock()
-	return s.authToken
-}
-
-func (s *Server) authLoggedIn() bool {
-	s.authMu.RLock()
-	defer s.authMu.RUnlock()
-	return s.authToken != ""
-}
-
-func (s *Server) authUserID() string {
-	s.authMu.RLock()
-	defer s.authMu.RUnlock()
-	return s.cfg.AuthUserID
-}
-
-func (s *Server) authUserName() string {
-	s.authMu.RLock()
-	defer s.authMu.RUnlock()
-	return s.cfg.AuthUserName
-}
-
-func (s *Server) authUserEmail() string {
-	s.authMu.RLock()
-	defer s.authMu.RUnlock()
-	return s.cfg.AuthUserEmail
-}
-
-func (s *Server) clearAuthState() {
-	s.authMu.Lock()
-	defer s.authMu.Unlock()
-	s.authToken = ""
-	s.cfg.AuthToken = ""
-	s.cfg.AuthUserID = ""
-	s.cfg.AuthUserName = ""
-	s.cfg.AuthUserEmail = ""
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

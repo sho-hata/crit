@@ -1157,7 +1157,7 @@ func TestHandleFileComments_LivePinFansOutSSE(t *testing.T) {
 	}
 	sess.InitTestChannels()
 
-	srv, err := NewServer(nil, frontendFS, "", false, "", "tester", "test", 0, "")
+	srv, err := NewServer(nil, frontendFS, "tester", "test", 0, "")
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -1327,7 +1327,7 @@ func TestLive_PostFileCommentsDropsScreenshot(t *testing.T) {
 		ReviewFilePath: identity,
 	}
 
-	srv, err := NewServer(nil, frontendFS, "", false, "", "tester", "test", 0, "")
+	srv, err := NewServer(nil, frontendFS, "tester", "test", 0, "")
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

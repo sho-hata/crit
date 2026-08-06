@@ -50,7 +50,7 @@ func newAttachmentTestServer(t *testing.T, reviewIdentity string) *Server {
 	}
 	sess := &Session{ReviewFilePath: reviewJSON}
 	sess.InitTestChannels()
-	srv, err := NewServer(sess, FrontendFS, "", false, "", "test", "test", 0, "")
+	srv, err := NewServer(sess, FrontendFS, "test", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

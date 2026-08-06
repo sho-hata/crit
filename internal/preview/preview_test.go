@@ -132,7 +132,7 @@ func newPreviewTestServer(t *testing.T, dir string) (*Server, *Session) {
 		},
 	}
 	sess.InitTestChannels()
-	s, err := NewServer(sess, frontendFS, "", false, "", "", "test", 0, "")
+	s, err := NewServer(sess, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestHandlePreviewContent_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandlePreviewContent_NoSession(t *testing.T) {
-	s, err := NewServer(nil, frontendFS, "", false, "", "", "test", 0, "")
+	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestServePreviewHTML_NoBody(t *testing.T) {
 
 // Verify newTestServer from embed.FS compiles with preview routes registered.
 func TestPreviewRouteRegistered(t *testing.T) {
-	s, err := NewServer(nil, frontendFS, "", false, "", "", "test", 0, "")
+	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -120,7 +120,7 @@ func runServe(args []string) {
 	}
 	addr := listener.Addr().(*net.TCPAddr)
 
-	srv, err := NewServer(nil, frontendFS, sc.ShareURL, sc.ProxyAuth, sc.AuthToken, sc.Author, version, addr.Port, sc.AgentCmd)
+	srv, err := NewServer(nil, frontendFS, sc.Author, version, addr.Port, sc.AgentCmd)
 	if err != nil {
 		daemonFatal(pipe, "Error creating server: %v", err)
 	}
