@@ -7,7 +7,6 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/server"
 	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/share"
 	"github.com/tomasz-tomczyk/crit/internal/testutil"
 )
 
@@ -29,8 +28,6 @@ var (
 	saveCritJSON           = review.SaveCritJSON
 	loadCritJSON           = review.LoadCritJSON
 	appendReply            = comment.AppendReply
-	checkShareAllowed      = share.CheckShareAllowed
-	checkGitHubSyncAllowed = share.CheckGitHubSyncAllowed
 	checkCommentCLIAllowed = comment.CheckCommentCLIAllowed
 	carryForwardComment    = session.CarryForwardComment
 	NewServer              = server.NewServer

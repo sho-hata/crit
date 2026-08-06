@@ -175,7 +175,6 @@ type liveCLIFlags struct {
 	allowUnauthenticatedNetwork bool
 	noOpen                      bool
 	quiet                       bool
-	shareURL                    string
 	cookieFlags                 stringSliceFlag
 	cookieFile                  string
 	cdpURL                      string
@@ -192,7 +191,6 @@ func parseLiveCLIFlags(args []string) liveCLIFlags {
 	noOpen := fs.Bool("no-open", false, "Don't auto-open browser")
 	quiet := fs.Bool("quiet", false, "On success, suppress connect/start status, tips, and session summary")
 	fs.BoolVar(quiet, "q", false, "On success, suppress status (shorthand)")
-	shareURL := fs.String("share-url", "", "Share service URL")
 	var cookieFlags stringSliceFlag
 	fs.Var(&cookieFlags, "cookie", "Cookie header value for upstream requests (repeatable)")
 	cookieFile := fs.String("cookie-file", "", "File with upstream cookies (raw header or Netscape jar)")
@@ -231,7 +229,6 @@ func parseLiveCLIFlags(args []string) liveCLIFlags {
 		allowUnauthenticatedNetwork: *allowUnauthNet,
 		noOpen:                      *noOpen,
 		quiet:                       *quiet,
-		shareURL:                    *shareURL,
 		cookieFlags:                 cookieFlags,
 		cookieFile:                  *cookieFile,
 		cdpURL:                      *cdpURL,
@@ -251,7 +248,6 @@ func buildLiveDaemonArgs(origin, liveCookies string, f liveCLIFlags, cfg config.
 		AllowUnauthenticatedNetwork: f.allowUnauthenticatedNetwork || config.EnvAllowsUnauthenticatedNetwork(),
 		NoOpen:                      noOpenResolved,
 		Quiet:                       f.quiet || cfg.Quiet,
-		ShareURL:                    config.ResolveShareURL(f.shareURL, cfg, ""),
 	})
 }
 
