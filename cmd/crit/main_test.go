@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,8 +15,6 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/focus"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/share"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
 )
 
 func TestPrintHelpMentionsSession(t *testing.T) {
@@ -237,22 +233,6 @@ func TestHelperProcess_InstallMissing(t *testing.T) {
 }
 
 // TestRunShare_MissingFiles verifies that runShare with no files exits with usage.
-func TestRunShare_MissingFiles(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_ShareMissing", "--")
-	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
-	err := cmd.Run()
-	if err == nil {
-		t.Fatal("expected non-zero exit for missing share files")
-	}
-}
-
-func TestHelperProcess_ShareMissing(t *testing.T) {
-	if os.Getenv("GO_TEST_HELPER") != "1" {
-		return
-	}
-	runShare([]string{})
-}
-
 // TestRunComment_FlagParsing verifies that --output and --author flags are parsed correctly.
 func TestRunComment_FlagParsing(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentFlags", "--")
@@ -328,66 +308,6 @@ func TestHelperProcess_CommentBadRange(t *testing.T) {
 	runComment([]string{"file.go:10-abc", "some body"})
 }
 
-// TestRunShare_OutputFlagMissingValue verifies that --output without value exits with error.
-func TestRunShare_OutputFlagMissingValue(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_ShareOutputMissing", "--")
-	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
-	err := cmd.Run()
-	if err == nil {
-		t.Fatal("expected non-zero exit for --output without value")
-	}
-}
-
-func TestHelperProcess_ShareOutputMissing(t *testing.T) {
-	if os.Getenv("GO_TEST_HELPER") != "1" {
-		return
-	}
-	runShare([]string{"--output"})
-}
-
-// TestRunShare_ConsentDenied verifies that answering "n" to the first-time
-// consent prompt exits cleanly without sharing.
-func TestRunShare_ConsentDenied(t *testing.T) {
-	home := t.TempDir()
-	outDir := t.TempDir()
-	f := filepath.Join(t.TempDir(), "review.md")
-	if err := os.WriteFile(f, []byte("# Hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_ShareConsentDenied", "--")
-	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1", "HOME="+home,
-		"GO_TEST_SHARE_FILE="+f, "GO_TEST_SHARE_OUT="+outDir)
-	cmd.Stdin = strings.NewReader("n\n")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("expected zero exit when user declines consent, got: %v\n%s", err, out)
-	}
-}
-
-func TestHelperProcess_ShareConsentDenied(t *testing.T) {
-	if os.Getenv("GO_TEST_HELPER") != "1" {
-		return
-	}
-	runShare([]string{"--output", os.Getenv("GO_TEST_SHARE_OUT"), os.Getenv("GO_TEST_SHARE_FILE")})
-}
-
-// TestRunUnpublish_OutputFlagMissingValue verifies that --output without value exits with error.
-func TestRunUnpublish_OutputFlagMissingValue(t *testing.T) {
-	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_UnpublishOutputMissing", "--")
-	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
-	err := cmd.Run()
-	if err == nil {
-		t.Fatal("expected non-zero exit for --output without value")
-	}
-}
-
-func TestHelperProcess_UnpublishOutputMissing(t *testing.T) {
-	if os.Getenv("GO_TEST_HELPER") != "1" {
-		return
-	}
-	runUnpublish([]string{"--output"})
-}
-
 // TestRunComment_JSONFlag verifies that --json reads from stdin and produces output.
 func TestRunComment_JSONFlag(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess_CommentJSON$", "--")
@@ -455,79 +375,3 @@ func TestHelperProcess_CommentJSONMix(t *testing.T) {
 	runComment([]string{"--json", "--output", tmp, "--author", "TestBot"})
 }
 
-// TestFetch_PrintsReviewFilePath verifies that crit fetch prints the review
-// file path in both the "no new comments" and "fetched N comments" cases.
-func TestFetch_PrintsReviewFilePath(t *testing.T) {
-	tests := []struct {
-		name        string
-		comments    []share.WebComment
-		wantContain string
-	}{
-		{
-			name:        "no new comments",
-			comments:    nil,
-			wantContain: "No new comments.",
-		},
-		{
-			name: "with new comments",
-			comments: []share.WebComment{
-				{Body: "fix this", FilePath: "main.go", StartLine: 10, EndLine: 10, Scope: "line"},
-			},
-			wantContain: "Fetched 1 new comment(s)",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(tc.comments)
-			}))
-			defer ts.Close()
-
-			tmpDir := t.TempDir()
-			cj := session.CritJSON{
-				ShareURL: ts.URL + "/r/test123",
-				Files:    map[string]session.CritJSONFile{},
-			}
-			data, err := json.Marshal(cj)
-			if err != nil {
-				t.Fatal(err)
-			}
-			critPath, err := review.ResolveReviewPath(tmpDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(testutil.MustMkdirAll(review.ReviewPathsFor(critPath).Review), data, 0o644); err != nil {
-				t.Fatal(err)
-			}
-
-			cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_Fetch", "--")
-			cmd.Env = append(os.Environ(),
-				"GO_TEST_HELPER=1",
-				"GO_TEST_FETCH_OUTPUT_DIR="+tmpDir,
-			)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("fetch exited with error: %v\noutput: %s", err, out)
-			}
-			output := string(out)
-
-			if !strings.Contains(output, tc.wantContain) {
-				t.Errorf("expected output to contain %q, got:\n%s", tc.wantContain, output)
-			}
-			wantPath := "Review file: " + critPath
-			if !strings.Contains(output, wantPath) {
-				t.Errorf("expected output to contain %q, got:\n%s", wantPath, output)
-			}
-		})
-	}
-}
-
-func TestHelperProcess_Fetch(t *testing.T) {
-	if os.Getenv("GO_TEST_HELPER") != "1" {
-		return
-	}
-	outputDir := os.Getenv("GO_TEST_FETCH_OUTPUT_DIR")
-	runFetch([]string{"--output", outputDir})
-}

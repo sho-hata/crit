@@ -9,9 +9,9 @@ import (
 )
 
 var publicCommandNames = []string{
-	"share", "fetch", "unpublish", "install", "config", "check", "pr", "pull",
+	"install", "config", "check", "pr", "pull",
 	"push", "comment", "comments", "review", "live", "preview", "plan", "story",
-	"auth", "stop", "status", "stats", "cleanup",
+	"stop", "status", "stats", "cleanup",
 }
 
 func TestCommandRegistry_PublicInventory(t *testing.T) {
@@ -90,43 +90,6 @@ func TestHelpCommand(t *testing.T) {
 				t.Fatalf("help output missing command usage:\n%s", out)
 			}
 		})
-	}
-}
-
-func TestNestedAuthHelpDoesNotInvokeHandler(t *testing.T) {
-	for _, subcommand := range []string{"login", "logout", "whoami"} {
-		t.Run("help/"+subcommand, func(t *testing.T) {
-			out := captureStderr(t, func() {
-				if _, err := dispatchWithRegistry([]string{"help", "auth", subcommand}, commandRegistry); err != nil {
-					t.Fatal(err)
-				}
-			})
-			if !strings.Contains(out, "Usage: crit auth "+subcommand) {
-				t.Fatalf("nested help missing usage:\n%s", out)
-			}
-		})
-		for _, flag := range []string{"--help", "-h"} {
-			t.Run(subcommand+"/"+flag, func(t *testing.T) {
-				registry := append([]commandDescriptor(nil), commandRegistry...)
-				invoked := false
-				for i := range registry {
-					if registry[i].name == "auth" {
-						registry[i].handler = func([]string) { invoked = true }
-					}
-				}
-				out := captureStderr(t, func() {
-					if _, err := dispatchWithRegistry([]string{"auth", subcommand, flag}, registry); err != nil {
-						t.Fatal(err)
-					}
-				})
-				if invoked {
-					t.Fatal("nested auth help invoked the auth handler")
-				}
-				if !strings.Contains(out, "Usage: crit auth "+subcommand) {
-					t.Fatalf("nested auth help missing usage:\n%s", out)
-				}
-			})
-		}
 	}
 }
 
@@ -223,8 +186,6 @@ func TestCommandHelpDocumentsKeyOptions(t *testing.T) {
 func TestInvalidHelpTopicReturnsError(t *testing.T) {
 	for _, args := range [][]string{
 		{"help", "unknown"},
-		{"help", "auth", "unknown"},
-		{"help", "auth", "login", "extra"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
 			handled, err := dispatchWithRegistry(args, commandRegistry)
