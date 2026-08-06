@@ -12,8 +12,7 @@ async function waitForRound(request: APIRequestContext, previousRound: number) {
 }
 
 // GitHub-synced comment badge -- verifies that a comment whose review.json
-// entry carries `github_id` renders the .github-badge in the UI.
-// The signal mirrors what crit-web will receive in the share payload (#370).
+// entry carries `github_id` renders the .github-badge in the UI (#370).
 test.describe('GitHub-synced comment badge (#370)', () => {
   test('renders .github-badge when comment.github_id is set', async ({ page, request }) => {
     await clearAllComments(request);

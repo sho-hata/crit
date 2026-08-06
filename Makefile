@@ -39,17 +39,8 @@ setup-hooks:
 test-diff:
 	./test/shell/test-diff.sh
 
-test-share-sync: build
-	go test -tags integration -run TestShareSync -v -count=1 ./...
-
-test-share-sync-selfhosted: build
-	@./scripts/run-selfhosted-tests.sh
-
 test-live-cdp:
 	go test -tags integration -run TestLiveCDPIntegration -v -count=1 ./internal/live/...
-
-e2e-share:
-	./scripts/e2e-share.sh
 
 e2e-roundtrip: build
 	./scripts/e2e-roundtrip.sh
@@ -80,4 +71,4 @@ test-preview: build
 	@echo "Starting preview mode with sample page..."
 	./crit preview test/preview-sample/index.html
 
-.PHONY: build build-all generate verify-generate update-deps test test-frontend setup-hooks clean test-diff test-share-sync test-share-sync-selfhosted test-live-cdp e2e-share e2e-roundtrip test-daemon test-plan-daemon e2e e2e-failed e2e-report e2e-live-utils test-preview
+.PHONY: build build-all generate verify-generate update-deps test test-frontend setup-hooks clean test-diff test-live-cdp e2e-roundtrip test-daemon test-plan-daemon e2e e2e-failed e2e-report e2e-live-utils test-preview
