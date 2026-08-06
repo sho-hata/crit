@@ -49,13 +49,13 @@ func (s *Session) critJSONPath() string {
 // writeFilesSnapshot holds all session state needed to write the review file,
 // captured under lock so that disk I/O can happen without holding the lock.
 type writeFilesSnapshot struct {
-	critPath        string
-	lastMtime       time.Time
-	branch          string
-	baseRef         string
-	reviewRound     int
-	reviewComments  []Comment
-	cliArgs         []string
+	critPath       string
+	lastMtime      time.Time
+	branch         string
+	baseRef        string
+	reviewRound    int
+	reviewComments []Comment
+	cliArgs        []string
 	// story is the session's in-memory narrative (nil if none). Carried into
 	// CritJSON like the other daemon-managed fields above so `crit story`'s
 	// daemon-side mutators (set via s.SetStory) are actually persisted —

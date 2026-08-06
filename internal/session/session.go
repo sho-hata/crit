@@ -479,13 +479,13 @@ type Session struct {
 
 // CritJSON is the on-disk format for review files.
 type CritJSON struct {
-	Branch          string                  `json:"branch"`
-	BaseRef         string                  `json:"base_ref"`
-	UpdatedAt       string                  `json:"updated_at"`
-	ReviewRound     int                     `json:"review_round"`
-	ReviewComments  []Comment               `json:"review_comments,omitempty"`
-	CliArgs         []string                `json:"cli_args,omitempty"`
-	Files           map[string]CritJSONFile `json:"files"`
+	Branch         string                  `json:"branch"`
+	BaseRef        string                  `json:"base_ref"`
+	UpdatedAt      string                  `json:"updated_at"`
+	ReviewRound    int                     `json:"review_round"`
+	ReviewComments []Comment               `json:"review_comments,omitempty"`
+	CliArgs        []string                `json:"cli_args,omitempty"`
+	Files          map[string]CritJSONFile `json:"files"`
 
 	// ActiveDiffScope is the most recent focus diff_scope from this session.
 	// Read by `crit push` to gate full-stack pushes; "" indicates working-tree mode.

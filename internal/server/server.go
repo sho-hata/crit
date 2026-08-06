@@ -1255,12 +1255,12 @@ func (s *Server) handleFileCommentUpdate(w http.ResponseWriter, r *http.Request,
 	case http.MethodDelete:
 		sess := s.session.Load()
 		// Authorize before delete: when the comment carries a non-empty
-		// UserID, only that user (matched against the daemon's configured
-		// AuthUserID) may delete it. Comments with empty UserID (legacy or
-		// unauthed sessions) remain deletable by anyone — preserving
-		// compatibility with file-mode reviews where AuthUserID is unset.
-		// Replies cascade automatically because they're nested inside the
-		// parent Comment struct.
+		// UserID, only a matching caller UserID may delete it. The server
+		// has no notion of an authenticated caller, so it always passes ""
+		// here — comments end up deletable by anyone, which is the expected
+		// behavior for this single-user local tool. Replies cascade
+		// automatically because they're nested inside the parent Comment
+		// struct.
 		switch sess.DeleteFileCommentAs(path, id, "") {
 		case DeleteResultNotFound:
 			http.Error(w, "Comment not found", http.StatusNotFound)

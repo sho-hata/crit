@@ -9,7 +9,7 @@ import (
 )
 
 // ResolvePublicURL returns the effective advertised base URL (flag > env > config).
-// Unlike share_url there is no runtime default — empty means use the listen address.
+// There is no runtime default — empty means use the listen address.
 func ResolvePublicURL(flagValue string, cfg Config) string {
 	if flagValue != "" {
 		return flagValue

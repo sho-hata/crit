@@ -99,9 +99,6 @@ func resolveCommentFlags(f *commentFlags) error {
 	if f.author == "" {
 		f.author = cfg.Author
 	}
-	if f.userID == "" {
-		f.userID = cfg.AuthUserID
-	}
 	return nil
 }
 

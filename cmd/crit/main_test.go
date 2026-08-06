@@ -374,4 +374,3 @@ func TestHelperProcess_CommentJSONMix(t *testing.T) {
 	}
 	runComment([]string{"--json", "--output", tmp, "--author", "TestBot"})
 }
-
