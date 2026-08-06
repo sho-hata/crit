@@ -87,7 +87,6 @@ Options:
       --cookie <value>     Forward a Cookie header
       --cookie-file <path> Read cookies from a file
       --cdp-url <url>      Reuse cookies from Chrome DevTools
-      --share-url <url>    Share service URL
       --no-open            Do not open a browser
   -q, --quiet              On success, suppress connect/start status, tips, and session summary`},
 	{name: "preview", handler: runPreview, help: `Usage: crit preview [options] <file.html>
@@ -100,7 +99,6 @@ Options:
       --public-url <url>  Advertised base URL
       --allow-unauthenticated-network
                           Allow non-loopback --host or --public-url
-      --share-url <url>   Share service URL
       --no-open           Do not open a browser
   -q, --quiet             On success, suppress connect/start status, tips, and session summary`},
 	{name: "plan", handler: runPlan, help: `Usage: crit plan [--name <slug>] [options] <file>
@@ -115,7 +113,6 @@ Options:
       --allow-unauthenticated-network
                           Allow non-loopback --host or --public-url
   -p, --port <port>       Port to listen on
-      --share-url <url>   Share service URL
       --no-open           Do not open a browser
   -q, --quiet             On success, suppress connect/start status, tips, and session summary`},
 	{name: "story", handler: runStory, helpFn: printStoryUsage, bareHelp: true},

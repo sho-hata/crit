@@ -26,7 +26,6 @@ type planConfig struct {
 	allowUnauthenticatedNetwork bool
 	noOpen                      bool
 	quiet                       bool
-	shareURL                    string
 }
 
 func resolvePlanConfig(args []string) planConfig {
@@ -40,7 +39,6 @@ func resolvePlanConfig(args []string) planConfig {
 	noOpen := fs.Bool("no-open", false, "Don't auto-open browser")
 	quiet := fs.Bool("quiet", false, "On success, suppress connect/start status, tips, and session summary")
 	fs.BoolVar(quiet, "q", false, "On success, suppress status (shorthand)")
-	shareURL := fs.String("share-url", "", "Share service URL")
 	// Keep in sync with the fs.Bool/fs.BoolVar registrations above.
 	args = clicmd.ReorderFlagsFirst(args, map[string]bool{
 		config.AllowUnauthenticatedNetworkFlag: true,
@@ -58,7 +56,6 @@ func resolvePlanConfig(args []string) planConfig {
 		allowUnauthenticatedNetwork: *allowUnauthNet,
 		noOpen:                      *noOpen,
 		quiet:                       *quiet,
-		shareURL:                    *shareURL,
 	}
 
 	remaining := fs.Args()
@@ -147,7 +144,6 @@ func RunPlan(args []string) error {
 		AllowUnauthenticatedNetwork: pc.allowUnauthenticatedNetwork || config.EnvAllowsUnauthenticatedNetwork(),
 		NoOpen:                      noOpenResolved,
 		Quiet:                       quiet,
-		ShareURL:                    config.ResolveShareURL(pc.shareURL, cfg, ""),
 	})
 
 	entry, weStartedDaemon, err := connectOrStartDaemon(key, daemonArgs, noOpenResolved, cfg.OpenCmd, quiet)
