@@ -15,15 +15,14 @@ test('isCritWaitCommand rejects non-wait subcommands', () => {
   assert.equal(isCritWaitCommand('crit comment --reply-to c_1 hi'), false);
   assert.equal(isCritWaitCommand('crit comments --json'), false);
   assert.equal(isCritWaitCommand('crit config'), false);
-  assert.equal(isCritWaitCommand('crit share plan.md'), false);
   assert.equal(isCritWaitCommand('crit install opencode'), false);
   assert.equal(isCritWaitCommand('crit status'), false);
   assert.equal(isCritWaitCommand('crit stop'), false);
   assert.equal(isCritWaitCommand('crit check'), false);
   assert.equal(isCritWaitCommand('crit stats'), false);
   assert.equal(isCritWaitCommand('crit cleanup'), false);
-  assert.equal(isCritWaitCommand('crit auth login'), false);
-  assert.equal(isCritWaitCommand('crit fetch abc'), false);
+  assert.equal(isCritWaitCommand('crit pull 12'), false);
+  assert.equal(isCritWaitCommand('crit push'), false);
   assert.equal(isCritWaitCommand('echo crit'), false);
   assert.equal(isCritWaitCommand(''), false);
 });

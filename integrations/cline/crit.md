@@ -131,19 +131,6 @@ crit comment --json --file /tmp/crit-bulk.json --author 'Cline'
 
 Scope inference: `reply_to` → reply; no `file`/`line` → review; `path` only → file; `path` + `line` → line.
 
-### Sharing
-
-```bash
-crit share <file> [file...]                          # Upload and print URL
-crit share --qr <file>                               # Also print QR code (terminal only)
-crit share --org <slug> <file>                       # Share under an organization
-crit share --org <slug> --visibility unlisted <file> # Org share with explicit visibility
-crit unpublish [file...]                              # Remove shared review
-```
-
-Always relay the full output (URL, QR) directly in your response — don't make the user dig through tool output.
-- **`--org <slug>`** shares under an organization. Visibility defaults to `organization` (members only). Override with `--visibility` (`organization`, `unlisted`, `public`).
-
 ### GitHub PR sync
 
 ```bash

@@ -79,15 +79,4 @@ On subsequent calls, `crit` automatically signals round-complete first, then blo
 Tell the user: **"Changes applied. Review the diff in your browser and click Finish Review when ready."**
 
 **Do NOT proceed until `run_shell_command` returns.** When it does, return to Step 3. If the user finishes with zero comments, the review is approved — stop the loop and proceed.
-
-<important if="the user asks for a URL, a shareable link, or a QR code for the review">
-
-```bash
-crit share <file>
-```
-
-**Always relay the full output to the user** — copy the URL directly into your response.
-
-To remove a shared review: `crit unpublish [file...]`
-</important>
 """

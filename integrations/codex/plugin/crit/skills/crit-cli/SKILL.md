@@ -1,12 +1,12 @@
 ---
 name: crit-cli
-description: Use when an agent needs to author or reply to crit inline comments programmatically (including multi-agent workflows commenting on shared code/plans/docs/proposals), publish or unpublish a crit review with crit share, sync a crit review to or from a GitHub PR, or read/interpret a crit review JSON file. Covers crit comment, crit share, crit unpublish, crit pull, crit push, review file format, and resolution workflow. Not for invoking an interactive review loop — that's the `crit` skill.
+description: Use when an agent needs to author or reply to crit inline comments programmatically (including multi-agent workflows commenting on shared code/plans/docs/proposals), sync a crit review to or from a GitHub PR, or read/interpret a crit review JSON file. Covers crit comment, crit pull, crit push, review file format, and resolution workflow. Not for invoking an interactive review loop — that's the `crit` skill.
 user-invocable: false
 ---
 
 # Crit CLI Reference
 
-> If a plan was just written and the user said "crit" or "review", use the `$crit` skill instead — it covers the full review loop. This skill covers CLI operations like `crit comment`, `crit pull/push`, and `crit share`.
+> If a plan was just written and the user said "crit" or "review", use the `$crit` skill instead — it covers the full review loop. This skill covers CLI operations like `crit comment` and `crit pull/push`.
 
 Comments have three scopes:
 
@@ -34,13 +34,12 @@ Review-level comments are listed first — easy to miss in raw `review.json`. Us
 
 ## Multiple active sessions
 
-When more than one review session matches the current directory and branch, headless commands (`crit comment`, `crit comments`, `crit share`, `crit push`, `crit pull`) refuse to guess. Run `crit status` (or `crit status --json`) to list every active session, then target the intended review with `--session <id>`:
+When more than one review session matches the current directory and branch, headless commands (`crit comment`, `crit comments`, `crit push`, `crit pull`) refuse to guess. Run `crit status` (or `crit status --json`) to list every active session, then target the intended review with `--session <id>`:
 
 ```bash
 crit comment --session <id> --author <name> <path>:<line> <body>
 crit comment --session <id> --json --file comments.json --author <name>
 crit comments --session <id>
-crit share --session <id> <file>
 crit push --session <id>
 crit pull --session <id>
 ```
@@ -185,19 +184,3 @@ crit push [--dry-run] [--event <type>] [-m <msg>] [pr]   # Post review comments 
 Requires `gh` CLI installed and authenticated. PR number is auto-detected from the current branch.
 
 `--event` values: `comment` (default), `approve`, `request-changes`. `-m` adds a review-level body message.
-
-## Sharing
-
-```bash
-crit share <file> [file...]                          # Upload and print URL
-crit share --qr <file>                               # Also print QR code (terminal only)
-crit share --org <slug> <file>                       # Share under an organization
-crit share --org <slug> --visibility unlisted <file> # Org share with explicit visibility
-crit unpublish [file...]                              # Remove shared review
-```
-
-- **Always relay the output** — copy the URL (and QR if used) into your response. Don't make the user dig through tool output.
-- **`--qr` is terminal-only** — skip in mobile apps, web chat UIs, or anywhere Unicode block characters won't render correctly.
-- **`--org <slug>`** shares under an organization. Visibility defaults to `organization` (members only). Override with `--visibility` (`organization`, `unlisted`, `public`).
-- If a review file exists, comments for the shared files are included automatically.
-- **Unpublish uses the persisted delete token** in the review file — no extra args needed.

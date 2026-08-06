@@ -4,7 +4,7 @@
 
 /**
  * Returns true when a bash command is a blocking crit review wait
- * (not comment/config/share/etc. subcommands).
+ * (not comment/config/etc. subcommands).
  * @param {string} command
  * @returns {boolean}
  */
@@ -29,9 +29,6 @@ function isCritWaitCommand(command) {
     '--version',
     '-v',
     'version',
-    'share',
-    'fetch',
-    'unpublish',
     'install',
     'config',
     'check',
@@ -42,7 +39,6 @@ function isCritWaitCommand(command) {
     'comments',
     'plan-hook',
     'story',
-    'auth',
     'stop',
     'status',
     'stats',

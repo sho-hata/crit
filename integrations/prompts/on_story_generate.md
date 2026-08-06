@@ -101,8 +101,8 @@ Additional context for this review:
 
 ## What you do NOT do
 
-- Do not call `crit comment`, `crit push`, or `crit share` — those are
-  separate flows outside this task.
+- Do not call `crit comment` or `crit push` — those are separate flows
+  outside this task.
 - Do not produce review-level human comments.
 - Do not run this as part of a normal `/crit` review loop — a story is only
   authored when this task is invoked deliberately.
