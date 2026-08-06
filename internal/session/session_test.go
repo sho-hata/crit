@@ -486,24 +486,6 @@ func TestSession_WriteFiles_NoCommentsSkips(t *testing.T) {
 	}
 }
 
-func TestSession_WriteFiles_SharedURLOnly(t *testing.T) {
-	s := newTestSession(t)
-	s.SetSharedURLAndToken("https://crit.md/r/abc", "token123")
-
-	flushWrites(s)
-	s.WriteFiles()
-
-	data, err := os.ReadFile(ReviewPathsFor(s.critJSONPath()).Review)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cj CritJSON
-	json.Unmarshal(data, &cj)
-	if cj.ShareURL != "https://crit.md/r/abc" {
-		t.Errorf("share_url = %q", cj.ShareURL)
-	}
-}
-
 func TestSession_LoadCritJSON(t *testing.T) {
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "persisted comment", "", "", "")
@@ -1912,70 +1894,6 @@ func TestSession_MergeExternalCritJSON_ClearDetected(t *testing.T) {
 	}
 }
 
-func TestLoadCritJSON_IgnoresStaleShareState(t *testing.T) {
-	dir := t.TempDir()
-	critPath := filepath.Join(dir, ".crit")
-
-	// Write .crit.json with share state for a different file set
-	scope := shareScope([]string{"old-plan.md"})
-	cj := CritJSON{
-		ShareURL:    "https://crit.md/r/old",
-		DeleteToken: "old-token",
-		ShareScope:  scope,
-		Files:       map[string]CritJSONFile{},
-	}
-	data, _ := json.MarshalIndent(cj, "", "  ")
-	os.WriteFile(mustMkdirAll(ReviewPathsFor(critPath).Review), data, 0644)
-
-	// Create session with DIFFERENT files
-	sess := &Session{
-		OutputDir:   dir,
-		Files:       []*FileEntry{{Path: "new-plan.md", Content: "# New"}},
-		subscribers: make(map[chan SSEEvent]struct{}),
-	}
-	sess.loadCritJSON()
-
-	url, token := sess.GetShareState()
-	if url != "" || token != "" {
-		t.Errorf("expected stale share state to be ignored, got url=%q token=%q", url, token)
-	}
-}
-
-func TestLoadCritJSON_RestoresMatchingShareState(t *testing.T) {
-	dir := t.TempDir()
-	critPath := filepath.Join(dir, ".crit")
-
-	scope := shareScope([]string{"plan.md"})
-	cj := CritJSON{
-		ShareURL:    "https://crit.md/r/current",
-		DeleteToken: "current-token",
-		ShareScope:  scope,
-		Files:       map[string]CritJSONFile{},
-	}
-	data, _ := json.MarshalIndent(cj, "", "  ")
-	os.WriteFile(mustMkdirAll(ReviewPathsFor(critPath).Review), data, 0644)
-
-	// Create session with SAME files
-	sess := &Session{
-		OutputDir:   dir,
-		Files:       []*FileEntry{{Path: "plan.md", Content: "# Plan"}},
-		subscribers: make(map[chan SSEEvent]struct{}),
-	}
-	sess.loadCritJSON()
-
-	url, token := sess.GetShareState()
-	if url != "https://crit.md/r/current" {
-		t.Errorf("expected share state restored, got url=%q", url)
-	}
-	if token != "current-token" {
-		t.Errorf("expected token restored, got token=%q", token)
-	}
-}
-
-// TestSession_LoadCritJSON_RestoresReviewRound verifies that when crit restarts
-// with an existing .crit.json, the ReviewRound is restored from the file.
-// Without this, the session starts at round 1 while comments claim higher rounds,
-// causing mismatches between the UI header and comment badges.
 func TestComment_RepliesJSON(t *testing.T) {
 	c := Comment{
 		ID:        "c1",
@@ -3858,95 +3776,6 @@ func TestSession_WriteFiles_IncludesResolvedComments(t *testing.T) {
 	}
 }
 
-func TestLoadCritJSON_RestoresShareState(t *testing.T) {
-	s := newTestSession(t)
-
-	// Compute the share scope for this session's files.
-	paths := make([]string, len(s.Files))
-	for i, f := range s.Files {
-		paths[i] = f.Path
-	}
-	scope := shareScope(paths)
-
-	// Write a review file with share state.
-	identity := filepath.Join(s.RepoRoot, ".crit")
-	cj := CritJSON{
-		Branch:      "main",
-		BaseRef:     "abc123",
-		UpdatedAt:   time.Now().Format(time.RFC3339),
-		ReviewRound: 1,
-		ShareURL:    "https://crit.example.com/review/abc",
-		DeleteToken: "tok_secret123",
-		ShareScope:  scope,
-		Files:       map[string]CritJSONFile{},
-	}
-	if err := saveCritJSON(identity, cj); err != nil {
-		t.Fatal(err)
-	}
-
-	s.loadCritJSON()
-
-	if s.sharedURL != "https://crit.example.com/review/abc" {
-		t.Errorf("sharedURL = %q, want %q", s.sharedURL, "https://crit.example.com/review/abc")
-	}
-	if s.deleteToken != "tok_secret123" {
-		t.Errorf("deleteToken = %q, want %q", s.deleteToken, "tok_secret123")
-	}
-	if s.shareScope != scope {
-		t.Errorf("shareScope = %q, want %q", s.shareScope, scope)
-	}
-}
-
-func TestLoadCritJSON_ShareScopeMismatch(t *testing.T) {
-	s := newTestSession(t)
-
-	// Write a review file with a share scope that does not match this session.
-	identity := filepath.Join(s.RepoRoot, ".crit")
-	cj := CritJSON{
-		ShareURL:    "https://crit.example.com/review/old",
-		DeleteToken: "tok_old",
-		ShareScope:  "mismatched_scope_value",
-		Files:       map[string]CritJSONFile{},
-	}
-	if err := saveCritJSON(identity, cj); err != nil {
-		t.Fatal(err)
-	}
-
-	s.loadCritJSON()
-
-	// Share state should NOT be loaded because the scope doesn't match.
-	if s.sharedURL != "" {
-		t.Errorf("sharedURL = %q, want empty (scope mismatch)", s.sharedURL)
-	}
-	if s.deleteToken != "" {
-		t.Errorf("deleteToken = %q, want empty (scope mismatch)", s.deleteToken)
-	}
-}
-
-func TestLoadCritJSON_NoScope(t *testing.T) {
-	s := newTestSession(t)
-
-	// Review file without ShareScope — should load unconditionally.
-	identity := filepath.Join(s.RepoRoot, ".crit")
-	cj := CritJSON{
-		ShareURL:    "https://crit.example.com/review/legacy",
-		DeleteToken: "tok_legacy",
-		Files:       map[string]CritJSONFile{},
-	}
-	if err := saveCritJSON(identity, cj); err != nil {
-		t.Fatal(err)
-	}
-
-	s.loadCritJSON()
-
-	if s.sharedURL != "https://crit.example.com/review/legacy" {
-		t.Errorf("sharedURL = %q, want %q", s.sharedURL, "https://crit.example.com/review/legacy")
-	}
-	if s.deleteToken != "tok_legacy" {
-		t.Errorf("deleteToken = %q, want %q", s.deleteToken, "tok_legacy")
-	}
-}
-
 func TestLoadCritJSON_OrphanedComments(t *testing.T) {
 	dir := initTestRepo(t)
 	branch := "main"
@@ -4514,32 +4343,6 @@ func TestHandleCritJSONDeleted_ResetsReviewRound(t *testing.T) {
 	}
 }
 
-// --- GetShareScope / SetShareScope tests ---
-
-func TestGetShareScope(t *testing.T) {
-	s := &Session{
-		subscribers:   make(map[chan SSEEvent]struct{}),
-		roundComplete: make(chan struct{}, 1),
-	}
-
-	// Initially empty.
-	if got := s.GetShareScope(); got != "" {
-		t.Errorf("initial share scope = %q, want empty", got)
-	}
-
-	// Set and retrieve.
-	s.SetShareScope("abc123")
-	if got := s.GetShareScope(); got != "abc123" {
-		t.Errorf("share scope = %q, want abc123", got)
-	}
-
-	// Overwrite.
-	s.SetShareScope("def456")
-	if got := s.GetShareScope(); got != "def456" {
-		t.Errorf("share scope = %q, want def456", got)
-	}
-}
-
 // --- availableScopes tests ---
 
 func TestAvailableScopes_NilVCS(t *testing.T) {
@@ -4892,9 +4695,11 @@ func TestSyncCommentsFromDisk_ClearsPendingWrite(t *testing.T) {
 		RepoRoot:  dir,
 		Files:     []*FileEntry{{Path: "plan.md", AbsPath: filePath}},
 	}
-	s.SetSharedURLAndToken("https://crit.md/r/tok", "del")
+	if _, ok := s.AddComment("plan.md", 1, 1, "", "local pending comment", "", "tester", ""); !ok {
+		t.Fatal("AddComment failed")
+	}
 	if !s.PendingWriteForTest() {
-		t.Fatal("expected pendingWrite after SetSharedURLAndToken")
+		t.Fatal("expected pendingWrite after AddComment")
 	}
 
 	if !s.SyncCommentsFromDisk() {
@@ -5425,8 +5230,8 @@ func TestDirIgnored(t *testing.T) {
 }
 
 // TestSession_GeneratedFlowsThrough verifies that a path matched by a top-level
-// .gitattributes linguist-generated rule is flagged on the FileEntry, exposed
-// through SessionFileInfo, and propagated to share payloads.
+// .gitattributes linguist-generated rule is flagged on the FileEntry and
+// exposed through SessionFileInfo.
 func TestSession_GeneratedFlowsThrough(t *testing.T) {
 	dir := initTestRepo(t)
 	origDir, _ := os.Getwd()
@@ -5470,18 +5275,6 @@ func TestSession_GeneratedFlowsThrough(t *testing.T) {
 	}
 	if infoByPath["handwritten.go"].Generated {
 		t.Fatalf("SessionFileInfo for handwritten.go should not be Generated")
-	}
-
-	share := session.LoadShareFilesFromDisk()
-	shareByPath := map[string]shareFile{}
-	for _, sf := range share {
-		shareByPath[filepath.Base(sf.Path)] = sf
-	}
-	if !shareByPath["api.pb.go"].Generated {
-		t.Fatalf("shareFile for api.pb.go should be Generated")
-	}
-	if shareByPath["handwritten.go"].Generated {
-		t.Fatalf("shareFile for handwritten.go should not be Generated")
 	}
 }
 

@@ -13,7 +13,6 @@ import (
 
 type (
 	sessionEntry      = daemon.SessionEntry
-	shareFile         = ShareFile
 	commonDaemonFlags = PlanDaemonFlags
 	DiffLine          = vcs.DiffLine
 )
@@ -28,7 +27,6 @@ var (
 	newProcessGroup         = daemon.NewProcessGroupForTest
 	terminateProcess        = daemon.TerminateProcess
 	processExists           = daemon.ProcessExists
-	crawlPreview            = CrawlPreview
 	readFileShared          = ReadFileShared
 	ResolveDefaultBranchSHA = vcs.ResolveDefaultBranchSHA
 	loadSnapshotsFile       = loadSnapshotsFromDisk

@@ -95,8 +95,7 @@ func TestWriteFiles_EmptyDoesNotDeleteSidecar(t *testing.T) {
 		t.Fatalf("snapshots.json missing pre-call: %v", err)
 	}
 
-	// WriteFiles with no comments and no share state -> empty CritJSON ->
-	// removes review.json.
+	// WriteFiles with no comments -> empty CritJSON -> removes review.json.
 	flushWrites(s)
 	s.WriteFiles()
 

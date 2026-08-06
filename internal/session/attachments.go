@@ -2,19 +2,17 @@ package session
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 )
 
 // maxAttachmentBytes is the upper bound on a single pasted image after decode.
-// 5 MiB comfortably covers full-screen screenshots while keeping the share
-// payload (base64-inlined attachments + JSON) within crit-web's request limits.
+// 5 MiB comfortably covers full-screen screenshots while keeping the upload
+// request body reasonable.
 const maxAttachmentBytes = 5 << 20
 
 // attachmentExtByMIME maps the MIME types we accept to the file extension
@@ -141,42 +139,6 @@ func attachmentPathFor(reviewPath, filename string) (path, mime string, err erro
 	return filepath.Join(ReviewPathsFor(reviewPath).Attachments, filename), mime, nil
 }
 
-// inlineAttachmentsAsDataURIs rewrites local attachments/<file> markdown
-// references in body to data: URIs by reading and base64-encoding each
-// referenced file. External and absolute URLs are untouched. Missing or
-// oversized files are left as-is (and will simply 404 on the shared viewer
-// rather than blowing up the share request).
-//
-// Called from the share path so that shared reviews carry the actual image
-// bytes — crit-web has no asset endpoint of its own.
-func InlineAttachmentsAsDataURIs(reviewPath, body string) string {
-	if reviewPath == "" || !strings.Contains(body, "attachments/") {
-		return body
-	}
-	return attachmentMarkdownRE.ReplaceAllStringFunc(body, func(match string) string {
-		sub := attachmentMarkdownRE.FindStringSubmatch(match)
-		if len(sub) < 3 {
-			return match
-		}
-		alt, filename := sub[1], sub[2]
-		path, mime, err := attachmentPathFor(reviewPath, filename)
-		if err != nil {
-			return match
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return match
-		}
-		// Cap inlined size defensively — a misbehaving caller couldn't
-		// have got past saveAttachment's check, but belt + braces.
-		if len(data) > maxAttachmentBytes {
-			return match
-		}
-		encoded := base64.StdEncoding.EncodeToString(data)
-		return fmt.Sprintf("![%s](data:%s;base64,%s)", alt, mime, encoded)
-	})
-}
-
 // stripAttachmentReferences removes local attachments/<file> markdown
 // image refs from body and returns the rewritten body plus the number
 // stripped. External and absolute URLs are left intact. Used on the GitHub
@@ -210,12 +172,10 @@ func StripAttachmentReferences(body string) (string, int) {
 // for unit tests that don't care about attachment handling.
 type bodyRewriter func(body string) string
 
-// stripBodyRewriter removes local attachment refs from a body and appends
-// a "view in Crit" notice. Pasted images live only inside the local review
-// folder; the push path is the only outbound boundary that doesn't carry
-// the bytes (share-to-crit-web inlines as data URI; the GitHub comment
-// gets a notice instead).
-// StripBodyRewriter removes local attachment refs from a body before GitHub push.
+// StripBodyRewriter removes local attachment refs from a body and appends a
+// "view in Crit" notice before a GitHub push. Pasted images live only inside
+// the local review folder, so the push path substitutes a notice rather than
+// carrying the bytes.
 func StripBodyRewriter(body string) string {
 	out, _ := StripAttachmentReferences(body)
 	return out

@@ -234,15 +234,6 @@ type FileEntry struct {
 	Generated bool `json:"-"`
 }
 
-// ShareFile represents a file payload for sharing.
-type ShareFile struct {
-	Path      string `json:"path"`
-	Content   string `json:"content"`
-	Status    string `json:"status,omitempty"`
-	Generated bool   `json:"generated,omitempty"`
-	Encoding  string `json:"encoding,omitempty"`
-}
-
 // ensureFileLoaded loads a lazy file using the session's current focus.
 // Range/--pr focus reads content and diffs at HeadSHA/BaseSHA (including
 // --remote via readFileAtSHA). Working-tree focus reads the disk path.
@@ -453,12 +444,6 @@ type Session struct {
 	// snapshot-taken-before-clear from resurrecting the file.
 	writeMu             sync.Mutex
 	pendingWrite        bool
-	sharedURL           string
-	deleteToken         string
-	shareScope          string
-	shareOrg            string
-	shareOrgName        string
-	shareVisibility     string
 	status              *Status
 	roundComplete       chan struct{}
 	pendingEdits        int
@@ -498,13 +483,6 @@ type CritJSON struct {
 	BaseRef         string                  `json:"base_ref"`
 	UpdatedAt       string                  `json:"updated_at"`
 	ReviewRound     int                     `json:"review_round"`
-	ShareURL        string                  `json:"share_url,omitempty"`
-	DeleteToken     string                  `json:"delete_token,omitempty"`
-	ShareScope      string                  `json:"share_scope,omitempty"`
-	ShareOrg        string                  `json:"share_org,omitempty"`
-	ShareOrgName    string                  `json:"share_org_name,omitempty"`
-	ShareVisibility string                  `json:"share_visibility,omitempty"`
-	LastShareHash   string                  `json:"last_share_hash,omitempty"`
 	ReviewComments  []Comment               `json:"review_comments,omitempty"`
 	CliArgs         []string                `json:"cli_args,omitempty"`
 	Files           map[string]CritJSONFile `json:"files"`
@@ -1889,8 +1867,7 @@ func (s *Session) UnresolvedCommentCount() int {
 
 // locateFileCommentLocked finds a file comment by ID. hintPath is the route
 // pathname the client sent (?path=); when it differs from the on-disk file
-// key (e.g. preview pins re-keyed to index.html on crit-web share), the
-// global search still finds the comment.
+// key, the global search still finds the comment.
 func (s *Session) locateFileCommentLocked(hintPath, id string) (*FileEntry, int) {
 	if hintPath != "" {
 		if f := s.fileByPathLocked(hintPath); f != nil {
@@ -1981,138 +1958,6 @@ func (s *Session) EnsureFileEntry(path string) bool {
 	}
 	s.Files = append(s.Files, fe)
 	return true
-}
-
-// GetSharedURL returns the stored share URL.
-func (s *Session) GetSharedURL() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sharedURL
-}
-
-// GetToken returns the review token derived from the stored shared URL.
-// Returns empty string if no review is shared. Single source of truth — uses
-// tokenFromHostedURL so callers don't reimplement /r/<token> parsing.
-func (s *Session) GetToken() string {
-	return tokenFromHostedURL(s.GetSharedURL())
-}
-
-// SetSharedURLAndToken atomically updates both the shared URL and delete token.
-func (s *Session) SetSharedURLAndToken(url, token string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sharedURL = url
-	s.deleteToken = token
-	s.scheduleWrite()
-}
-
-// SetShareScope stores the scope hash for the current share.
-func (s *Session) SetShareScope(scope string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.shareScope = scope
-}
-
-// GetShareScope returns the stored share scope hash.
-func (s *Session) GetShareScope() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.shareScope
-}
-
-// FilePathsSnapshot returns the session's file paths under read lock. The share
-// scope is computed from these (the session's stable review identity) rather
-// than from the uploaded payload — for preview that's the single previewed
-// HTML's session path, not the crawled asset set, so the scope still matches on
-// restart when restoreShareStateLocked recomputes it from s.Files.
-func (s *Session) FilePathsSnapshot() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	paths := make([]string, 0, len(s.Files))
-	for _, f := range s.Files {
-		paths = append(paths, f.Path)
-	}
-	return paths
-}
-
-// GetShareState returns the shared URL and delete token atomically.
-func (s *Session) GetShareState() (string, string) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sharedURL, s.deleteToken
-}
-
-func (s *Session) SetShareOrgInfo(org, orgName, visibility string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.shareOrg = org
-	s.shareOrgName = orgName
-	s.shareVisibility = visibility
-	s.scheduleWrite()
-}
-
-func (s *Session) GetShareOrgInfo() (string, string, string) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.shareOrg, s.shareOrgName, s.shareVisibility
-}
-
-// LoadShareFilesFromDisk reads file content from disk for all session files,
-// returning share-ready file entries. Orphaned files (removed between rounds)
-// are included with empty content and the orphaned flag set so crit-web can
-// render them with the appropriate status badge.
-func (s *Session) LoadShareFilesFromDisk() []ShareFile {
-	s.mu.RLock()
-	type fileInfo struct {
-		path                  string
-		absPath               string
-		status                string
-		orphaned              bool
-		generated             bool
-		hasUnresolvedComments bool
-	}
-	infos := make([]fileInfo, 0, len(s.Files))
-	for _, f := range s.Files {
-		hasUnresolved := false
-		for _, c := range f.Comments {
-			if !c.Resolved {
-				hasUnresolved = true
-				break
-			}
-		}
-		infos = append(infos, fileInfo{path: f.Path, absPath: f.AbsPath, status: f.Status, orphaned: f.Orphaned, generated: f.Generated, hasUnresolvedComments: hasUnresolved})
-	}
-	s.mu.RUnlock()
-
-	var files []ShareFile
-	for _, fi := range infos {
-		if fi.orphaned {
-			if !fi.hasUnresolvedComments {
-				continue // skip orphaned files with no unresolved comments
-			}
-			files = append(files, ShareFile{
-				Path:   fi.path,
-				Status: "removed",
-			})
-			continue
-		}
-		if fi.status == "deleted" {
-			continue
-		}
-		data, err := os.ReadFile(fi.absPath)
-		if err != nil {
-			continue // file may have been removed since session started
-		}
-		files = append(files, ShareFile{Path: fi.path, Content: string(data), Status: fi.status, Generated: fi.generated})
-	}
-	return files
-}
-
-// GetDeleteToken returns the stored delete token.
-func (s *Session) GetDeleteToken() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.deleteToken
 }
 
 // GetReviewRound returns the current review round.
@@ -2363,7 +2208,7 @@ func reportLoadCritJSONLockViolation() {
 	fmt.Fprintln(os.Stderr, msg)
 }
 
-// loadCritJSON loads comments and share state from an existing review file.
+// loadCritJSON loads comments from an existing review file.
 //
 // Lock contract: PRE-SETSESSION ONLY. Safe to call only from the constructor
 // path (NewSessionFromFiles, applySessionOverrides, etc.) before any goroutine
@@ -2386,35 +2231,6 @@ func (s *Session) loadCritJSON() {
 		s.writeTimer.Stop()
 	}
 	s.loadCritJSONLocked()
-}
-
-// restoreShareStateLocked copies share-related fields from cj into the
-// session, gated by share-scope match so we don't carry over a share
-// pointer when the file set has changed since the share was created.
-// Caller must hold s.mu.Lock() (or be the constructor pre-SetSession).
-func (s *Session) restoreShareStateLocked(cj *CritJSON) {
-	if cj.ShareScope != "" {
-		paths := make([]string, 0, len(s.Files))
-		for _, f := range s.Files {
-			paths = append(paths, f.Path)
-		}
-		if shareScope(paths) == cj.ShareScope {
-			s.sharedURL = cj.ShareURL
-			s.deleteToken = cj.DeleteToken
-			s.shareScope = cj.ShareScope
-			s.shareOrg = cj.ShareOrg
-			s.shareOrgName = cj.ShareOrgName
-			s.shareVisibility = cj.ShareVisibility
-		}
-		return
-	}
-	if cj.ShareURL != "" {
-		s.sharedURL = cj.ShareURL
-		s.deleteToken = cj.DeleteToken
-		s.shareOrg = cj.ShareOrg
-		s.shareOrgName = cj.ShareOrgName
-		s.shareVisibility = cj.ShareVisibility
-	}
 }
 
 // restoreFileCommentsLocked copies per-file comments from cj into matching
@@ -2441,9 +2257,9 @@ func (s *Session) restoreFileCommentsLocked(cj *CritJSON) {
 // rebuilds s.Files and needs to repopulate per-file Comments from disk).
 //
 // Lock contract: caller MUST hold s.mu.Lock() (writer lock). The function
-// mutates s.Files[*].Comments, s.reviewComments, s.ReviewRound,
-// s.sharedURL/deleteToken/shareScope, and s.lastCritJSONMtime, all of which
-// race with concurrent readers under s.mu.RLock(). The pre-SetSession path
+// mutates s.Files[*].Comments, s.reviewComments, s.ReviewRound, and
+// s.lastCritJSONMtime, all of which race with concurrent readers under
+// s.mu.RLock(). The pre-SetSession path
 // (loadCritJSON) gets away without the lock because no other goroutine has
 // observed the session yet.
 func (s *Session) loadCritJSONLocked() {
@@ -2484,8 +2300,6 @@ func (s *Session) loadCritJSONLocked() {
 	if err := json.Unmarshal(data, &cj); err != nil {
 		return
 	}
-
-	s.restoreShareStateLocked(&cj)
 
 	// Restore review round so the session continues from where it left off.
 	if cj.ReviewRound > s.ReviewRound {
