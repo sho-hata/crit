@@ -28,12 +28,6 @@
 .crit-mode-live #tocToggle,
 .crit-mode-live #updateBtn { display: none !important; }
 
-/* #shareBtn is hidden in design/live mode (a running app is proxied — nothing
-   self-contained to publish) but IS available in preview mode, which shares a
-   crawled HTML snapshot. The shared share controller (window.crit.share)
-   reveals it once /api/config resolves. */
-.crit-mode-live:not(.crit-mode-preview) #shareBtn { display: none !important; }
-
 /* The comments-panel survives but is shown for live-mode comments.
    The base stylesheet hides .comments-panel for code-review boot via an
    inline `.comments-panel-hidden` class; we need to undo that for live

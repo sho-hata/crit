@@ -193,47 +193,13 @@ test('renderSettingsTab: integration card unconfigured CTA when nothing installe
   assert.match(pane.innerHTML, /Also: claude-code/);
 });
 
-test('renderSettingsTab: share card disabled when no share_url', () => {
-  const sp = loadShared();
-  const pane = makePane();
-  sp.renderSettingsTab(pane, {
-    mode: 'live',
-    cfg: { no_integration_check: true },
-    hooks: { applyTheme: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
-  });
-  assert.match(pane.innerHTML, /Share[\s\S]*Disabled/);
-});
-
-test('renderSettingsTab: share card enabled shows hostname', () => {
-  const sp = loadShared();
-  const pane = makePane();
-  sp.renderSettingsTab(pane, {
-    mode: 'live',
-    cfg: { share_url: 'https://example.com/api', no_integration_check: true },
-    hooks: { applyTheme: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
-  });
-  assert.match(pane.innerHTML, /Sharing enabled/);
-  assert.match(pane.innerHTML, /example\.com/);
-});
-
-test('renderSettingsTab: account card present when share_url + auth_logged_in', () => {
-  const sp = loadShared();
-  const pane = makePane();
-  sp.renderSettingsTab(pane, {
-    mode: 'live',
-    cfg: { share_url: 'https://example.com', auth_logged_in: true, auth_user_email: 'a@b.com', no_integration_check: true },
-    hooks: { applyTheme: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
-  });
-  assert.match(pane.innerHTML, /a@b\.com/);
-});
-
 test('renderSettingsTab: opts.show overrides defaults', () => {
   const sp = loadShared();
   const pane = makePane();
   sp.renderSettingsTab(pane, {
     mode: 'code-review',
     cfg: {},
-    show: { width: false, hideResolved: false, update: false, account: false, agent: false, integration: false, share: false },
+    show: { width: false, hideResolved: false, update: false, agent: false, integration: false },
     hooks: { applyTheme: () => {}, applyWidth: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
   });
   // Only theme pill remains.

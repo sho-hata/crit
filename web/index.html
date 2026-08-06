@@ -110,7 +110,6 @@
     <button class="theme-toggle crit-story-rail-toggle" id="storyRailToggle" title="Toggle chapters" aria-label="Toggle chapters">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke-linecap="round"/></svg>
     </button>
-    <button class="btn" id="shareBtn" style="display:none">Share</button>
     <button class="btn btn-primary" id="finishBtn">Approve</button>
   </div>
 </div>
@@ -294,9 +293,8 @@
       // pr-panel, etc.) while keeping the header + settings overlay alive, so the
       // shared bootstrap (theme pill, settings dialog, shared helpers) keeps working.
       document.documentElement.classList.add('crit-mode-live');
-      // Preview is a self-contained, shareable snapshot, so mark it distinctly:
-      // style-live.css un-hides the Share button for preview (design/live keeps
-      // it hidden — there's a running app behind it, nothing to publish).
+      // Preview is a self-contained HTML snapshot rather than a proxied
+      // running app, so mark it distinctly for preview-specific UI branches.
       if (isPreview) document.documentElement.classList.add('crit-mode-preview');
 
       // Pull in shared helpers + live-mode CSS, then the controller.
@@ -341,7 +339,6 @@
         'crit-shortcuts.js',
         'crit-settings-panes.js',
         'crit-settings-overlay.js',
-        'crit-share.js',
         'agent-protocol.js',
         'live-mode.dispatch.js',
         'live-mode.inflight.js',
@@ -454,8 +451,6 @@
       var df = document.createElement('script'); df.src = 'crit-diff-renderer.js'; df.async = false; document.body.appendChild(df);
       // SVG icon constants used by app.js. Must load before app.js.
       var ic = document.createElement('script'); ic.src = 'crit-icons.js'; ic.async = false; document.body.appendChild(ic);
-      // Shared Share flow (window.crit.share). Must load before app.js.
-      var shr = document.createElement('script'); shr.src = 'crit-share.js'; shr.async = false; document.body.appendChild(shr);
       // Glob matcher for auto-viewed-patterns (window.crit.globMatch). Must load before app.js.
       var gm = document.createElement('script'); gm.src = 'crit-glob-match.js'; gm.async = false; document.body.appendChild(gm);
       // Tab title badge when a round becomes ready while the tab is hidden.
