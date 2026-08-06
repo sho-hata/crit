@@ -33,6 +33,16 @@ type (
 	bodyRewriter   = func(string) string
 )
 
+// checkGitHubSyncAllowed gates `crit pull` and `crit push` from running on
+// live reviews. Live pins have no line anchors and cannot round-trip
+// through GitHub PR review comments.
+func checkGitHubSyncAllowed(cj session.CritJSON, op string) error {
+	if cj.ReviewType == "live" {
+		return fmt.Errorf("%s is not supported for live reviews", op)
+	}
+	return nil
+}
+
 func shortSHAString(sha string) string {
 	if len(sha) <= 7 {
 		return sha

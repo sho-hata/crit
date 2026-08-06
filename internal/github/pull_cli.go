@@ -11,7 +11,6 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/share"
 	"github.com/tomasz-tomczyk/crit/internal/vcs"
 )
 
@@ -136,7 +135,7 @@ func RunPull(args []string) error { //nolint:gocyclo
 		cj.ReviewRound = 1
 	}
 
-	if err := share.CheckGitHubSyncAllowed(cj, "crit pull"); err != nil {
+	if err := checkGitHubSyncAllowed(cj, "crit pull"); err != nil {
 		return err
 	}
 
