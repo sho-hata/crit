@@ -63,19 +63,7 @@ The harness seeds comments, swaps in v2 content to simulate agent edits, and sig
 
 ## Integration Tests
 
-These exercise crit against its real collaborators — `crit-web` and GitHub. They are heavier than the unit suite and live behind build tags so `go test ./...` stays fast and hermetic. Extend them when you touch the surfaces they cover.
-
-### crit ↔ crit-web share roundtrip
-
-`make e2e-share` runs the share roundtrip in `share_integration_test.go` (build tag `integration`): share a review, fetch web-authored comments, re-share without duplicates, unpublish. It needs a local `crit-web` checkout at `../crit-web` (or `CRIT_WEB_DIR`) and PostgreSQL running locally.
-
-```bash
-make e2e-share                                   # build crit, start crit-web on :4001, run all TestShareSync*, tear down
-./scripts/e2e-share.sh --serve                   # start crit-web for manual inspection (logs review URLs)
-./scripts/e2e-share.sh -run TestShareSyncFullLifecycle   # one case
-```
-
-When you change the share payload, comment sync, or any crit-web interaction, **add a `TestShareSync*` case** so the new behavior is covered, and use `--serve` to inspect the result on the web. See `scripts/AGENTS.md` for prerequisites, the full case list, and the seed helpers (`critShareCmd`, `seedComment`, `logReview`, etc.).
+These exercise crit against its real collaborator — GitHub. They are heavier than the unit suite and live behind a build tag so `go test ./...` stays fast and hermetic. Extend them when you touch the surfaces they cover.
 
 ### crit ↔ GitHub PR roundtrip
 
@@ -90,7 +78,7 @@ When you change `crit pull` / `crit push`, GitHub comment-bucket logic, or reply
 
 ### Leave a seed behind
 
-When you ship a review-UI feature, leave a seeded scenario in `test/shell/test-diff.sh`; when you ship share or GitHub-sync behavior, leave an integration test case. The next contributor — and you, three months from now — should be able to spin up your feature and verify it without reverse-engineering it first.
+When you ship a review-UI feature, leave a seeded scenario in `test/shell/test-diff.sh`; when you ship GitHub-sync behavior, leave an integration test case. The next contributor — and you, three months from now — should be able to spin up your feature and verify it without reverse-engineering it first.
 
 ## Linting
 
