@@ -5,7 +5,6 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/server"
 	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/share"
 )
 
 type (
@@ -17,23 +16,15 @@ type (
 	DOMAnchor    = session.DOMAnchor
 	FileEntry    = session.FileEntry
 	SSEEvent     = session.SSEEvent
-	shareComment = share.ShareComment
-	shareFile    = share.ShareFile
 )
 
-const previewMainHTMLKey = session.PreviewMainHTMLKey
-
 var (
-	remapPreviewCommentFiles = share.RemapPreviewCommentFiles
-	crawlPreview             = session.CrawlPreview
-	saveCritJSON             = review.SaveCritJSON
-	frontendFS               = server.FrontendFS
-	liveSessionKey           = daemon.LiveSessionKey
-	NewServer                = server.NewServer
-	shareReviewFiles         = share.ShareReviewFiles
-	previewSessionKey        = PreviewSessionKey
-	shareScope               = share.ShareScope
-	looksLikePreviewArgs     = LooksLikePreviewArgs
+	saveCritJSON         = review.SaveCritJSON
+	frontendFS           = server.FrontendFS
+	liveSessionKey       = daemon.LiveSessionKey
+	NewServer            = server.NewServer
+	previewSessionKey    = PreviewSessionKey
+	looksLikePreviewArgs = LooksLikePreviewArgs
 )
 
 type serverConfig struct {

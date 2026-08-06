@@ -67,7 +67,6 @@ func RunPreview(args []string) {
 	allowUnauthNet := fs.Bool(config.AllowUnauthenticatedNetworkFlag, false, "Allow non-loopback listen or public_url without authentication")
 	quiet := fs.Bool("quiet", false, "On success, suppress connect/start status, tips, and session summary")
 	fs.BoolVar(quiet, "q", false, "On success, suppress status (shorthand)")
-	shareURL := fs.String("share-url", "", "Share service URL")
 	// Keep in sync with the fs.Bool/fs.BoolVar registrations above.
 	args = clicmd.ReorderFlagsFirst(args, map[string]bool{
 		"no-open":                              true,
@@ -116,7 +115,7 @@ func RunPreview(args []string) {
 		return
 	}
 
-	daemonArgs := buildPreviewStartArgs(absPath, *port, *host, *publicURL, *allowUnauthNet || config.EnvAllowsUnauthenticatedNetwork(), noOpenResolved, quietResolved, *shareURL, cfg)
+	daemonArgs := buildPreviewStartArgs(absPath, *port, *host, *publicURL, *allowUnauthNet || config.EnvAllowsUnauthenticatedNetwork(), noOpenResolved, quietResolved, cfg)
 	entry, err := daemon.StartDaemon(key, daemonArgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not start preview daemon: %v\n", err)
@@ -135,7 +134,7 @@ func RunPreview(args []string) {
 	daemon.RunReviewClient(entry, key, quietResolved)
 }
 
-func buildPreviewStartArgs(absPath string, port int, host, publicURL string, allowUnauthNet, noOpen, quiet bool, shareURL string, cfg config.Config) []string {
+func buildPreviewStartArgs(absPath string, port int, host, publicURL string, allowUnauthNet, noOpen, quiet bool, cfg config.Config) []string {
 	daemonArgs := []string{"--preview-file", absPath}
 	return daemon.AppendCommonDaemonFlags(daemonArgs, daemon.CommonDaemonFlags{
 		Port:                        config.ResolvePort(port, cfg.Port),
@@ -144,7 +143,6 @@ func buildPreviewStartArgs(absPath string, port int, host, publicURL string, all
 		AllowUnauthenticatedNetwork: allowUnauthNet,
 		NoOpen:                      noOpen,
 		Quiet:                       quiet,
-		ShareURL:                    config.ResolveShareURL(shareURL, cfg, config.DefaultShareURL),
 	})
 }
 

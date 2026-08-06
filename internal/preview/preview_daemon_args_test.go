@@ -8,12 +8,11 @@ import (
 
 func TestBuildPreviewStartArgs_PublicURL(t *testing.T) {
 	cfg := config.Config{PublicURL: "https://config.ts.net"}
-	args := buildPreviewStartArgsForTest("/tmp/page.html", 0, "", "https://cli.ts.net", false, true, false, "", cfg)
+	args := buildPreviewStartArgsForTest("/tmp/page.html", 0, "", "https://cli.ts.net", false, true, false, cfg)
 	want := []string{
 		"--preview-file", "/tmp/page.html",
 		"--public-url", "https://cli.ts.net",
 		"--no-open",
-		"--share-url", "https://crit.md",
 	}
 	if len(args) != len(want) {
 		t.Fatalf("got %v, want %v", args, want)
@@ -24,8 +23,8 @@ func TestBuildPreviewStartArgs_PublicURL(t *testing.T) {
 		}
 	}
 
-	fromCfg := buildPreviewStartArgsForTest("/tmp/page.html", 0, "", "", false, false, false, "", cfg)
-	if len(fromCfg) != 6 || fromCfg[2] != "--public-url" || fromCfg[3] != "https://config.ts.net" {
+	fromCfg := buildPreviewStartArgsForTest("/tmp/page.html", 0, "", "", false, false, false, cfg)
+	if len(fromCfg) != 4 || fromCfg[2] != "--public-url" || fromCfg[3] != "https://config.ts.net" {
 		t.Fatalf("config public-url: got %v", fromCfg)
 	}
 }
