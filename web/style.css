@@ -6025,3 +6025,38 @@ body.crit-story-active .crit-story-rail-resizer { display: block; }
   .crit-story-next { min-height: 44px; }
   .crit-story-chapter__mark { min-height: 32px; }
 }
+
+/* ===== LSP (hover tooltip, jump flash, definition peek) ===== */
+
+.lsp-tooltip {
+  position: fixed;
+  z-index: 300;
+  max-width: 560px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--crit-bg-elevated);
+  border: 1px solid var(--crit-border-strong);
+  border-radius: 8px;
+  box-shadow: var(--crit-shadow);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--crit-fg-primary);
+}
+.lsp-tooltip pre,
+.lsp-tooltip code {
+  font-family: var(--crit-font-mono);
+  font-size: 12px;
+}
+.lsp-tooltip pre {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: var(--crit-editor-code-bg);
+  border-radius: 6px;
+}
+.lsp-tooltip p { margin: 4px 0; }
+.lsp-tooltip-loading {
+  color: var(--crit-fg-muted);
+  font-style: italic;
+}

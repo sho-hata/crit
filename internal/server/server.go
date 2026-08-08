@@ -96,6 +96,9 @@ type Server struct {
 	// during shutdown. The shutdown path Wait()s on this with a timeout.
 	bgWG sync.WaitGroup
 
+	// lsp holds the lazily-created language-server manager (see lsp_handlers.go).
+	lsp lspState
+
 	// sessionStartedAt records when the daemon started, used by stats recording.
 	sessionStartedAt time.Time
 	// statsRecorded is set after the first stats write so shutdown doesn't
@@ -170,6 +173,9 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/file/diff", s.withReady(s.handleFileDiff))
 	mux.HandleFunc("/api/file/comments", s.withReady(s.handleFileComments))
 	mux.HandleFunc("/api/comment/", s.withReady(s.handleCommentByID))
+
+	// Language-server features (hover) for Go files
+	mux.HandleFunc("/api/lsp/hover", s.withReady(s.handleLSPHover))
 
 	// Attachment upload (POST) and serving (GET /api/attachments/{filename}).
 	// The trailing slash form ServeMux uses means the bare /api/attachments
@@ -460,6 +466,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Glob patterns the frontend auto-marks viewed (collapsed) once per launch
 		"auto_viewed_patterns": s.cfg.AutoViewedPatterns,
+
+		// Language-server features (hover / go-to-definition). True only when
+		// enabled in config AND gopls is on PATH AND the session has a repo root.
+		"lsp_available": s.lspAvailable(),
 
 		// Available integrations (always included)
 		"integrations_available": availableIntegrations(),
