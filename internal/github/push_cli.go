@@ -12,7 +12,6 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/share"
 )
 
 type pushFlags struct {
@@ -461,7 +460,7 @@ func RunPush(args []string) error {
 		return err
 	}
 
-	if err := share.CheckGitHubSyncAllowed(ctx.cj, "crit push"); err != nil {
+	if err := checkGitHubSyncAllowed(ctx.cj, "crit push"); err != nil {
 		return err
 	}
 

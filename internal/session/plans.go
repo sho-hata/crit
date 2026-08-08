@@ -101,7 +101,6 @@ type PlanDaemonFlags struct {
 	AllowUnauthenticatedNetwork bool
 	NoOpen                      bool
 	Quiet                       bool
-	ShareURL                    string
 }
 
 // BuildPlanDaemonArgs builds daemon argv for plan mode.
@@ -131,9 +130,6 @@ func appendPlanDaemonFlags(args []string, f PlanDaemonFlags) []string {
 	}
 	if f.Quiet {
 		args = append(args, "--quiet")
-	}
-	if f.ShareURL != "" {
-		args = append(args, "--share-url", f.ShareURL)
 	}
 	return args
 }

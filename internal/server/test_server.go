@@ -33,7 +33,7 @@ func NewTestServer(t *testing.T) (*Server, *Session) {
 	}
 	sess.InitTestChannels()
 
-	srv, err := NewServer(sess, FrontendFS, "", false, "", "", "test", 0, "")
+	srv, err := NewServer(sess, FrontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

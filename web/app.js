@@ -335,15 +335,9 @@
   // ===== State =====
   let session = {};       // { mode, branch, base_ref, review_round, files: [...] }
   let files = [];         // [{ path, status, fileType, content, diffHunks, comments, lineBlocks, tocItems, collapsed, viewMode }]
-  let shareURL = '';       // read by the tip-rotation block; share flow gets its own copy
-  let authUserName = '';   // read by the tip-rotation block; share flow gets its own copy
   let configAuthor = '';
   let autoViewedPatterns = [];  // config auto_viewed_patterns; applied once per launch (issue #658)
 
-  // Share flow (button + modals + popup relay) lives in crit-share.js
-  // (window.crit.share). The controller is created in init() once /api/config
-  // resolves, and stored here so other code can call reveal()/closeModal().
-  let shareCtl = null;
   let promptTrustConfig = { project_prompts_untrusted: false };
 
   let uiState = 'reviewing';
@@ -458,8 +452,6 @@
   const ICON_DELETE = window.crit.icons.ICON_DELETE;
   const ICON_RESOLVE = window.crit.icons.ICON_RESOLVE;
   const ICON_UNRESOLVE = window.crit.icons.ICON_UNRESOLVE;
-  const ICON_CLIPBOARD = window.crit.icons.ICON_CLIPBOARD;
-  const ICON_CHECK_SMALL = window.crit.icons.ICON_CHECK_SMALL;
   const ICON_COMMENT = window.crit.icons.ICON_COMMENT;
   const ICON_COPY_PATH = window.crit.icons.ICON_COPY_PATH;
   const ICON_COPY_PATH_CHECK = window.crit.icons.ICON_COPY_PATH_CHECK;
@@ -856,44 +848,10 @@
       .catch(() => { /* fire-and-forget */ });
 
     // Config
-    shareURL = configRes.share_url || '';
     autoViewedPatterns = Array.isArray(configRes.auto_viewed_patterns) ? configRes.auto_viewed_patterns : [];
-    authUserName = configRes.auth_user_name || '';
     configAuthor = configRes.author || '';
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
-
-    // Build the shared Share controller (window.crit.share). It owns all share
-    // state internally; we pass the config from /api/config plus app.js-specific
-    // adapters (comment refresh, toast, escapeHtml, settings, icons).
-    //
-    // Share is available in files + preview review, but not vcs/diff (git):
-    // canShare = session.mode !== 'git'. The controller's reveal() shows the
-    // button iff (shareURL && canShare) and sets the 'shared' state when a
-    // hosted URL already exists.
-    shareCtl = window.crit.share.create({
-      shareURL: shareURL,
-      hostedURL: configRes.hosted_url || '',
-      deleteToken: configRes.delete_token || '',
-      hostedToken: configRes.hosted_token || '',
-      needsShareConsent: configRes.needs_consent || false,
-      authUserName: authUserName,
-      proxyAuth: !!configRes.proxy_auth,
-      reviewType: configRes.review_type || '',
-      sharedOrg: configRes.share_org
-        ? { slug: configRes.share_org, name: configRes.share_org_name || configRes.share_org }
-        : null,
-      sharedVisibility: configRes.share_org ? (configRes.share_visibility || '') : '',
-      shareBtnEl: document.getElementById('shareBtn'),
-      canShare: session.mode !== 'git',
-      onCommentsRefreshed: refreshAllComments,
-      toast: { show: showToast, dismiss: dismissToast },
-      escapeHtml: escapeHtml,
-      getSetting: getSetting,
-      setSetting: setSetting,
-      icons: { clipboard: ICON_CLIPBOARD, check: ICON_CHECK_SMALL },
-    });
-    shareCtl.reveal();
 
     promptTrustConfig = {
       project_prompts_untrusted: !!configRes.project_prompts_untrusted,
@@ -7272,12 +7230,6 @@
     if (!agentEnabled) {
       extra.push('Set <kbd>agent_cmd</kbd> in your config to send comments directly to your AI agent for immediate feedback.');
     }
-    if (shareURL && !authUserName) {
-      extra.push('Run <kbd>crit auth login</kbd> to link shared reviews with your account.');
-    }
-    if (shareURL) {
-      extra.push('Create a team on <kbd>' + shareURL.replace(/^https?:\/\//, '') + '</kbd> to group and secure your shared reviews.');
-    }
     window.crit.shared.startTipRotation(extra);
   }
 
@@ -7724,66 +7676,12 @@
     window.crit.shared.showDisconnected();
   }
 
-  // ===== Share =====
-  // The full Share flow (button states, modals, org picker, pull/re-share,
-  // unpublish, popup relay) lives in crit-share.js (window.crit.share) and is
-  // wired up via shareCtl in init(). refreshAllComments (below) stays here \u2014
-  // it's app.js-specific (files[] + renderCommentsPanel) and is passed to the
-  // controller as the onCommentsRefreshed adapter.
-
-  // After /api/comments/merge updates the local review file, re-fetch each
-  // file's comments and re-render in place. Uses the existing per-file
-  // refresh + render-panel path — preserves scroll position, expanded
-  // threads, and unsubmitted drafts (no location.reload).
-  async function refreshAllComments() {
-    await Promise.all(files.map(async function(f) {
-      try {
-        const r = await fetch('/api/file/comments?path=' + enc(f.path));
-        if (r.ok) {
-          f.comments = await r.json();
-        }
-      } catch { /* per-file refresh is best-effort */ }
-    }));
-    renderCommentsPanel();
-    updateCommentCount();
-    updateTreeCommentBadges();
-  }
-
   // Announce copy action to screen readers via live region. Used by the
-  // finish-review copy flow and the settings overlay (crit-share.js has its
-  // own internal copy for the share modal's clipboard buttons).
+  // finish-review copy flow and the settings overlay.
   function announceCopy() {
     const el = document.getElementById('copyStatus');
     if (el) { el.textContent = ''; el.textContent = 'Copied to clipboard'; }
   }
-
-  // ===== Toast System =====
-  function showToast(id, type, content, opts) {
-    dismissToast(id);
-    const container = document.getElementById('toastContainer');
-    const el = document.createElement('div');
-    el.className = 'toast toast-' + type;
-    el.id = 'toast-' + id;
-    el.innerHTML = content;
-    container.appendChild(el);
-    if (opts && opts.autoDismiss) {
-      setTimeout(function() { dismissToast(id); }, 4000);
-    }
-    return el;
-  }
-
-  function dismissToast(id) {
-    const el = document.getElementById('toast-' + id);
-    if (!el) return;
-    el.classList.add('toast-out');
-    el.addEventListener('animationend', function() { el.remove(); }, { once: true });
-  }
-
-  // Event delegation for toast dismiss buttons (replaces inline onclick)
-  document.getElementById('toastContainer').addEventListener('click', function(e) {
-    const btn = e.target.closest('[data-dismiss-toast]');
-    if (btn) dismissToast(btn.dataset.dismissToast);
-  });
 
   // ===== Table of Contents =====
   function buildToc() {
@@ -9138,26 +9036,6 @@
       html += '</div>';
     }
 
-    // Account card (only show if sharing is enabled)
-    if (cfg.share_url) {
-      if (cfg.auth_logged_in) {
-        const display = cfg.auth_user_email || cfg.auth_user_name || 'Logged in';
-        html += '<div class="config-card config-card--green"><div class="config-card-header">';
-        html += '<span class="config-card-icon" style="color:var(--crit-green)">&#10003;</span>';
-        html += '<span class="config-card-title">Account</span>';
-        html += '<span class="config-card-value">' + escapeHtml(display) + '</span>';
-        html += '</div></div>';
-      } else {
-        html += '<div class="config-card config-card--red config-card--unconfigured"><div class="config-card-header">';
-        html += '<span class="config-card-icon" style="color:var(--crit-red)">&#9675;</span>';
-        html += '<span class="config-card-title">Account</span>';
-        html += '</div>';
-        html += '<div class="config-card-body">Not logged in. Sign in to link reviews to your account and track review history.</div>';
-        html += '<div class="config-card-cmd"><span>$ crit auth login</span><button class="config-card-copy" data-copy="crit auth login">Copy</button></div>';
-        html += '</div>';
-      }
-    }
-
     // Agent Command card
     if (cfg.agent_cmd_enabled) {
       html += '<div class="config-card config-card--green"><div class="config-card-header">';
@@ -9240,22 +9118,6 @@
       }
     }
 
-    // Share card
-    if (cfg.share_url) {
-      let hostname;
-      try { hostname = new URL(cfg.share_url).hostname; } catch { hostname = cfg.share_url; }
-      html += '<div class="config-card config-card--green"><div class="config-card-header">';
-      html += '<span class="config-card-icon" style="color:var(--crit-green)">&#10003;</span>';
-      html += '<span class="config-card-title">Sharing enabled</span>';
-      html += '<span class="config-card-value">' + escapeHtml(hostname) + '</span>';
-      html += '</div></div>';
-    } else {
-      html += '<div class="config-card config-card--gray config-card--unconfigured"><div class="config-card-header">';
-      html += '<span class="config-card-icon" style="color:var(--crit-editor-fg-muted)">&mdash;</span>';
-      html += '<span class="config-card-title">Share</span>';
-      html += '<span class="config-card-value">Disabled</span>';
-      html += '</div></div>';
-    }
     html += '</div>'; // close config-cards
 
     pane.innerHTML = html;

@@ -12,12 +12,6 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/vcs"
 )
 
-// DefaultShareURL is the production crit-web service URL, used as the fallback
-// when no share URL is configured via flag, env, or config.
-const DefaultShareURL = "https://crit.md"
-
-const defaultShareURL = DefaultShareURL
-
 // Config holds all configuration values from config files.
 type Config struct {
 	Port               int      `json:"port,omitempty"`
@@ -25,8 +19,6 @@ type Config struct {
 	PublicURL          string   `json:"public_url,omitempty"` // advertised base URL (global-only; e.g. tailscale serve)
 	NoOpen             bool     `json:"no_open,omitempty"`
 	OpenCmd            string   `json:"open_cmd,omitempty"`
-	ShareURL           string   `json:"share_url,omitempty"`
-	ProxyAuth          bool     `json:"proxy_auth,omitempty"`
 	Quiet              bool     `json:"quiet,omitempty"`
 	Output             string   `json:"output,omitempty"`
 	Author             string   `json:"author,omitempty"`
@@ -36,10 +28,6 @@ type Config struct {
 	NoIntegrationCheck bool     `json:"no_integration_check,omitempty"`
 	NoUpdateCheck      bool     `json:"no_update_check,omitempty"`
 	AgentCmd           string   `json:"agent_cmd,omitempty"`
-	AuthToken          string   `json:"auth_token,omitempty"`
-	AuthUserName       string   `json:"auth_user_name,omitempty"`
-	AuthUserEmail      string   `json:"auth_user_email,omitempty"`
-	AuthUserID         string   `json:"auth_user_id,omitempty"`
 	// PlanApproveMode selects the Claude Code permission mode after a plan-hook
 	// approval. Global-only so a repository cannot weaken a user's permission
 	// policy. Empty leaves Claude Code's current behavior unchanged.
@@ -55,7 +43,6 @@ type Config struct {
 	// treats negative values as disabled too (see CloseOnApproveAfterMsEnabled).
 	CloseOnApproveAfterMs *int              `json:"close_on_approve_after_ms,omitempty"`
 	VCS                   string            `json:"vcs,omitempty"` // preferred VCS backend: "git", "sl", "jj"
-	ShareConsented        bool              `json:"share_consented,omitempty"`
 	LiveCookie            string            `json:"live_cookie,omitempty"`
 	LiveCookieFile        string            `json:"live_cookie_file,omitempty"`
 	LiveCDPURL            string            `json:"live_cdp_url,omitempty"`
@@ -67,18 +54,6 @@ type Config struct {
 	// template text. Project-level hooks are gated by the same trust flow as
 	// project prompts (they run arbitrary code).
 	Hooks map[string]string `json:"hooks,omitempty"`
-}
-
-// needsShareConsent reports whether the user must confirm before sharing.
-// Only applies to the default crit.md service — self-hosted users opted in by
-// configuring a custom URL.
-func needsShareConsent(cfg Config, shareURL string) bool {
-	return shareURL == defaultShareURL && !cfg.ShareConsented
-}
-
-// NeedsShareConsent is the exported wrapper for needsShareConsent.
-func NeedsShareConsent(cfg Config, shareURL string) bool {
-	return needsShareConsent(cfg, shareURL)
 }
 
 // CleanupOnApproveEnabled returns whether review files should be cleaned up
@@ -133,8 +108,6 @@ func defaultConfig() generatedConfig {
 		Host:       "127.0.0.1",
 		NoOpen:     false,
 		OpenCmd:    "",
-		ShareURL:   "https://crit.md",
-		ProxyAuth:  false,
 		Quiet:      false,
 		Output:     "",
 		Author:     "",
@@ -157,16 +130,12 @@ func defaultConfig() generatedConfig {
 }
 
 // generatedConfig is like Config but without omitempty, so all keys appear in output.
-// auth_token is intentionally excluded — it is global-only and should not appear
-// in project config files where it could be accidentally committed.
 type generatedConfig struct {
 	Port               int               `json:"port"`
 	Host               string            `json:"host"`
 	PublicURL          string            `json:"public_url"`
 	NoOpen             bool              `json:"no_open"`
 	OpenCmd            string            `json:"open_cmd"`
-	ShareURL           string            `json:"share_url"`
-	ProxyAuth          bool              `json:"proxy_auth"`
 	Quiet              bool              `json:"quiet"`
 	Output             string            `json:"output"`
 	Author             string            `json:"author"`
@@ -204,7 +173,6 @@ func DefaultConfig() GeneratedConfig {
 // ConfigPresence tracks which fields were explicitly present in a JSON config file.
 // This allows distinguishing "not set" from "explicitly set to empty/zero".
 type ConfigPresence struct {
-	ShareURL           bool
 	IgnorePatterns     bool
 	AutoViewedPatterns bool
 	NoOpen             bool
@@ -213,7 +181,6 @@ type ConfigPresence struct {
 	NoUpdateCheck      bool
 	CleanupOnApprove   bool
 	NotifyOnRoundReady bool
-	ShareConsented     bool
 }
 
 // LoadConfigFile reads and parses a single JSON config file.
@@ -234,7 +201,6 @@ func LoadConfigFile(path string) (Config, ConfigPresence, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return cfg, presence, fmt.Errorf("parsing %s: %w", path, err)
 	}
-	_, presence.ShareURL = raw["share_url"] // for global config only; project-side ShareURL presence is intentionally ignored by mergeConfigs
 	_, presence.IgnorePatterns = raw["ignore_patterns"]
 	_, presence.AutoViewedPatterns = raw["auto_viewed_patterns"]
 	_, presence.NoOpen = raw["no_open"]
@@ -243,7 +209,6 @@ func LoadConfigFile(path string) (Config, ConfigPresence, error) {
 	_, presence.NoUpdateCheck = raw["no_update_check"]
 	_, presence.CleanupOnApprove = raw["cleanup_on_approve"]
 	_, presence.NotifyOnRoundReady = raw["notify_on_round_ready"]
-	_, presence.ShareConsented = raw["share_consented"]
 
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, presence, fmt.Errorf("parsing %s: %w", path, err)
@@ -266,8 +231,6 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	if projectPresence.NoOpen {
 		merged.NoOpen = project.NoOpen
 	}
-	// Security: proxy_auth is intentionally NOT merged from project config.
-	// It is global-only, like agent_cmd, auth_token, and share_url.
 	if projectPresence.Quiet {
 		merged.Quiet = project.Quiet
 	}
@@ -304,15 +267,13 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	if project.LiveCDPURL != "" {
 		merged.LiveCDPURL = project.LiveCDPURL
 	}
-	// Security: agent_cmd, auth_token, share_url, public_url, proxy_auth, open_cmd,
-	// plan_approve_mode, and close_on_approve_after_ms are intentionally NOT merged from project
-	// config. They must remain global-only: agent_cmd to
-	// prevent untrusted repos from hijacking the agent command; open_cmd to prevent
-	// untrusted repos from hijacking browser launches; auth_token and
-	// share_url and public_url to prevent a malicious repo's .crit.config.json from
-	// redirecting share requests (and the bearer token) or advertised URLs to an
+	// Security: agent_cmd, public_url, open_cmd, plan_approve_mode, and
+	// close_on_approve_after_ms are intentionally NOT merged from project
+	// config. They must remain global-only: agent_cmd to prevent untrusted
+	// repos from hijacking the agent command; open_cmd to prevent untrusted
+	// repos from hijacking browser launches; public_url to prevent a malicious
+	// repo's .crit.config.json from redirecting advertised URLs to an
 	// attacker-controlled host;
-	// proxy_auth to prevent a repo from silently changing the transport mode;
 	// plan_approve_mode to prevent a repo from weakening the user's Claude Code
 	// permission policy after plan approval;
 	// close_on_approve_after_ms so a project repo cannot force the reviewer's
@@ -358,10 +319,8 @@ func mergeProjectHooks(merged *Config, project Config) {
 
 // LoadConfig loads and merges configuration from all sources.
 // projectDir is the repo root (or cwd if not in a git repo).
-// Runtime defaults (share_url, ignore_patterns) are applied when no config
-// file explicitly sets those fields. share_url is global-only — project config
-// cannot override it. To suppress the share_url default, set it to "" in
-// ~/.crit.config.json.
+// Runtime defaults (ignore_patterns) are applied when no config file
+// explicitly sets those fields.
 func LoadConfig(projectDir string) Config {
 	// 1. Global config
 	global, globalPresence, err := LoadConfigFile(GlobalConfigPath())
@@ -386,10 +345,6 @@ func LoadConfig(projectDir string) Config {
 	merged := mergeConfigs(global, project, projectPresence)
 
 	// 4. Apply runtime defaults for fields not explicitly set in any config file.
-	// share_url is global-only, so only globalPresence controls whether the default applies.
-	if !globalPresence.ShareURL {
-		merged.ShareURL = "https://crit.md"
-	}
 	if !globalPresence.IgnorePatterns && !projectPresence.IgnorePatterns {
 		merged.IgnorePatterns = []string{".crit/"}
 	}
@@ -479,11 +434,11 @@ func GlobalConfigPath() string {
 // SaveGlobalConfig performs a read-modify-write on ~/.crit.config.json.
 // It uses map[string]json.RawMessage to preserve unknown keys.
 // The apply function receives the raw map and should set or delete keys as needed.
-// The file is written with 0600 permissions since it may contain auth_token.
+// The file is written with 0600 permissions since it is a user-private config file.
 //
 // A sibling lockfile (`<path>.lock`) is held with flock for the duration of the
-// read-modify-write so concurrent crit invocations (e.g. login + lazy backfill)
-// cannot lose updates. flock is released automatically when the process exits.
+// read-modify-write so concurrent crit invocations cannot lose updates. flock
+// is released automatically when the process exits.
 func SaveGlobalConfig(apply func(m map[string]json.RawMessage) error) error {
 	path := GlobalConfigPath()
 	if path == "" {

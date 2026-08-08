@@ -49,19 +49,13 @@ func (s *Session) critJSONPath() string {
 // writeFilesSnapshot holds all session state needed to write the review file,
 // captured under lock so that disk I/O can happen without holding the lock.
 type writeFilesSnapshot struct {
-	critPath        string
-	lastMtime       time.Time
-	branch          string
-	baseRef         string
-	reviewRound     int
-	sharedURL       string
-	deleteToken     string
-	shareScope      string
-	shareOrg        string
-	shareOrgName    string
-	shareVisibility string
-	reviewComments  []Comment
-	cliArgs         []string
+	critPath       string
+	lastMtime      time.Time
+	branch         string
+	baseRef        string
+	reviewRound    int
+	reviewComments []Comment
+	cliArgs        []string
 	// story is the session's in-memory narrative (nil if none). Carried into
 	// CritJSON like the other daemon-managed fields above so `crit story`'s
 	// daemon-side mutators (set via s.SetStory) are actually persisted —
@@ -156,12 +150,6 @@ func buildCritJSON(snap writeFilesSnapshot) CritJSON {
 	cj.BaseRef = snap.baseRef
 	cj.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	cj.ReviewRound = snap.reviewRound
-	cj.ShareURL = snap.sharedURL
-	cj.DeleteToken = snap.deleteToken
-	cj.ShareScope = snap.shareScope
-	cj.ShareOrg = snap.shareOrg
-	cj.ShareOrgName = snap.shareOrgName
-	cj.ShareVisibility = snap.shareVisibility
 	cj.ReviewComments = snap.reviewComments
 	cj.CliArgs = snap.cliArgs
 	cj.Story = snap.story
@@ -257,9 +245,7 @@ func mergeFileSnapshotIntoCritJSON(cj *CritJSON, fs writeFileSnapshot) {
 }
 
 func critJSONIsEmpty(cj CritJSON) bool {
-	return len(cj.Files) == 0 && len(cj.ReviewComments) == 0 &&
-		cj.ShareURL == "" && cj.DeleteToken == "" && cj.ShareScope == "" &&
-		cj.Story == nil
+	return len(cj.Files) == 0 && len(cj.ReviewComments) == 0 && cj.Story == nil
 }
 
 // WriteFiles writes the review file to disk.
@@ -378,12 +364,6 @@ func (s *Session) snapshotForWrite(critPath string) writeFilesSnapshot {
 		branch:              s.Branch,
 		baseRef:             s.BaseRef,
 		reviewRound:         s.ReviewRound,
-		sharedURL:           s.sharedURL,
-		deleteToken:         s.deleteToken,
-		shareScope:          s.shareScope,
-		shareOrg:            s.shareOrg,
-		shareOrgName:        s.shareOrgName,
-		shareVisibility:     s.shareVisibility,
 		reviewComments:      rc,
 		cliArgs:             s.CLIArgs,
 		story:               s.story,
@@ -562,9 +542,8 @@ func (s *Session) filterDeletedReviewComments(diskComments []Comment) bool {
 }
 
 // SyncCommentsFromDisk reloads file- and review-level comments from review.json
-// on disk into the in-memory session. Call after external writers (e.g.
-// share.MergeWebComments via POST /api/comments/merge) update review.json
-// without going through WriteFiles.
+// on disk into the in-memory session. Call after an external writer updates
+// review.json directly, without going through WriteFiles.
 func (s *Session) SyncCommentsFromDisk() bool {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()

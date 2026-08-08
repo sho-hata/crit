@@ -11,7 +11,6 @@ type serverFlagSet struct {
 	host        string
 	noOpen      bool
 	showVersion bool
-	shareURL    string
 	outputDir   string
 	quiet       bool
 	noIgnore    bool
@@ -37,7 +36,6 @@ func parseServerFlags(args []string) serverFlagSet {
 	noOpen := fs.Bool("no-open", false, "")
 	showVersion := fs.Bool("version", false, "")
 	fs.BoolVar(showVersion, "v", false, "")
-	shareURL := fs.String("share-url", "", "")
 	outputDir := fs.String("output", "", "")
 	fs.StringVar(outputDir, "o", "", "")
 	quiet := fs.Bool("quiet", false, "")
@@ -71,7 +69,6 @@ func parseServerFlags(args []string) serverFlagSet {
 		host:        *host,
 		noOpen:      *noOpen,
 		showVersion: *showVersion,
-		shareURL:    *shareURL,
 		outputDir:   *outputDir,
 		quiet:       *quiet,
 		noIgnore:    *noIgnore,

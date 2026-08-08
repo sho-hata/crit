@@ -50,4 +50,4 @@ Once installed:
 
 - Type `$crit` in Codex chat to review current git changes, a file, PR, or commit range
 - In Plan mode with the plugin, proposed plans are reviewed automatically when the agent tries to finish the turn
-- The `crit-cli` skill teaches the agent about `crit comment`, sharing, and GitHub PR sync without manual invocation
+- The `crit-cli` skill teaches the agent about `crit comment` and GitHub PR sync without manual invocation

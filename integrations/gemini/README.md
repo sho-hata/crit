@@ -6,7 +6,7 @@ Drop-in configuration files that teach Gemini CLI to use Crit for reviewing plan
 
 | File | Purpose |
 |------|---------|
-| `skills/crit-cli/SKILL.md` | CLI reference skill — `crit comment`, `crit pull/push`, `crit share`, review file format |
+| `skills/crit-cli/SKILL.md` | CLI reference skill — `crit comment`, `crit pull/push`, review file format |
 | `commands/crit.toml` | `/crit` slash command that runs the interactive review loop |
 | `hooks/settings-snippet.json` | Hook that intercepts plan mode exit and runs `crit plan-hook` for inline plan review |
 | `hooks/policy.toml` | Auto-allows `exit_plan_mode` without confirmation (browser UI is the sole gate) |

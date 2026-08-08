@@ -265,66 +265,6 @@ func TestSmokeTest_CSPFrameAncestors_Informational(t *testing.T) {
 	}
 }
 
-func TestShareGuard_LiveReview(t *testing.T) {
-	dir := t.TempDir()
-	critPath := filepath.Join(dir, "review")
-	cj := CritJSON{ReviewType: "live", Origin: "http://localhost:3000", ReviewRound: 1, Files: map[string]CritJSONFile{}}
-	if err := saveCritJSON(critPath, cj); err != nil {
-		t.Fatalf("saveCritJSON: %v", err)
-	}
-	err := checkShareAllowed(critPath)
-	if err == nil {
-		t.Fatal("expected error for live review share")
-	}
-	if !strings.Contains(err.Error(), "live") {
-		t.Errorf("error should mention live: %v", err)
-	}
-}
-
-func TestShareGuard_CodeReview_Allowed(t *testing.T) {
-	dir := t.TempDir()
-	critPath := filepath.Join(dir, "review")
-	cj := CritJSON{ReviewRound: 1, Files: map[string]CritJSONFile{}}
-	if err := saveCritJSON(critPath, cj); err != nil {
-		t.Fatalf("saveCritJSON: %v", err)
-	}
-	if err := checkShareAllowed(critPath); err != nil {
-		t.Errorf("code review should be shareable: %v", err)
-	}
-}
-
-func TestGitHubSyncGuard(t *testing.T) {
-	tests := []struct {
-		name      string
-		cj        CritJSON
-		op        string
-		wantError bool
-	}{
-		{"live review pull", CritJSON{ReviewType: "live", Origin: "http://localhost:3000"}, "crit pull", true},
-		{"live review push", CritJSON{ReviewType: "live", Origin: "http://localhost:3000"}, "crit push", true},
-		{"code review pull", CritJSON{ReviewRound: 1}, "crit pull", false},
-		{"code review push", CritJSON{ReviewRound: 1}, "crit push", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := checkGitHubSyncAllowed(tt.cj, tt.op)
-			if tt.wantError {
-				if err == nil {
-					t.Fatalf("expected error for %s on live review", tt.op)
-				}
-				if !strings.Contains(err.Error(), "live") {
-					t.Errorf("error should mention live: %v", err)
-				}
-				if !strings.Contains(err.Error(), tt.op) {
-					t.Errorf("error should mention op %q: %v", tt.op, err)
-				}
-			} else if err != nil {
-				t.Errorf("code review should be allowed: %v", err)
-			}
-		})
-	}
-}
-
 func TestCommentCLIGuard_LiveReview(t *testing.T) {
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, "review")
@@ -476,7 +416,6 @@ func TestParseLiveCLIFlags(t *testing.T) {
 		"--public-url", "https://mymac.ts.net",
 		"--no-open",
 		"-q",
-		"--share-url", "https://share.example",
 		"--cookie", "a=1",
 		"--cookie", "b=2",
 		"--cookie-file", "/tmp/jar.txt",
@@ -489,8 +428,8 @@ func TestParseLiveCLIFlags(t *testing.T) {
 	if f.port != 8080 || f.host != "0.0.0.0" || f.publicURL != "https://mymac.ts.net" || !f.noOpen || !f.quiet {
 		t.Fatalf("flags = %+v", f)
 	}
-	if f.shareURL != "https://share.example" || f.cookieFile != "/tmp/jar.txt" || f.cdpURL != "http://127.0.0.1:9222" {
-		t.Fatalf("share/cookie/cdp = %+v", f)
+	if f.cookieFile != "/tmp/jar.txt" || f.cdpURL != "http://127.0.0.1:9222" {
+		t.Fatalf("cookie/cdp = %+v", f)
 	}
 	if len(f.cookieFlags) != 2 || f.cookieFlags[0] != "a=1" || f.cookieFlags[1] != "b=2" {
 		t.Fatalf("cookieFlags = %v", f.cookieFlags)
@@ -1217,7 +1156,7 @@ func TestHandleFileComments_LivePinFansOutSSE(t *testing.T) {
 	}
 	sess.InitTestChannels()
 
-	srv, err := NewServer(nil, frontendFS, "", false, "", "tester", "test", 0, "")
+	srv, err := NewServer(nil, frontendFS, "tester", "test", 0, "")
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -1387,7 +1326,7 @@ func TestLive_PostFileCommentsDropsScreenshot(t *testing.T) {
 		ReviewFilePath: identity,
 	}
 
-	srv, err := NewServer(nil, frontendFS, "", false, "", "tester", "test", 0, "")
+	srv, err := NewServer(nil, frontendFS, "tester", "test", 0, "")
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

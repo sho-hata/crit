@@ -131,9 +131,9 @@ func TestSyncWriteFilesPersistsNewStory(t *testing.T) {
 
 // TestSyncWriteFilesPersistsClearedStory verifies ClearStory + SyncWriteFiles
 // removes a previously-saved story from disk (backs DELETE /api/story). With
-// no comments/share state either, an all-empty CritJSON is represented by
-// deleting review.json entirely (existing B1 empty-file behavior) rather than
-// writing an empty object — so "cleared" means either absent or story-less.
+// no comments either, an all-empty CritJSON is represented by deleting
+// review.json entirely (existing B1 empty-file behavior) rather than writing
+// an empty object — so "cleared" means either absent or story-less.
 func TestSyncWriteFilesPersistsClearedStory(t *testing.T) {
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "test", "", "", "") // keep the file non-empty so this exercises Story specifically, not the B1 delete-on-empty path

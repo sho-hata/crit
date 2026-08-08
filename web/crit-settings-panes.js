@@ -13,8 +13,8 @@
 //   renderSettingsTab(pane, opts)
 //     opts.mode    : 'code-review' | 'live'
 //     opts.cfg     : /api/config response or {}
-//     opts.show    : { width, hideResolved, ignoreWhitespace, update, account,
-//                       agent, integration, share } — booleans, defaulted from
+//     opts.show    : { width, hideResolved, ignoreWhitespace, update,
+//                       agent, integration } — booleans, defaulted from
 //                       mode. ignoreWhitespace defaults off; the caller enables
 //                       it only when code diffs exist (git mode).
 //     opts.hooks   : {
@@ -221,10 +221,8 @@
         hideResolved: true,
         ignoreWhitespace: false, // code-diff only; enabled per-call in git mode
         update: true,
-        account: true,
         agent: true,
         integration: true,
-        share: true,
       };
     }
     // code-review default
@@ -233,10 +231,8 @@
       hideResolved: true,
       ignoreWhitespace: false, // code-diff only; enabled per-call in git mode
       update: true,
-      account: true,
       agent: true,
       integration: true,
-      share: true,
     };
   }
 
@@ -342,7 +338,7 @@
     html += '</div>'; // close settings-display-group
 
     // ---------- Configuration ----------
-    var anyConfigCard = show.update || show.account || show.agent || show.integration || show.share;
+    var anyConfigCard = show.update || show.agent || show.integration;
     if (anyConfigCard) {
       html += '<div class="settings-section-label">Configuration</div>';
       html += '<div class="config-cards">';
@@ -367,26 +363,6 @@
           html += '<button type="button" class="config-card-dismiss" id="updateDismissBtn" data-dismiss-version="' + esc(cfg.latest_version) + '">Don\'t remind me until next version</button>';
         }
         html += '</div></div></div>';
-      }
-
-      // Account card
-      if (show.account && cfg.share_url) {
-        if (cfg.auth_logged_in) {
-          var display = cfg.auth_user_email || cfg.auth_user_name || 'Logged in';
-          html += '<div class="config-card config-card--green"><div class="config-card-header">';
-          html += '<span class="config-card-icon" style="color:var(--crit-green)">&#10003;</span>';
-          html += '<span class="config-card-title">Account</span>';
-          html += '<span class="config-card-value">' + esc(display) + '</span>';
-          html += '</div></div>';
-        } else {
-          html += '<div class="config-card config-card--red config-card--unconfigured"><div class="config-card-header">';
-          html += '<span class="config-card-icon" style="color:var(--crit-red)">&#9675;</span>';
-          html += '<span class="config-card-title">Account</span>';
-          html += '</div>';
-          html += '<div class="config-card-body">Not logged in. Sign in to link reviews to your account and track review history.</div>';
-          html += '<div class="config-card-cmd"><span>$ crit auth login</span><button class="config-card-copy" data-copy="crit auth login">Copy</button></div>';
-          html += '</div>';
-        }
       }
 
       // Agent Command card
@@ -486,25 +462,6 @@
             html += '</div></div>';
             html += '</div>';
           });
-        }
-      }
-
-      // Share card
-      if (show.share) {
-        if (cfg.share_url) {
-          var hostname;
-          try { hostname = new URL(cfg.share_url).hostname; } catch (_) { hostname = cfg.share_url; }
-          html += '<div class="config-card config-card--green"><div class="config-card-header">';
-          html += '<span class="config-card-icon" style="color:var(--crit-green)">&#10003;</span>';
-          html += '<span class="config-card-title">Sharing enabled</span>';
-          html += '<span class="config-card-value">' + esc(hostname) + '</span>';
-          html += '</div></div>';
-        } else {
-          html += '<div class="config-card config-card--gray config-card--unconfigured"><div class="config-card-header">';
-          html += '<span class="config-card-icon" style="color:var(--crit-editor-fg-muted)">&mdash;</span>';
-          html += '<span class="config-card-title">Share</span>';
-          html += '<span class="config-card-value">Disabled</span>';
-          html += '</div></div>';
         }
       }
 

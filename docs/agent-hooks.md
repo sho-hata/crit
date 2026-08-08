@@ -72,7 +72,7 @@ Explicit `hooks` config still wins over conventional files and is useful for non
 
 Config keys use `:` for mode suffixes; filenames use `.` instead.
 
-`agent_cmd`, `auth_token`, and `share_url` stay global-only; `hooks` is allowed in project config (but project hooks are gated by trust — see below).
+`agent_cmd` stays global-only; `hooks` is allowed in project config (but project hooks are gated by trust — see below).
 
 ### Value forms
 

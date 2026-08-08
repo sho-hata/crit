@@ -156,13 +156,10 @@
   --crit-toast-ghost-hover-bg: rgba(255,255,255,0.06);
   --crit-btn-success-border:   rgba(86, 211, 100, 0.35);
   --crit-btn-success-hover-bg: rgba(86, 211, 100, 0.08);
-  --crit-share-confirm-bg:     rgba(247, 118, 142, 0.08);
-  --crit-share-confirm-border: rgba(247, 118, 142, 0.15);
   --crit-change-flash-bg:      rgba(255, 158, 100, 0.15);
   --crit-resolve-hover-bg:     rgba(86, 211, 100, 0.1);
   --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.12);
   --crit-quote-highlight-border: rgba(250, 200, 60, 0.4);
-  --crit-qr-bg: #fff;
 
   /* ---- Comment reference chip ---- */
   --crit-comment-ref-color:       #85aaf8;
@@ -223,17 +220,8 @@
   --crit-live-menu-highlight-bg:      rgba(59, 130, 246, 0.18);
   --crit-live-menu-highlight-fg:      #e6e8ef;
 
-  /* ---- Org share modal ---- */
-  --crit-option-hover:       rgba(133, 170, 248, 0.06);
-  --crit-option-selected-bg: rgba(133, 170, 248, 0.08);
   --crit-focus-ring:         rgba(133, 170, 248, 0.5);
   --crit-green-hover:        #6ade7a;
-  --crit-vis-org-bg:         rgba(133, 170, 248, 0.10);
-  --crit-vis-org-fg:         #85aaf8;
-  --crit-vis-unlisted-bg:    rgba(255, 158, 100, 0.10);
-  --crit-vis-unlisted-fg:    #ff9e64;
-  --crit-vis-public-bg:      rgba(86, 211, 100, 0.10);
-  --crit-vis-public-fg:      #56d364;
 
   /* ---- Story mode (dark) ---- */
   --crit-story-chapter-bg:      var(--crit-bg-card);
@@ -365,13 +353,10 @@
     --crit-toast-ghost-hover-bg: rgba(0,0,0,0.04);
     --crit-btn-success-border:   rgba(22, 111, 48, 0.3);
     --crit-btn-success-hover-bg: rgba(22, 111, 48, 0.06);
-    --crit-share-confirm-bg:     rgba(196, 31, 42, 0.06);
-    --crit-share-confirm-border: rgba(196, 31, 42, 0.12);
     --crit-change-flash-bg:      rgba(188, 76, 0, 0.12);
     --crit-resolve-hover-bg:     rgba(22, 111, 48, 0.08);
     --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.18);
     --crit-quote-highlight-border: rgba(200, 160, 30, 0.45);
-    --crit-qr-bg: #fff;
 
     /* ---- Comment reference chip ---- */
     --crit-comment-ref-color:       #0550ae;
@@ -432,17 +417,8 @@
     --crit-live-menu-highlight-bg:      #e0e7ff;
     --crit-live-menu-highlight-fg:      #1a1d23;
 
-    /* ---- Org share modal ---- */
-    --crit-option-hover:       rgba(61, 106, 224, 0.04);
-    --crit-option-selected-bg: rgba(61, 106, 224, 0.06);
     --crit-focus-ring:         rgba(61, 106, 224, 0.4);
     --crit-green-hover:        #178a33;
-    --crit-vis-org-bg:         rgba(61, 106, 224, 0.08);
-    --crit-vis-org-fg:         #3d6ae0;
-    --crit-vis-unlisted-bg:    rgba(214, 122, 44, 0.08);
-    --crit-vis-unlisted-fg:    #d67a2c;
-    --crit-vis-public-bg:      rgba(26, 157, 59, 0.08);
-    --crit-vis-public-fg:      #1a9d3b;
 
     /* ---- Story mode (light) ---- */
     --crit-story-chapter-bg:      var(--crit-bg-card);
@@ -576,13 +552,10 @@
   --crit-toast-ghost-hover-bg: rgba(255,255,255,0.06);
   --crit-btn-success-border:   rgba(86, 211, 100, 0.35);
   --crit-btn-success-hover-bg: rgba(86, 211, 100, 0.08);
-  --crit-share-confirm-bg:     rgba(247, 118, 142, 0.08);
-  --crit-share-confirm-border: rgba(247, 118, 142, 0.15);
   --crit-change-flash-bg:      rgba(255, 158, 100, 0.15);
   --crit-resolve-hover-bg:     rgba(86, 211, 100, 0.1);
   --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.12);
   --crit-quote-highlight-border: rgba(250, 200, 60, 0.4);
-  --crit-qr-bg: #fff;
 
   /* ---- Comment reference chip ---- */
   --crit-comment-ref-color:       #85aaf8;
@@ -643,17 +616,8 @@
   --crit-live-menu-highlight-bg:      rgba(59, 130, 246, 0.18);
   --crit-live-menu-highlight-fg:      #e6e8ef;
 
-  /* ---- Org share modal ---- */
-  --crit-option-hover:       rgba(133, 170, 248, 0.06);
-  --crit-option-selected-bg: rgba(133, 170, 248, 0.08);
   --crit-focus-ring:         rgba(133, 170, 248, 0.5);
   --crit-green-hover:        #6ade7a;
-  --crit-vis-org-bg:         rgba(133, 170, 248, 0.10);
-  --crit-vis-org-fg:         #85aaf8;
-  --crit-vis-unlisted-bg:    rgba(255, 158, 100, 0.10);
-  --crit-vis-unlisted-fg:    #ff9e64;
-  --crit-vis-public-bg:      rgba(86, 211, 100, 0.10);
-  --crit-vis-public-fg:      #56d364;
 
   /* ---- Story mode (dark) ---- */
   --crit-story-chapter-bg:      var(--crit-bg-card);
@@ -785,13 +749,10 @@
   --crit-toast-ghost-hover-bg: rgba(0,0,0,0.04);
   --crit-btn-success-border:   rgba(22, 111, 48, 0.3);
   --crit-btn-success-hover-bg: rgba(22, 111, 48, 0.06);
-  --crit-share-confirm-bg:     rgba(196, 31, 42, 0.06);
-  --crit-share-confirm-border: rgba(196, 31, 42, 0.12);
   --crit-change-flash-bg:      rgba(188, 76, 0, 0.12);
   --crit-resolve-hover-bg:     rgba(22, 111, 48, 0.08);
   --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.18);
   --crit-quote-highlight-border: rgba(200, 160, 30, 0.45);
-  --crit-qr-bg: #fff;
 
   /* ---- Comment reference chip ---- */
   --crit-comment-ref-color:       #0550ae;
@@ -852,17 +813,8 @@
   --crit-live-menu-highlight-bg:      #e0e7ff;
   --crit-live-menu-highlight-fg:      #1a1d23;
 
-  /* ---- Org share modal ---- */
-  --crit-option-hover:       rgba(61, 106, 224, 0.04);
-  --crit-option-selected-bg: rgba(61, 106, 224, 0.06);
   --crit-focus-ring:         rgba(61, 106, 224, 0.4);
   --crit-green-hover:        #178a33;
-  --crit-vis-org-bg:         rgba(61, 106, 224, 0.08);
-  --crit-vis-org-fg:         #3d6ae0;
-  --crit-vis-unlisted-bg:    rgba(214, 122, 44, 0.08);
-  --crit-vis-unlisted-fg:    #d67a2c;
-  --crit-vis-public-bg:      rgba(26, 157, 59, 0.08);
-  --crit-vis-public-fg:      #1a9d3b;
 
   /* ---- Story mode (light) ---- */
   --crit-story-chapter-bg:      var(--crit-bg-card);

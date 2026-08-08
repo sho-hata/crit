@@ -27,7 +27,7 @@ func newPreviewContentTestServer(t *testing.T, htmlFile string) *Server {
 		},
 	}
 	sess.InitTestChannels()
-	s, err := NewServer(sess, frontendFS, "", false, "", "", "test", 0, "")
+	s, err := NewServer(sess, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

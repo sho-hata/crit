@@ -65,7 +65,7 @@ Open `http://localhost:8080` for agent-a, `http://localhost:8081` for agent-b.
 
 - The mounted repo (read/write — crit writes review files)
 - `~/.crit/reviews/<key>.json` — review storage. Persists inside the container; mount a volume at `/root/.crit` if you want reviews to survive `docker rm`.
-- Network: nothing, unless you use `crit share` (which talks to the hosted relay at crit.md) or `crit pull/push` (which uses the `gh` CLI for GitHub PR sync — install it separately if needed).
+- Network: nothing, unless you use `crit pull`/`crit push` (which uses the `gh` CLI for GitHub PR sync — install it separately if needed).
 
 No daemon, no database, no background services. The `crit` binary is ~20 MB static Go, and reviews are plain JSON files.
 

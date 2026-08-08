@@ -1262,7 +1262,6 @@ func TestAppendCommonDaemonFlags(t *testing.T) {
 				AllowUnauthenticatedNetwork: true,
 				NoOpen:                      true,
 				Quiet:                       true,
-				ShareURL:                    "https://crit.md",
 			},
 			want: []string{"--preview-file", "/tmp/x.html",
 				"--port", "3456",
@@ -1270,8 +1269,7 @@ func TestAppendCommonDaemonFlags(t *testing.T) {
 				"--public-url", "https://mymac.ts.net",
 				"--allow-unauthenticated-network",
 				"--no-open",
-				"--quiet",
-				"--share-url", "https://crit.md"},
+				"--quiet"},
 		},
 		{
 			name: "default host 127.0.0.1 is not forwarded",

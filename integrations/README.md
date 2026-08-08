@@ -94,9 +94,9 @@ bypass mode available (for example `--allow-dangerously-skip-permissions` or
 `--dangerously-skip-permissions`) and managed settings have not disabled it;
 otherwise Claude Code treats the update as a no-op.
 
-## OpenCode plugin: conditional sharing instructions
+## OpenCode plugin: round-ready notifications
 
-`crit install opencode` also writes a small TypeScript plugin (`crit.ts`) and registers it in `opencode.jsonc`. The plugin shells out to `crit config` on each chat turn and appends sharing instructions to the system prompt only when `share_url` is set. With `share_url: ""` the sharing block is omitted entirely — useful in environments with strict information-sharing policies, and saves tokens otherwise. opencode auto-loads `.ts` files dropped into the plugin directory, so the registration entry is informational.
+`crit install opencode` also writes a small TypeScript plugin (`crit.ts`) and registers it in `opencode.jsonc`. The plugin watches for a blocking `crit` wait command and shows a toast when a review round becomes ready, so Attention-style users notice even while the tool call is still running. opencode auto-loads `.ts` files dropped into the plugin directory, so the registration entry is informational.
 
 ## Codex plugin
 
@@ -136,8 +136,8 @@ or Windsurf's `/crit`, as appropriate) or directly asks to use Crit. A normal
 request to review code, a plan, a diff, a PR, or a page does not count.
 
 `crit-cli` is intentionally model-discoverable. It teaches agents how to leave
-and reply to Crit comments, interpret review JSON, share reviews, and synchronize
-GitHub PR feedback, but it does not start the interactive review cycle.
+and reply to Crit comments, interpret review JSON, and synchronize GitHub PR
+feedback, but it does not start the interactive review cycle.
 
 The only automatic interactive path is a lifecycle hook immediately after
 planning mode. The Claude Code plugin, Codex plugin, and Gemini CLI integration

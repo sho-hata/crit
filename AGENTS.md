@@ -7,7 +7,7 @@ Single-binary Go CLI that opens a browser-based UI for reviewing code changes an
 ```
 crit/
 ├── cmd/crit/            # package main — thin CLI (main.go, cli_*.go, wire.go)
-├── internal/            # Core logic packages (daemon, server, session, github, share, vcs, …)
+├── internal/            # Core logic packages (daemon, server, session, github, vcs, …)
 ├── web/                 # Embedded frontend assets (Go package webassets; embed.go)
 │   ├── index.html       # HTML shell — code-review OR live-mode script fork
 │   ├── app.js           # Code-review mode JS
@@ -36,7 +36,7 @@ crit/
 8. **Real-time output** — review file written on every comment change (200ms debounce)
 9. **File watching** — git mode polls `git status --porcelain`; files mode polls mtimes; reloads via SSE
 10. **Localhost by default** — server binds to `127.0.0.1` (no CORS headers needed). Non-loopback `--host` / `CRIT_HOST` / global `host`, or any `public_url`, require `--allow-unauthenticated-network` / `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1` (Crit has no network auth).
-11. **Two-level config** — `~/.crit.config.json` (global) merged with `.crit.config.json` (project), CLI flags override both. `agent_cmd`, `auth_token`, `share_url`, and `plan_approve_mode` are global-only (prevents malicious repos from hijacking agent commands, redirecting share requests, or weakening Claude Code permissions)
+11. **Two-level config** — `~/.crit.config.json` (global) merged with `.crit.config.json` (project), CLI flags override both. `agent_cmd` and `plan_approve_mode` are global-only (prevents malicious repos from hijacking agent commands or weakening Claude Code permissions)
 12. **Headless CLI comment** — `crit comment` writes directly to the review file without starting the server; SSE notifies any running server
 13. **Comment threading** — comments support nested replies and a `resolved` boolean. Review file schema nests replies inside each comment's `replies` array.
 14. **Centralized review storage** — `~/.crit/reviews/<key>.json` keyed by cwd + branch (git mode) or cwd + args (file mode)
@@ -73,15 +73,11 @@ crit cleanup [--days N] [--force]  # Delete stale review files from ~/.crit/revi
 crit pull [pr-number]         # Fetch GitHub PR comments into the review file
 crit push [--dry-run] [--event <type>] [-m <msg>] [pr]  # Post review comments as a GitHub PR review
 crit pr <num|url>             # Thin shim — forwards to `crit review --pr <n>`
-crit fetch ...                # Fetch remote artefacts (see runFetch)
 crit comment <path>:<line[-end]> <body>         # Add a comment (no server needed)
 crit comment --reply-to <id> [--resolve] <body> # Reply to a comment
 crit comment --json [--file <path>] [--author <name>]  # Bulk add comments from JSON (stdin or --file; - = stdin)
-crit share <file> [file...]   # Share files to crit-web, print URL
-crit unpublish                # Remove shared review from crit-web
 crit config [--generate]      # Print resolved config (or starter template)
 crit install <agent>          # Install integration config for an AI tool
-crit auth ...                 # Auth flow for hosted crit-web (login/logout)
 crit plan [...]               # Plan-file workflow
 crit plan-hook [--mode claude|codex]  # Internal hook used by agent plan flows
 crit check                    # Self-check (env, git, gh availability)
@@ -98,35 +94,21 @@ Two-level JSON config files, merged (project overrides global):
 - **Global**: `~/.crit.config.json` — user-wide defaults
 - **Project**: `.crit.config.json` in repo root — per-project overrides
 
-Config keys: `port`, `host`, `no_open`, `share_url`, `quiet`, `output`, `author`, `base_branch`, `ignore_patterns`, `auto_viewed_patterns`, `agent_cmd`, `auth_token`, `auth_user_name`, `auth_user_email`, `auth_user_id`, `plan_approve_mode`, `cleanup_on_approve`, `notify_on_round_ready`, `disable_stats`, `no_update_check`, `no_integration_check`, `vcs`, `proxy_auth`, `live_cookie`, `live_cookie_file`, `live_cdp_url`, `close_on_approve_after_ms`.
+Config keys: `port`, `host`, `no_open`, `quiet`, `output`, `author`, `base_branch`, `ignore_patterns`, `auto_viewed_patterns`, `agent_cmd`, `plan_approve_mode`, `cleanup_on_approve`, `notify_on_round_ready`, `disable_stats`, `no_update_check`, `no_integration_check`, `vcs`, `live_cookie`, `live_cookie_file`, `live_cdp_url`, `close_on_approve_after_ms`.
 
 - `base_branch` overrides auto-detected default branch (used as diff base in git mode, and by `crit pull`/`crit push`/`crit comment`)
 - `author` falls back to the configured VCS user name if not set
-- `agent_cmd`, `auth_token`, `share_url`, `proxy_auth`, `plan_approve_mode`, and `close_on_approve_after_ms` are **global config only**; project-level config cannot override (security — prevents malicious repos from hijacking the agent command, redirecting share requests to an attacker-controlled host, weakening Claude Code permissions, or forcing a reviewer's tab to auto-close)
+- `agent_cmd`, `plan_approve_mode`, and `close_on_approve_after_ms` are **global config only**; project-level config cannot override (security — prevents malicious repos from hijacking the agent command, weakening Claude Code permissions, or forcing a reviewer's tab to auto-close)
 - `close_on_approve_after_ms` (default: unset/disabled) — auto-close the review tab N ms after Approve with no unresolved comments; negative values are treated as unset. Not included in `crit config --generate` scaffolding.
-- `proxy_auth` (default: `false`) — when `true`, terminal `crit share` / `crit fetch` / `crit unpublish` are blocked (SSO proxy); the browser UI uses a popup relay instead. Global-only for security. See proxy-auth transport rules.
 - `cleanup_on_approve` (default: `true`) — auto-delete review file when reviewer approves with no unresolved comments
 - `notify_on_round_ready` (default: `false`) — opt in to a desktop notification when a review round becomes ready for the human
 - `disable_stats` (default: `false`) — disable session stats recording to `~/.crit/stats.json`
 - `ignore_patterns` are unioned (global + project both apply); types: `*.ext`, `dir/`, `exact.file`, `path/*.ext`
 - `auto_viewed_patterns` are unioned (global + project both apply); matched client-side against file paths and applied once per launch to auto-mark matching files viewed (collapsed). No runtime default (empty). Plumbed through `/api/config` only — Go does no glob matching.
 - `vcs` selects backend: `"git"` (default), `"sl"` (sapling), or `"jj"` (Jujutsu)
-- `auth_*` keys hold cached hosted-crit-web credentials (set by `crit auth`); treat as secrets
 - `live_cookie` / `live_cookie_file` forward session cookies to the upstream app in live mode (global or project; prefer gitignored `live_cookie_file` e.g. `.crit/live-cookies.txt`). CLI: `crit live --cookie`, `--cookie-file`
 - `live_cdp_url` reuses cookies from a local Chrome DevTools endpoint (global or project). CLI: `crit live --cdp-url`. Explicit `--cookie` values override CDP cookies with the same name.
 - CLI flags override config file values
-</important>
-
-<important if="you are adding or modifying a CLI subcommand that HTTP-calls crit-web (share, fetch, unpublish, or any new crit-web API interaction)">
-
-Self-hosted crit-web behind an SSO reverse proxy cannot be reached from the terminal. When `proxy_auth: true` in global config:
-
-1. **Terminal subcommands** must call `checkProxyAuthCLIAllowed("crit <cmd>")` at the top of the `Run*` entrypoint (`internal/share/cli.go` pattern). Fail fast with the shared message — do not HTTP-call crit-web and get an HTML login page.
-2. **Browser UI** must implement both transports: direct Go HTTP when `proxy_auth` is false; popup relay via `web/crit-share.js` + crit-web `assets/js/share_receiver/handlers.js` when true. See `.claude/rules/proxy-auth-transport.md`.
-3. **New crit-web endpoints**: add a popup handler in crit-web `share_receiver/handlers.js` (same-origin fetch proxy to the existing `/api/...` endpoint — no relay-specific API). Add the relay branch in `web/crit-share.js` / `web/app.js`.
-4. **Integration tests** that exec the `crit` binary must use an isolated temp `HOME` (`runCritCmd` in `share_integration_test.go`) so a developer's `proxy_auth` setting doesn't skew results.
-
-Full rules: `.cursor/rules/proxy-auth-transport.mdc` / `.claude/rules/proxy-auth-transport.md`.
 </important>
 
 <important if="you are working with crit pull, crit push, or GitHub PR sync">
@@ -139,7 +121,7 @@ Requires `gh` CLI installed and authenticated.
 - `crit push --event approve` submits an approval; `--event request-changes` requests changes (default: `comment`)
 - `crit push -m 'message'` adds a review-level body message
 - PR number auto-detected from current branch, or pass explicitly: `crit pull 42`
-- Any code path that imports comments from an external source (GitHub PR, crit-web) into the local review file MUST dedup against local state first: `buildLocalIDSet` + `buildLocalFingerprintIndex` + `dropDuplicateWebComment`. This applies to direct HTTP paths AND browser relay paths. Calling `mergeWebComments` without pre-filtering causes duplicate comments on repeated pull.
+- `crit pull` dedups imported GitHub PR comments by GitHubID (preferred) or author+lines+body via `mergeGHComments`/`mergeGHCommentsScoped` — repeated pulls must not create duplicates.
 </important>
 
 <important if="you are writing, running, or modifying Playwright E2E tests in test/e2e/">
@@ -187,17 +169,6 @@ CI runs E2E on PRs via `.github/workflows/test.yml`; a separate `coverage.yml` u
 - **CSS selectors**: check existing tests for class names (e.g. `.tree-comment-badge`, not `.tree-file-comments`).
 </important>
 
-<important if="you are running or modifying share integration tests (build tag: integration)">
-
-`share_integration_test.go` exercises the crit ↔ crit-web share flow. When modifying share logic, the share payload, comment sync, or any crit-web interaction:
-
-1. Run: `make e2e-share` (or `./scripts/e2e-share.sh`)
-2. Add new test cases for new share functionality — name them `TestShareSync*`
-3. Inspect on web: `./scripts/e2e-share.sh --serve` starts crit-web and logs review URLs
-
-Requires a local crit-web checkout at `../crit-web` and PostgreSQL. See `scripts/AGENTS.md` for full details.
-</important>
-
 <important if="you are modifying crit pull, crit push, GitHub PR comment sync, the review-file ↔ GitHub roundtrip, or anything in `github.go` / `pr_cache.go` / `pr_fetch_test.go` / `push_buckets.go` / `comment_cli.go` reply handling">
 
 `roundtrip_integration_test.go` (build tag `e2e_github`) exercises the crit ↔ GitHub PR roundtrip against a real sandbox PR. When modifying pull/push, GitHub-comment-bucket logic, reply posting, or `mergeGHComments*` dedup:
@@ -211,17 +182,14 @@ Requires `gh` authenticated and `CRIT_ROUNDTRIP_REPO=<owner>/crit-roundtrip-sand
 
 <important if="you are adding or modifying HTTP API endpoints in server.go">
 
-All routes wrapped with `s.withReady` return 503 until session init completes — except `/api/health` and `/api/qr`.
+All routes wrapped with `s.withReady` return 503 until session init completes — except `/api/health`.
 
 Session-scoped:
 
 - `GET  /api/health` — liveness probe (no readiness gate; used for daemon health checks)
-- `GET  /api/qr` — QR code for current shared URL
 - `GET  /api/session` — session metadata
-- `GET  /api/config` — `{share_url, hosted_url, delete_token, version, latest_version, ...}`
+- `GET  /api/config` — `{version, latest_version, ...}`
 - `GET  /api/review-cycle` — review-cycle metadata (round number, edits-since-last)
-- `POST /api/share` — perform a share (POST to crit-web `/api/reviews`); returns URL+delete_token
-- `POST /api/share-url` / `DELETE /api/share-url` — persist or unpublish shared URL
 - `POST /api/finish` — write review file, return prompt for agent
 - `GET  /api/events` — SSE stream (file-changed, edit-detected, server-shutdown)
 - `GET  /api/wait-for-event` — long-poll until finish (used by `crit` daemon mode)
@@ -253,7 +221,7 @@ Static: `GET /files/<path>` — serve files from repo root (path traversal prote
 - Server binds to `127.0.0.1` by default. Non-loopback listen or any `public_url` refuses to start unless `--allow-unauthenticated-network` / `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1` is set (CLI/env only — never project config). Prefer SSH `-L`, Tailscale Serve to loopback, or Docker `-p 127.0.0.1:port:port`.
 - State-changing requests (POST/PUT/PATCH/DELETE) with a `Sec-Fetch-Site` header must be `same-origin`. Missing header is allowed (CLI/curl/agent). `cross-site` is rejected — CSRF defense against malicious pages posting to loopback. Complements `checkHost` (DNS-rebinding); does not authenticate network clients.
 - `/files/` validates paths, blocks `..` traversal, verifies resolved path stays within repo root
-- Body size: 10MB for comments, 1MB for share-url via `http.MaxBytesReader`
+- Body size: 10MB for comments via `http.MaxBytesReader`
 - HTTP server: `ReadTimeout: 15s`, `IdleTimeout: 60s` (no `WriteTimeout` — SSE needs open connections)
 - Comment renderer uses `html: false` (XSS prevention in user comments)
 - Document renderer uses `html: true` intentionally (reviewing local files)
@@ -309,17 +277,6 @@ Header has a 3-button theme pill (System / Light / Dark):
 - CSS vars are set in `:root` (dark fallback), `@media (prefers-color-scheme: light) html:not([data-theme])`, `[data-theme="dark"]`, and `[data-theme="light"]` blocks. **Define every new variable in all four blocks.**
 - Theme choice persisted via `crit-settings` cookie (`theme` key, `"system"` | `"light"` | `"dark"`).
 - Use CSS custom properties from `theme.css` for all colors. Never hardcode hex values.
-</important>
-
-<important if="you are modifying share, unpublish, or share-button UI in crit/">
-
-Sharing is opt-in. When `--share-url` (or `CRIT_SHARE_URL` env var, or `share_url` in config file) is set:
-
-- Share button appears in the header
-- Click POSTs document + comments to `{share_url}/api/reviews` (crit-web API)
-- Response `{url, delete_token}` persisted to review file via `POST /api/share-url`
-- Share-notice banner shows the URL with Copy / Unpublish actions
-- Unpublish calls `DELETE {share_url}/api/reviews?delete_token=...` then clears local state
 </important>
 
 <important if="you are modifying multi-round logic, round-complete, or finish handling">

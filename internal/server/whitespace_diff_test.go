@@ -46,7 +46,7 @@ func TestHandleFileDiff_IgnoreWhitespace(t *testing.T) {
 	}
 	session.InitTestChannels()
 
-	s, err := NewServer(session, frontendFS, "", false, "", "", "test", 0, "")
+	s, err := NewServer(session, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

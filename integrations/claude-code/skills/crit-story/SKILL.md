@@ -61,7 +61,6 @@ printed to stdout as JSON on every attempt, success or failure. If rejected:
 
 ## What this skill does NOT do
 
-- It does not call `crit comment`, `crit push`, or `crit share` — those are
-  separate flows.
+- It does not call `crit comment` or `crit push` — those are separate flows.
 - It does not produce review-level human comments.
 - It does not run as part of the generic `/crit` review loop.

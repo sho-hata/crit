@@ -248,9 +248,6 @@ func TestInstallOpencodeIncludesPluginFile(t *testing.T) {
 			t.Fatalf("read embedded %s: %v", src, err)
 		}
 		if src == "integrations/opencode/plugin/crit.ts" {
-			if !strings.Contains(string(data), "experimental.chat.system.transform") {
-				t.Error("embedded plugin does not reference the system-prompt hook")
-			}
 			if !strings.Contains(string(data), "tool.execute.before") {
 				t.Error("embedded plugin does not reference the wait-notify hook")
 			}

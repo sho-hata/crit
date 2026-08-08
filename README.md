@@ -5,6 +5,9 @@
 [![Release](https://img.shields.io/github/release/tomasz-tomczyk/crit.svg)](https://github.com/tomasz-tomczyk/crit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> **This is a private fork of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit).** Differences from upstream:
+> - The share feature (`crit share`/`crit fetch`/`crit unpublish`/`crit auth` and the crit-web hosted-service integration) has been removed for private use.
+
 Review and comment on plans, code diffs, frontend elements and send feedback directly to your agent.
 
 ![Crit UI for "notification-plan.md" showing comment left on "Queue - Redis Streams, SQS, RabbitMQ" line saying "Just use SQS - we're in AWS"](docs/images/demo-overview.png)
@@ -157,39 +160,7 @@ crit comment --output .crit src/auth.go:42 'comment'    # in-repo: .crit/reviews
 crit comment --clear   # remove the review file
 ```
 
-Comments are appended to the review file (stored in `~/.crit/reviews/`) and created automatically if it doesn't exist. Run `crit status` to see active review session IDs and paths. If multiple sessions match the same directory and branch, select one with `--session <id>` on `crit comment`, `crit comments`, `crit share`, `crit push`, or `crit pull`; an unqualified command fails instead of guessing.
-
-### Share for Async Review
-
-Want a second opinion before handing off to the agent? Click the Share button to upload your review and get a public URL anyone can open in a browser, no install needed. Each reviewer's comments are color-coded by author. Unpublish anytime.
-
-You can also share directly from the CLI without starting the browser UI:
-
-```bash
-crit share plan.md                    # share files and print the URL
-crit share plan.md --qr               # also print a QR code in the terminal
-crit share plan.md --org acme         # share under an organization
-crit share plan.md --org acme --visibility unlisted  # org share with explicit visibility
-crit unpublish                        # remove the shared review
-```
-
-When sharing under an org, visibility defaults to `organization` (members only). Override with `--visibility` (`organization`, `unlisted`, or `public`). The browser UI shows an org picker when you're signed in and belong to an organization.
-
-Sharing uses [crit.md](https://crit.md) by default. To self-host, deploy [`crit-web`](https://github.com/tomasz-tomczyk/crit-web) and point `CRIT_SHARE_URL` (or `--share-url`, or `share_url` in config) at your instance. Set `share_url` to `""` to disable sharing entirely.
-
-If your self-hosted `crit-web` sits behind an SSO reverse proxy that the terminal can't authenticate against, set `proxy_auth: true` in your `~/.crit.config.json` (this option is config-only and global-only — it's a property of the deployment, not a per-invocation choice, so there's no flag or env var). Browser-driven Share / Pull / Re-share / Unpublish then route through a popup window where the proxy can complete its interactive auth flow. Terminal `crit share`, `crit fetch`, and `crit unpublish` remain unavailable behind SSO — use the browser UI buttons.
-
-#### Authentication
-
-You can share anonymously or you can create a free crit.md account (using GitHub oAuth). To authenticate with crit-web (for sharing and other features that require an account):
-
-```bash
-crit auth login                    # opens browser to log in
-crit auth whoami                   # show current user info
-crit auth logout                   # log out and revoke token
-```
-
-`crit auth login` uses the OAuth Device Flow - it opens your browser, you confirm, and the CLI receives a token automatically. The token is stored in your global config (`~/.crit.config.json`).
+Comments are appended to the review file (stored in `~/.crit/reviews/`) and created automatically if it doesn't exist. Run `crit status` to see active review session IDs and paths. If multiple sessions match the same directory and branch, select one with `--session <id>` on `crit comment`, `crit comments`, `crit push`, or `crit pull`; an unqualified command fails instead of guessing.
 
 ### GitHub PR Sync
 
@@ -347,17 +318,13 @@ See the **[command hooks guide](docs/agent-hooks.md)** for the full env-var/stdi
 
 ### Global-only config keys
 
-These keys can only be set in `~/.crit.config.json` (global). Project-level `.crit.config.json` cannot override them — this prevents a malicious repository from hijacking local commands or redirecting share requests.
+These keys can only be set in `~/.crit.config.json` (global). Project-level `.crit.config.json` cannot override them — this prevents a malicious repository from hijacking local commands.
 
 | Key                    | Type     | Default                    | Description                                                                                                                                                                             |
 | ---------------------- | -------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent_cmd`            | string   | `""`                       | Shell command for "Send to agent" (e.g. `"claude -p"`). See [Send to agent](#send-to-agent-experimental). |
 | `open_cmd`             | string   | `""`                       | Custom command to open review URLs — receives the URL as its only argument (must be a single executable, no flags). Use when the browser isn't on the machine running crit, e.g. crit runs on a remote host over SSH and a small wrapper script opens the URL on your local machine. When unset, crit uses the platform default opener. |
-| `auth_token`           | string   | `""`                       | Authentication token for crit.md. Set automatically by `crit auth login`. |
-| `share_url`            | string   | `"https://crit.md"`        | Base URL of the share service. Set to `""` to disable sharing entirely. Self-host with [`crit-web`](https://github.com/tomasz-tomczyk/crit-web). |
 | `public_url`           | string   | `""`                       | Advertised base URL for stderr and browser-open (e.g. `https://machine.ts.net` via tailscale serve). Listen address unchanged. Requires `--allow-unauthenticated-network` / `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1`. |
-| `share_consented`      | bool     | `false`                    | Written automatically to `true` after you confirm the first-time share prompt. Reset to `false` to see the prompt again. Not used when `share_url` is a custom (self-hosted) URL. |
-| `proxy_auth`           | bool     | `false`                    | When `true`, share / pull / unpublish / re-share use the browser popup relay instead of the local Go server contacting crit-web directly. Use when crit-web is behind an SSO reverse proxy that the terminal cannot authenticate against. No flag or env var — this is a property of the deployment, not a per-invocation choice. |
 | `plan_approve_mode`    | string   | unset                      | Claude Code permission mode after Crit approves an `ExitPlanMode` hook: `default`, `manual`, `acceptEdits`, `plan`, `auto`, `dontAsk`, or `bypassPermissions`. The update uses `destination: "session"`, so it lasts only for the current Claude Code session. See [Claude Code plan approval mode](integrations/README.md#claude-code-plan-approval-mode). |
 | `close_on_approve_after_ms` | int | unset (disabled)          | Auto-close the review tab this many milliseconds after you Approve with no unresolved comments. Unset means no auto-close (current behavior); negative values are treated as unset. A Cancel button during the countdown skips the close for that approval. |
 
@@ -370,7 +337,6 @@ These keys can only be set in `~/.crit.config.json` (global). Project-level `.cr
 | `--public-url`  |       | `public_url`          | Advertised review URL (listen unchanged) |
 | `--allow-unauthenticated-network` | | — | Required with non-loopback `--host` or any `--public-url` |
 | `--no-open`     |       | `no_open`             | Don't auto-open browser                |
-| `--share-url`   |       | `share_url`           | Share service URL                      |
 | `--output`      | `-o`  | `output`              | Crit data root for reviews (`<root>/reviews/<key>/`). Honors a leftover `<root>/.crit` from older crit versions until removed. |
 | `--quiet`       | `-q`  | `quiet`               | On success, suppress connect/start status, tips, and session summary                 |
 | `--base-branch` |       | `base_branch`         | Base branch to diff against            |
@@ -411,8 +377,6 @@ crit --no-ignore
 | `CRIT_HOST`                 | Listen host (default `127.0.0.1`)                 |
 | `CRIT_PUBLIC_URL`           | Advertised review URL (e.g. tailscale serve)      |
 | `CRIT_ALLOW_UNAUTHENTICATED_NETWORK` | Allow non-loopback host / public_url (`1`/`true`/`yes`/`on`) |
-| `CRIT_SHARE_URL`            | Override the share service URL                    |
-| `CRIT_AUTH_TOKEN`           | Override the auth token (skips `crit auth login`) |
 | `CRIT_NO_UPDATE_CHECK`      | Disable the update check on startup               |
 | `CRIT_NO_INTEGRATION_CHECK` | Skip integration config freshness checks          |
 

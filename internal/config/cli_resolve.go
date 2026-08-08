@@ -66,17 +66,3 @@ func ResolveHost(flagHost, cfgHost string) string {
 	}
 	return cfgHost
 }
-
-// ResolveShareURL returns the effective share service URL.
-func ResolveShareURL(flagValue string, cfg Config, fallback string) string {
-	if flagValue != "" {
-		return flagValue
-	}
-	if envShare, ok := os.LookupEnv("CRIT_SHARE_URL"); ok {
-		return envShare
-	}
-	if cfg.ShareURL != "" {
-		return cfg.ShareURL
-	}
-	return fallback
-}

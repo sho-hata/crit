@@ -78,7 +78,7 @@ Explicit `prompts` config still wins over conventional files and is useful for n
 
 Config keys use `:` for mode suffixes; filenames use `.` instead (e.g. `on_finish_unresolved:diff` → `on_finish_unresolved.diff.md`).
 
-`agent_cmd`, `auth_token`, and `share_url` stay global-only; `prompts` is allowed in project config.
+`agent_cmd` stays global-only; `prompts` is allowed in project config.
 
 ### Shipped templates
 

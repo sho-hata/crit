@@ -17,7 +17,6 @@ func TestLoadConfigFromFile(t *testing.T) {
 	os.WriteFile(configPath, []byte(`{
   "port": 3456,
   "no_open": true,
-  "share_url": "https://example.com",
   "quiet": true,
   "ignore_patterns": ["*.lock", "vendor/"]
 }`), 0644)
@@ -32,35 +31,14 @@ func TestLoadConfigFromFile(t *testing.T) {
 	if !cfg.NoOpen {
 		t.Error("no_open should be true")
 	}
-	if cfg.ShareURL != "https://example.com" {
-		t.Errorf("share_url = %q", cfg.ShareURL)
-	}
 	if !cfg.Quiet {
 		t.Error("quiet should be true")
 	}
 	if len(cfg.IgnorePatterns) != 2 {
 		t.Errorf("ignore_patterns = %v", cfg.IgnorePatterns)
 	}
-	if !presence.ShareURL {
-		t.Error("presence.ShareURL should be true")
-	}
 	if !presence.IgnorePatterns {
 		t.Error("presence.IgnorePatterns should be true")
-	}
-}
-
-func TestConfig_ProxyAuthFromJSON(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "crit.json")
-	if err := os.WriteFile(path, []byte(`{"proxy_auth":true,"share_url":"https://example.com"}`), 0644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	cfg, _, err := LoadConfigFile(path)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if !cfg.ProxyAuth {
-		t.Errorf("got proxy_auth=false, want true")
 	}
 }
 
@@ -72,7 +50,7 @@ func TestLoadConfigFileMissing(t *testing.T) {
 	if cfg.Port != 0 {
 		t.Errorf("expected zero config")
 	}
-	if presence.ShareURL || presence.IgnorePatterns {
+	if presence.IgnorePatterns {
 		t.Error("missing file should have no presence flags")
 	}
 }
@@ -118,20 +96,14 @@ func TestLoadConfigFileInvalidJSON(t *testing.T) {
 func TestLoadConfigFilePresenceEmptyValues(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
-	os.WriteFile(configPath, []byte(`{"share_url": "", "ignore_patterns": []}`), 0644)
+	os.WriteFile(configPath, []byte(`{"ignore_patterns": []}`), 0644)
 
 	cfg, presence, err := LoadConfigFile(configPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.ShareURL != "" {
-		t.Errorf("share_url = %q, want empty", cfg.ShareURL)
-	}
 	if len(cfg.IgnorePatterns) != 0 {
 		t.Errorf("ignore_patterns = %v, want empty", cfg.IgnorePatterns)
-	}
-	if !presence.ShareURL {
-		t.Error("presence.ShareURL should be true even for empty string")
 	}
 	if !presence.IgnorePatterns {
 		t.Error("presence.IgnorePatterns should be true even for empty array")
@@ -139,7 +111,7 @@ func TestLoadConfigFilePresenceEmptyValues(t *testing.T) {
 }
 
 func TestMergeConfigs(t *testing.T) {
-	global := Config{Port: 3000, ShareURL: "https://global.example.com"}
+	global := Config{Port: 3000}
 	global.IgnorePatterns = []string{"*.lock"}
 
 	project := Config{Port: 8080}
@@ -149,22 +121,8 @@ func TestMergeConfigs(t *testing.T) {
 	if merged.Port != 8080 {
 		t.Errorf("port = %d, want 8080 (project override)", merged.Port)
 	}
-	if merged.ShareURL != "https://global.example.com" {
-		t.Errorf("share_url lost")
-	}
 	if len(merged.IgnorePatterns) != 2 {
 		t.Errorf("patterns = %v, want union", merged.IgnorePatterns)
-	}
-}
-
-func TestMergeConfigsShareConsentedFromGlobal(t *testing.T) {
-	// share_consented is global-only state. A `true` value set in the global
-	// config must survive the merge regardless of project config presence.
-	global := Config{ShareConsented: true}
-	project := Config{}
-	merged := mergeConfigs(global, project, ConfigPresence{})
-	if !merged.ShareConsented {
-		t.Errorf("merged.ShareConsented = false, want true (global value lost)")
 	}
 }
 
@@ -306,7 +264,7 @@ func TestLoadConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	testutil.SetHome(t, homeDir)
 	globalPath := filepath.Join(homeDir, ".crit.config.json")
-	os.WriteFile(globalPath, []byte(`{"port": 3000, "share_url": "https://global.example.com", "open_cmd": "/usr/local/bin/crit-open", "ignore_patterns": ["*.lock"]}`), 0644)
+	os.WriteFile(globalPath, []byte(`{"port": 3000, "open_cmd": "/usr/local/bin/crit-open", "ignore_patterns": ["*.lock"]}`), 0644)
 
 	// Set up project dir with config
 	projectDir := t.TempDir()
@@ -316,9 +274,6 @@ func TestLoadConfig(t *testing.T) {
 
 	if cfg.Port != 8080 {
 		t.Errorf("port = %d, want 8080 (project override)", cfg.Port)
-	}
-	if cfg.ShareURL != "https://global.example.com" {
-		t.Errorf("share_url = %q, want global value", cfg.ShareURL)
 	}
 	if cfg.OpenCmd != "/usr/local/bin/crit-open" {
 		t.Errorf("open_cmd = %q, want global value", cfg.OpenCmd)
@@ -431,9 +386,6 @@ func TestLoadConfigRuntimeDefaults(t *testing.T) {
 	projectDir := t.TempDir()
 
 	cfg := LoadConfig(projectDir)
-	if cfg.ShareURL != "https://crit.md" {
-		t.Errorf("ShareURL = %q, want runtime default https://crit.md", cfg.ShareURL)
-	}
 	wantPatterns := []string{".crit/"}
 	if len(cfg.IgnorePatterns) != len(wantPatterns) || cfg.IgnorePatterns[0] != wantPatterns[0] {
 		t.Errorf("IgnorePatterns = %v, want %v", cfg.IgnorePatterns, wantPatterns)
@@ -442,7 +394,6 @@ func TestLoadConfigRuntimeDefaults(t *testing.T) {
 
 func TestLoadConfigRuntimeDefaultsOverriddenByEmptyValues(t *testing.T) {
 	// Project config sets ignore_patterns to [] — overrides the runtime default.
-	// share_url is global-only and cannot be suppressed via project config.
 	homeDir := t.TempDir()
 	testutil.SetHome(t, homeDir)
 	projectDir := t.TempDir()
@@ -450,63 +401,8 @@ func TestLoadConfigRuntimeDefaultsOverriddenByEmptyValues(t *testing.T) {
 		[]byte(`{"ignore_patterns": []}`), 0644)
 
 	cfg := LoadConfig(projectDir)
-	// share_url is global-only — project config cannot suppress the runtime default
-	if cfg.ShareURL != "https://crit.md" {
-		t.Errorf("ShareURL = %q, want runtime default https://crit.md (project cannot override)", cfg.ShareURL)
-	}
 	if len(cfg.IgnorePatterns) != 0 {
 		t.Errorf("IgnorePatterns = %v, want empty (explicitly overridden)", cfg.IgnorePatterns)
-	}
-}
-
-func TestLoadConfigShareURLProjectIgnored(t *testing.T) {
-	// share_url in project config must be ignored — only global config may set it.
-	// Prevents a malicious repo from redirecting crit share (and the auth token)
-	// to an attacker-controlled host.
-	homeDir := t.TempDir()
-	testutil.SetHome(t, homeDir)
-	os.WriteFile(filepath.Join(homeDir, ".crit.config.json"),
-		[]byte(`{"share_url": "https://trusted.example.com"}`), 0644)
-	projectDir := t.TempDir()
-	os.WriteFile(filepath.Join(projectDir, ".crit.config.json"),
-		[]byte(`{"share_url": "https://attacker.example.com"}`), 0644)
-
-	cfg := LoadConfig(projectDir)
-	if cfg.ShareURL != "https://trusted.example.com" {
-		t.Errorf("ShareURL = %q, want global value (project override must be ignored)", cfg.ShareURL)
-	}
-}
-
-func TestLoadConfigShareURLProjectCannotSuppressDefault(t *testing.T) {
-	// share_url: "" in project config must not suppress the runtime default.
-	homeDir := t.TempDir()
-	testutil.SetHome(t, homeDir)
-	projectDir := t.TempDir()
-	os.WriteFile(filepath.Join(projectDir, ".crit.config.json"),
-		[]byte(`{"share_url": ""}`), 0644)
-
-	cfg := LoadConfig(projectDir)
-	if cfg.ShareURL != "https://crit.md" {
-		t.Errorf("ShareURL = %q, want runtime default https://crit.md", cfg.ShareURL)
-	}
-}
-
-func TestLoadConfigRuntimeDefaultsOverriddenByGlobal(t *testing.T) {
-	// Global config sets share_url — no runtime default applied
-	homeDir := t.TempDir()
-	testutil.SetHome(t, homeDir)
-	os.WriteFile(filepath.Join(homeDir, ".crit.config.json"),
-		[]byte(`{"share_url": "https://custom.example.com"}`), 0644)
-	projectDir := t.TempDir()
-
-	cfg := LoadConfig(projectDir)
-	if cfg.ShareURL != "https://custom.example.com" {
-		t.Errorf("ShareURL = %q, want custom global value", cfg.ShareURL)
-	}
-	// ignore_patterns not set in any config — default applies
-	wantPatterns := []string{".crit/"}
-	if len(cfg.IgnorePatterns) != len(wantPatterns) || cfg.IgnorePatterns[0] != wantPatterns[0] {
-		t.Errorf("IgnorePatterns = %v, want %v", cfg.IgnorePatterns, wantPatterns)
 	}
 }
 
@@ -633,8 +529,8 @@ func TestSaveGlobalConfig_RoundTrip(t *testing.T) {
 
 	// Write a key
 	err := SaveGlobalConfig(func(m map[string]json.RawMessage) error {
-		data, _ := json.Marshal("https://example.com")
-		m["share_url"] = data
+		data, _ := json.Marshal(true)
+		m["quiet"] = data
 		return nil
 	})
 	if err != nil {
@@ -646,11 +542,11 @@ func TestSaveGlobalConfig_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfigFile: %v", err)
 	}
-	if cfg.ShareURL != "https://example.com" {
-		t.Errorf("ShareURL = %q, want https://example.com", cfg.ShareURL)
+	if !cfg.Quiet {
+		t.Error("Quiet = false, want true")
 	}
-	if !presence.ShareURL {
-		t.Error("expected ShareURL presence to be true")
+	if !presence.Quiet {
+		t.Error("expected Quiet presence to be true")
 	}
 }
 
@@ -664,8 +560,8 @@ func TestSaveGlobalConfig_PreservesExistingKeys(t *testing.T) {
 
 	// Update a different key
 	err := SaveGlobalConfig(func(m map[string]json.RawMessage) error {
-		data, _ := json.Marshal("https://custom.example.com")
-		m["share_url"] = data
+		data, _ := json.Marshal("/usr/local/bin/crit-open")
+		m["open_cmd"] = data
 		return nil
 	})
 	if err != nil {
@@ -683,8 +579,8 @@ func TestSaveGlobalConfig_PreservesExistingKeys(t *testing.T) {
 	if !cfg.Quiet {
 		t.Error("Quiet should be preserved as true")
 	}
-	if cfg.ShareURL != "https://custom.example.com" {
-		t.Errorf("ShareURL = %q, want https://custom.example.com", cfg.ShareURL)
+	if cfg.OpenCmd != "/usr/local/bin/crit-open" {
+		t.Errorf("OpenCmd = %q, want /usr/local/bin/crit-open", cfg.OpenCmd)
 	}
 }
 
@@ -736,16 +632,6 @@ func TestLoadConfig_PlanApproveModeProjectCannotEnable(t *testing.T) {
 
 	if got := LoadConfig(projectDir).PlanApproveMode; got != "" {
 		t.Errorf("PlanApproveMode = %q, want empty when only project config sets it", got)
-	}
-}
-
-func TestMergeConfigs_ShareURLProjectIgnored(t *testing.T) {
-	// share_url in project config must not override global — prevents token exfiltration
-	global := Config{ShareURL: "https://crit.md"}
-	project := Config{ShareURL: "https://attacker.example.com"}
-	merged := mergeConfigs(global, project, ConfigPresence{ShareURL: true})
-	if merged.ShareURL != "https://crit.md" {
-		t.Errorf("project share_url should be ignored, got %q", merged.ShareURL)
 	}
 }
 
@@ -865,9 +751,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.NoOpen {
 		t.Error("NoOpen should be false")
 	}
-	if cfg.ShareURL != "https://crit.md" {
-		t.Errorf("ShareURL = %q, want https://crit.md", cfg.ShareURL)
-	}
 	if !cfg.CleanupOnApprove {
 		t.Error("CleanupOnApprove should be true")
 	}
@@ -894,27 +777,6 @@ func TestDefaultConfig(t *testing.T) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(s), &m); err != nil {
 		t.Errorf("defaultConfig().String() is not valid JSON: %v", err)
-	}
-}
-
-func TestNeedsShareConsent(t *testing.T) {
-	tests := []struct {
-		name     string
-		cfg      Config
-		shareURL string
-		want     bool
-	}{
-		{"default URL, not consented", Config{ShareConsented: false}, "https://crit.md", true},
-		{"default URL, already consented", Config{ShareConsented: true}, "https://crit.md", false},
-		{"self-hosted URL, not consented", Config{ShareConsented: false}, "https://my.company.com", false},
-		{"self-hosted URL, consented", Config{ShareConsented: true}, "https://my.company.com", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := needsShareConsent(tt.cfg, tt.shareURL); got != tt.want {
-				t.Errorf("needsShareConsent() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 

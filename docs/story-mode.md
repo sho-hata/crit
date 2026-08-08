@@ -213,7 +213,7 @@ Overrides replace the entire prompt. If you customize
 - Include `{{.story_schema_json}}` or an equivalent schema.
 - Preserve the hunk coverage rule: every hunk appears exactly once in
   `chapters[]` or `support[]`.
-- Tell the agent not to call `crit comment`, `crit push`, or `crit share`.
+- Tell the agent not to call `crit comment` or `crit push`.
 
 Useful template variables:
 

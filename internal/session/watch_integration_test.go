@@ -41,7 +41,7 @@ func TestHandleRoundCompleteFiles_DiscoversNewFiles(t *testing.T) {
 	sess.ReviewFilePath = filepath.Join(tmp, ".crit-review")
 	sess.InitTestChannels()
 
-	srv, err := server.NewServer(sess, server.FrontendFS, "", false, "", "tester", "test", 0, "")
+	srv, err := server.NewServer(sess, server.FrontendFS, "tester", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
