@@ -53,6 +53,10 @@
 
   var HOVER_DELAY_MS = 350;
   var MAX_CONSECUTIVE_FAILURES = 3;
+  // After the breaker trips, allow another attempt this long after the last
+  // failure (half-open): gopls warm-up on large repos can outlast the
+  // server's retry window, and a permanent disable would outlive the outage.
+  var DISABLE_RETRY_MS = 30000;
 
   var st = null; // controller state; null until init()
 
@@ -103,8 +107,20 @@
     st.failures++;
     if (st.failures >= MAX_CONSECUTIVE_FAILURES) {
       st.disabled = true;
+      st.disabledAt = Date.now();
       hideTooltip();
     }
+  }
+
+  // isDisabled reports whether the failure breaker is open, letting one
+  // attempt through (half-open) once DISABLE_RETRY_MS has passed; a further
+  // failure re-trips it immediately.
+  function isDisabled() {
+    if (!st.disabled) return false;
+    if (Date.now() - st.disabledAt < DISABLE_RETRY_MS) return true;
+    st.disabled = false;
+    st.failures = MAX_CONSECUTIVE_FAILURES - 1;
+    return false;
   }
 
   function recordSuccess() {
@@ -155,11 +171,16 @@
   }
 
   function onMouseMove(e) {
-    if (st.disabled) return;
+    if (isDisabled()) return;
     var hit = eligibleLineEl(e.target);
     if (!hit) {
-      // Moving onto the tooltip itself keeps it open (lets users select text).
-      if (st.tooltip && !st.tooltip.hidden && st.tooltip.contains(e.target)) return;
+      // Moving onto the tooltip itself keeps it open (lets users select
+      // text) — but drop any pending hover request from the last on-line
+      // position so it cannot fire with stale coordinates.
+      if (st.tooltip && !st.tooltip.hidden && st.tooltip.contains(e.target)) {
+        clearTimeout(st.hoverTimer);
+        return;
+      }
       clearTimeout(st.hoverTimer);
       hideTooltip();
       return;
@@ -232,6 +253,7 @@
       inflight: null,
       failures: 0,
       disabled: false,
+      disabledAt: 0,
     };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mousedown', onGlobalMousedown, true);

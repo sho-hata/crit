@@ -216,10 +216,12 @@ func startGopls(ctx context.Context, rootDir string) (*Client, error) {
 	// Reap the process when it exits so it never zombies.
 	waitDone := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(waitDone) }()
+	// kill is invoked by Client.Close after the polite shutdown handshake
+	// already got its grace period, so don't wait again — reap or kill now.
 	kill := func() {
 		select {
 		case <-waitDone: // already exited
-		case <-time.After(2 * time.Second):
+		default:
 			_ = cmd.Process.Kill()
 		}
 	}
