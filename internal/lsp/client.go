@@ -207,9 +207,6 @@ func (c *Client) writeFrame(v any) error {
 // call performs a request and unmarshals the result into out (skipped when
 // out is nil or the result is null).
 func (c *Client) call(method string, params any, out any) error {
-	// Allocate a fresh request ID and register a buffered reply channel
-	// under it BEFORE sending, so the reader loop can route the response
-	// even if it arrives before we reach the select below.
 	c.mu.Lock()
 	c.nextID++
 	id := c.nextID
@@ -219,8 +216,6 @@ func (c *Client) call(method string, params any, out any) error {
 
 	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 	if err := c.writeFrame(req); err != nil {
-		// The request never made it onto the wire — deregister so the
-		// pending map does not leak an entry no response will ever match.
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
@@ -278,11 +273,12 @@ func (c *Client) Initialize(rootDir string) error {
 }
 
 // DidOpen tells the server a document is open with the given content.
-func (c *Client) DidOpen(path, text string, version int) error {
+// languageID is the LSP language identifier (e.g. "go").
+func (c *Client) DidOpen(path, languageID, text string, version int) error {
 	return c.notify("textDocument/didOpen", map[string]any{
 		"textDocument": map[string]any{
 			"uri":        PathToURI(path),
-			"languageId": "go",
+			"languageId": languageID,
 			"version":    version,
 			"text":       text,
 		},

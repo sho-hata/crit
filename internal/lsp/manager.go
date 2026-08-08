@@ -18,6 +18,10 @@ import (
 // processes: only actively-hovered sessions hold one.
 const defaultIdleTimeout = 10 * time.Minute
 
+// goLanguageID is the LSP language identifier sent with didOpen. The manager
+// only ever feeds Go files to gopls.
+const goLanguageID = "go"
+
 // GoplsAvailable reports whether gopls is installed on PATH.
 func GoplsAvailable() bool {
 	_, err := exec.LookPath("gopls")
@@ -147,7 +151,7 @@ func (m *Manager) syncFileLocked(absPath string) error {
 	}
 	if !open {
 		st = fileState{version: 1, hash: hash}
-		if err := m.client.DidOpen(absPath, string(data), st.version); err != nil {
+		if err := m.client.DidOpen(absPath, goLanguageID, string(data), st.version); err != nil {
 			return err
 		}
 	} else {
