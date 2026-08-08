@@ -19,7 +19,7 @@ import (
 
 // requestTimeout bounds a single LSP request round-trip. The first hover on a
 // large module can take several seconds while gopls loads packages.
-const requestTimeout = 30 * time.Second
+const requestTimeout = 15 * time.Second
 
 // jsonrpcMessage is one incoming JSON-RPC 2.0 message. A message with both
 // Method and ID is a server->client request; Method without ID is a

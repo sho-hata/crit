@@ -214,16 +214,62 @@ func TestHoverContentsToMarkdown(t *testing.T) {
 	}
 }
 
+// The Windows-only branches (drive-letter prefixes) cannot run on other
+// platforms because runtime.GOOS is a constant; these tables cover the
+// POSIX behavior plus the URI-shape invariants gopls relies on.
+func TestPathToURI(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"absolute path", "/tmp/repo/main.go", "file:///tmp/repo/main.go"},
+		{"space is percent-encoded", "/tmp/repo/sub dir/file.go", "file:///tmp/repo/sub%20dir/file.go"},
+		{"plus survives, parens percent-encoded", "/tmp/a+b (c)/f.go", "file:///tmp/a+b%20%28c%29/f.go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := PathToURI(tt.path); got != tt.want {
+				t.Errorf("PathToURI(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestURIToPath(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want string
+	}{
+		{"file URI", "file:///tmp/repo/main.go", "/tmp/repo/main.go"},
+		{"percent-encoded space", "file:///tmp/repo/sub%20dir/file.go", "/tmp/repo/sub dir/file.go"},
+		{"non-file scheme", "https://example.com/x.go", ""},
+		{"unparseable URI", ":no-scheme", ""},
+		{"empty string", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := URIToPath(tt.uri); got != tt.want {
+				t.Errorf("URIToPath(%q) = %q, want %q", tt.uri, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPathURIRoundtrip(t *testing.T) {
-	path := "/tmp/repo/sub dir/file.go"
-	uri := PathToURI(path)
-	if !strings.HasPrefix(uri, "file://") {
-		t.Fatalf("PathToURI = %q, want file:// prefix", uri)
+	paths := []string{
+		"/tmp/repo/main.go",
+		"/tmp/repo/sub dir/file.go",
+		"/tmp/リポジトリ/課題.go", // non-ASCII must survive encode/decode
 	}
-	if got := URIToPath(uri); got != path {
-		t.Errorf("roundtrip = %q, want %q", got, path)
-	}
-	if got := URIToPath("https://example.com/x"); got != "" {
-		t.Errorf("URIToPath(non-file) = %q, want empty", got)
+	for _, path := range paths {
+		uri := PathToURI(path)
+		if !strings.HasPrefix(uri, "file://") {
+			t.Fatalf("PathToURI(%q) = %q, want file:// prefix", path, uri)
+		}
+		if got := URIToPath(uri); got != path {
+			t.Errorf("roundtrip(%q) = %q", path, got)
+		}
 	}
 }
