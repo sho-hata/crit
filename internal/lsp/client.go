@@ -50,7 +50,13 @@ type Client struct {
 	nextID  int64
 	pending map[int64]chan jsonrpcMessage
 
-	// done is closed when the reader loop exits (transport dead).
+	// done is closed exactly once — via doneOnce — when the transport dies:
+	// either the reader loop exits (gopls crashed / closed its stdout) or
+	// Close tears the client down, whichever happens first. doneOnce makes
+	// those two paths safe to race: close(done) would panic on a second
+	// call. A closed done makes Dead() report true and unblocks every
+	// in-flight call() waiting in its select, so no request hangs on a dead
+	// server.
 	done     chan struct{}
 	doneOnce sync.Once
 
@@ -201,6 +207,9 @@ func (c *Client) writeFrame(v any) error {
 // call performs a request and unmarshals the result into out (skipped when
 // out is nil or the result is null).
 func (c *Client) call(method string, params any, out any) error {
+	// Allocate a fresh request ID and register a buffered reply channel
+	// under it BEFORE sending, so the reader loop can route the response
+	// even if it arrives before we reach the select below.
 	c.mu.Lock()
 	c.nextID++
 	id := c.nextID
@@ -210,6 +219,8 @@ func (c *Client) call(method string, params any, out any) error {
 
 	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 	if err := c.writeFrame(req); err != nil {
+		// The request never made it onto the wire — deregister so the
+		// pending map does not leak an entry no response will ever match.
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
