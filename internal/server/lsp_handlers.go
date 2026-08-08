@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/tomasz-tomczyk/crit/internal/lsp"
 	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
@@ -306,13 +307,23 @@ func readPeek(absPath string, targetLine int) (start int, lines []string, trunca
 	}
 	lines = make([]string, 0, end-start+1)
 	for i := start; i <= end; i++ {
-		line := all[i-1]
-		if len(line) > peekMaxLineLen {
-			line = line[:peekMaxLineLen] + "…"
-		}
-		lines = append(lines, line)
+		lines = append(lines, truncateLine(all[i-1]))
 	}
 	return start, lines, truncated
+}
+
+// truncateLine caps pathological lines (minified/generated code) at
+// peekMaxLineLen bytes, backing up to a rune boundary so a multi-byte
+// character is never split (a mid-rune cut renders as U+FFFD in the peek).
+func truncateLine(line string) string {
+	if len(line) <= peekMaxLineLen {
+		return line
+	}
+	end := peekMaxLineLen
+	for end > 0 && !utf8.RuneStart(line[end]) {
+		end--
+	}
+	return line[:end] + "…"
 }
 
 // pathWithinRoot adapts pathsafe.ResolveUnder for callers that only need the

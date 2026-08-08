@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/lsp"
@@ -230,6 +231,36 @@ func TestLSPDefinitionOutsideAllowedRootsHasNoPeek(t *testing.T) {
 	}
 	if len(loc.Peek) != 0 {
 		t.Error("peek must be withheld for paths outside repo/GOROOT/GOMODCACHE")
+	}
+}
+
+func TestTruncateLineKeepsRuneBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{"ascii", strings.Repeat("a", peekMaxLineLen+100)},
+		// Multi-byte runes positioned so a naive byte slice would cut mid-rune.
+		{"multibyte", strings.Repeat("あ", peekMaxLineLen)},
+		{"mixed", strings.Repeat("a", peekMaxLineLen-1) + strings.Repeat("識", 50)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateLine(tt.line)
+			if !strings.HasSuffix(got, "…") {
+				t.Fatalf("long line must end with ellipsis, got %q…", got[len(got)-10:])
+			}
+			if !utf8.ValidString(got) {
+				t.Error("truncation split a multi-byte rune")
+			}
+			if len(got) > peekMaxLineLen+len("…") {
+				t.Errorf("truncated to %d bytes, want <= %d", len(got), peekMaxLineLen+len("…"))
+			}
+		})
+	}
+	short := "short あいう line"
+	if got := truncateLine(short); got != short {
+		t.Errorf("short line must be unchanged, got %q", got)
 	}
 }
 

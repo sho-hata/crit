@@ -53,7 +53,8 @@ type Manager struct {
 	files     map[string]fileState // abs path -> sync state
 	idleTimer *time.Timer
 
-	goEnvOnce  sync.Once
+	goEnvMu    sync.Mutex
+	goEnvDone  bool
 	goroot     string
 	gomodcache string
 }
@@ -213,22 +214,29 @@ func (m *Manager) Shutdown() {
 	m.dropClientLocked()
 }
 
-// GoEnv returns GOROOT and GOMODCACHE (cached after first call). Used to
-// validate that definition peek targets stay within known source roots.
+// GoEnv returns GOROOT and GOMODCACHE, used to validate that definition peek
+// targets stay within known source roots. Only a successful `go env` lookup
+// is cached — a failure (e.g. `go` missing from the daemon's PATH) is
+// retried on the next call rather than pinning empty roots for the daemon's
+// lifetime.
 func (m *Manager) GoEnv() (goroot, gomodcache string) {
-	m.goEnvOnce.Do(func() {
-		out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
-		if err != nil {
-			return
-		}
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		if len(lines) >= 1 {
-			m.goroot = strings.TrimSpace(lines[0])
-		}
-		if len(lines) >= 2 {
-			m.gomodcache = strings.TrimSpace(lines[1])
-		}
-	})
+	m.goEnvMu.Lock()
+	defer m.goEnvMu.Unlock()
+	if m.goEnvDone {
+		return m.goroot, m.gomodcache
+	}
+	out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
+	if err != nil {
+		return "", ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) >= 1 {
+		m.goroot = strings.TrimSpace(lines[0])
+	}
+	if len(lines) >= 2 {
+		m.gomodcache = strings.TrimSpace(lines[1])
+	}
+	m.goEnvDone = true
 	return m.goroot, m.gomodcache
 }
 
