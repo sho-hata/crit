@@ -173,7 +173,7 @@ Reviewing a Go diff, powered by [gopls](https://pkg.go.dev/golang.org/x/tools/go
    curl -s localhost:<port>/api/config | grep lsp_available   # → "lsp_available": true
    ```
 
-   If it reports `false`: gopls is not on the PATH crit was started from, `lsp` is disabled in config, or the session has no repo root (plain files mode).
+   If it reports `false`: gopls is not on the PATH crit was started from, `lsp` is disabled in config, the session has no repo root (plain files mode), or a range/PR review is active (`--range` / `--pr` — the diff shows content at a fixed SHA, while LSP reads the working tree, so answers could silently mismatch).
 
 Notes:
 

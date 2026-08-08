@@ -118,6 +118,19 @@ func TestLSPDisabledByConfig(t *testing.T) {
 	}
 }
 
+func TestLSPUnavailableUnderRangeFocus(t *testing.T) {
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, sess := newLSPTestServer(t, fake)
+	sess.Focus = Focus{Kind: FocusRange, BaseSHA: "b", HeadSHA: "h"}
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 under range focus", w.Code)
+	}
+	if srv.lspAvailable() {
+		t.Error("lspAvailable must be false under range/PR focus (LSP reads the working tree, not Focus.HeadSHA)")
+	}
+}
+
 func TestLSPConfigExposesAvailability(t *testing.T) {
 	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
 	w := doLSPRequest(t, srv, "/api/config")

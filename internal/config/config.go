@@ -236,6 +236,8 @@ func LoadConfigFile(path string) (Config, ConfigPresence, error) {
 // Non-zero project values override global. Bool fields use presence tracking
 // so that project config `no_open: false` can override global `no_open: true`.
 // Ignore patterns are unioned.
+//
+//nolint:gocyclo // a flat sequence of independent per-field merges, not branching logic
 func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config {
 	merged := global
 	if project.Port != 0 {
@@ -262,7 +264,22 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	if project.VCS != "" {
 		merged.VCS = project.VCS
 	}
-	mergeProjectToggles(&merged, project, projectPresence)
+	if projectPresence.NoIntegrationCheck {
+		merged.NoIntegrationCheck = project.NoIntegrationCheck
+	}
+	if projectPresence.NoUpdateCheck {
+		merged.NoUpdateCheck = project.NoUpdateCheck
+	}
+	if projectPresence.CleanupOnApprove {
+		merged.CleanupOnApprove = project.CleanupOnApprove
+	}
+	if projectPresence.NotifyOnRoundReady {
+		merged.NotifyOnRoundReady = project.NotifyOnRoundReady
+	}
+	// LSP carries presence implicitly (*bool, nil = unset).
+	if project.LSP != nil {
+		merged.LSP = project.LSP
+	}
 	if project.LiveCookie != "" {
 		merged.LiveCookie = project.LiveCookie
 	}
@@ -294,28 +311,6 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	mergeProjectPrompts(&merged, project)
 	mergeProjectHooks(&merged, project)
 	return merged
-}
-
-// mergeProjectToggles merges the boolean feature toggles that projects may
-// override. Presence tracking distinguishes "not set" from "explicitly false"
-// for plain bools; *bool fields (cleanup_on_approve, notify_on_round_ready,
-// lsp) carry presence implicitly (nil = unset).
-func mergeProjectToggles(merged *Config, project Config, projectPresence ConfigPresence) {
-	if projectPresence.NoIntegrationCheck {
-		merged.NoIntegrationCheck = project.NoIntegrationCheck
-	}
-	if projectPresence.NoUpdateCheck {
-		merged.NoUpdateCheck = project.NoUpdateCheck
-	}
-	if projectPresence.CleanupOnApprove {
-		merged.CleanupOnApprove = project.CleanupOnApprove
-	}
-	if projectPresence.NotifyOnRoundReady {
-		merged.NotifyOnRoundReady = project.NotifyOnRoundReady
-	}
-	if project.LSP != nil {
-		merged.LSP = project.LSP
-	}
 }
 
 func mergeProjectPrompts(merged *Config, project Config) {

@@ -41,6 +41,14 @@ func (s *Server) lspAvailable() bool {
 	if sess == nil || sess.RepoRoot == "" {
 		return false
 	}
+	// Range/PR focus renders file content at Focus.HeadSHA, but the LSP
+	// endpoints read the working tree — positions could silently resolve
+	// against different content than the reviewer sees. Disable rather than
+	// answer wrong. (Feeding SHA content to gopls as a didOpen overlay is a
+	// possible future improvement.)
+	if sess.Focus.Kind == FocusRange {
+		return false
+	}
 	if s.lsp.binaryAvailable != nil {
 		return s.lsp.binaryAvailable()
 	}
