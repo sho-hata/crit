@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/tomasz-tomczyk/crit/internal/lsp"
+	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
 )
 
 // lspProvider is the slice of lsp.Manager the handlers need; an interface so
@@ -134,20 +135,9 @@ func (s *Server) handleLSPHover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"contents": contents})
 }
 
-// pathWithinRoot reports whether path resolves (through symlinks) to a
-// location inside root. Mirrors the /files/ validation.
+// pathWithinRoot adapts pathsafe.ResolveUnder for callers that only need the
+// yes/no answer.
 func pathWithinRoot(path, root string) bool {
-	if root == "" {
-		return false
-	}
-	resolvedPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return false
-	}
-	return resolvedPath == resolvedRoot ||
-		strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator))
+	_, err := pathsafe.ResolveUnder(path, root)
+	return err == nil
 }

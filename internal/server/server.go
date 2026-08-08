@@ -26,6 +26,7 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/comment"
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/diff"
+	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
 	"github.com/tomasz-tomczyk/crit/internal/prompt"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
@@ -2058,18 +2059,13 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	baseDir := s.session.Load().RepoRoot
 	fullPath := filepath.Join(baseDir, reqPath)
-	cleanPath, err := filepath.EvalSymlinks(fullPath)
+	cleanPath, err := pathsafe.ResolveUnder(fullPath, baseDir)
 	if err != nil {
-		http.Error(w, "File not found", http.StatusNotFound)
-		return
-	}
-	resolvedBase, err := filepath.EvalSymlinks(baseDir)
-	if err != nil {
-		http.Error(w, "Access denied", http.StatusForbidden)
-		return
-	}
-	if !strings.HasPrefix(cleanPath, resolvedBase+string(filepath.Separator)) {
-		http.Error(w, "Access denied", http.StatusForbidden)
+		if errors.Is(err, pathsafe.ErrNotFound) {
+			http.Error(w, "File not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Access denied", http.StatusForbidden)
+		}
 		return
 	}
 
