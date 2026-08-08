@@ -287,7 +287,7 @@ func TestReadPeekBoundaries(t *testing.T) {
 
 	// A trailing newline must not produce a phantom empty line past EOF.
 	small := write("small.go", 3)
-	start, lines, truncated := readPeek(small, 2)
+	start, lines, truncated := readPeek(small, 2, peekFullFileMaxLines, peekContextLines)
 	if start != 1 || truncated || len(lines) != 3 {
 		t.Errorf("small file: start=%d truncated=%v lines=%d, want 1/false/3", start, truncated, len(lines))
 	}
@@ -295,7 +295,7 @@ func TestReadPeekBoundaries(t *testing.T) {
 	// Exactly peekFullFileMaxLines lines (newline-terminated) is still a
 	// whole-file peek, not a truncated window.
 	exact := write("exact.go", peekFullFileMaxLines)
-	start, lines, truncated = readPeek(exact, 1000)
+	start, lines, truncated = readPeek(exact, 1000, peekFullFileMaxLines, peekContextLines)
 	if start != 1 || truncated || len(lines) != peekFullFileMaxLines {
 		t.Errorf("exact-limit file: start=%d truncated=%v lines=%d, want 1/false/%d",
 			start, truncated, len(lines), peekFullFileMaxLines)
@@ -303,7 +303,7 @@ func TestReadPeekBoundaries(t *testing.T) {
 
 	// One line over the limit tips it into the ±peekContextLines window.
 	over := write("over.go", peekFullFileMaxLines+1)
-	start, lines, truncated = readPeek(over, 1000)
+	start, lines, truncated = readPeek(over, 1000, peekFullFileMaxLines, peekContextLines)
 	if !truncated || start != 1000-peekContextLines || len(lines) != 2*peekContextLines+1 {
 		t.Errorf("over-limit file: start=%d truncated=%v lines=%d, want %d/true/%d",
 			start, truncated, len(lines), 1000-peekContextLines, 2*peekContextLines+1)

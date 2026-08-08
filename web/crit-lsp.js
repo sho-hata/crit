@@ -301,13 +301,13 @@
 
   // fetchLocations GETs a location-list LSP endpoint with the busy cursor,
   // response check, and breaker accounting in one place. onLocations handles
-  // the outcome; errors toast and count toward the failure breaker.
+  // the non-empty outcome; errors toast and count toward the failure breaker.
   //
   // Each call bumps st.defSeq and the UI callbacks only run while this
   // request is still the newest one — a later click (or hidePeek, which also
   // bumps the sequence) invalidates responses still in flight, so a stale
   // result can never scroll the review or render into a closed peek.
-  function fetchLocations(url, onLocations) {
+  function fetchLocations(url, onLocations, emptyText) {
     const seq = ++st.defSeq;
     setBusy(true);
     fetch(url)
@@ -323,7 +323,7 @@
         if (seq !== st.defSeq) return;
         const locs = data.locations || [];
         if (locs.length === 0) {
-          st.toast(st.notFoundText);
+          st.toast(emptyText || st.notFoundText);
           return;
         }
         onLocations(locs, data);
@@ -583,29 +583,9 @@
   function requestReferences(hit, char) {
     const url = '/api/lsp/references?path=' + encodeURIComponent(hit.path) +
       '&line=' + hit.line + '&char=' + char;
-    document.documentElement.classList.add('lsp-busy');
-    fetch(url)
-      .finally(function () {
-        document.documentElement.classList.remove('lsp-busy');
-      })
-      .then(function (r) {
-        if (!r.ok) throw new Error('references ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        recordSuccess();
-        const locs = data.locations || [];
-        if (locs.length === 0) {
-          st.toast(st.refsNotFoundText);
-          return;
-        }
-        showRefs(locs, !!data.truncated);
-      })
-      .catch(function (err) {
-        if (err && err.name === 'AbortError') return;
-        recordFailure();
-        st.toast(st.errorText);
-      });
+    fetchLocations(url, function (locs, data) {
+      showRefs(locs, !!data.truncated);
+    }, st.refsNotFoundText);
   }
 
   function hideRefs() {
