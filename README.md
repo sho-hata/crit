@@ -5,6 +5,9 @@
 [![Release](https://img.shields.io/github/release/tomasz-tomczyk/crit.svg)](https://github.com/tomasz-tomczyk/crit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> **This is a private fork of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit).** Differences from upstream:
+> - The share feature (`crit share`/`crit fetch`/`crit unpublish`/`crit auth` and the crit-web hosted-service integration) has been removed for private use.
+
 Review and comment on plans, code diffs, frontend elements and send feedback directly to your agent.
 
 ![Crit UI for "notification-plan.md" showing comment left on "Queue - Redis Streams, SQS, RabbitMQ" line saying "Just use SQS - we're in AWS"](docs/images/demo-overview.png)
