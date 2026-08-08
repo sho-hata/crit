@@ -259,8 +259,37 @@
 
   // ===== Definition jump =====
 
+  // fetchLocations GETs a location-list LSP endpoint with the busy cursor,
+  // response check, and breaker accounting in one place. onEmpty/onLocations
+  // handle the outcome; errors toast and count toward the failure breaker.
+  function fetchLocations(url, onLocations) {
+    document.documentElement.classList.add('lsp-busy');
+    fetch(url)
+      .finally(function () {
+        document.documentElement.classList.remove('lsp-busy');
+      })
+      .then(function (r) {
+        if (!r.ok) throw new Error('lsp ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        recordSuccess();
+        const locs = data.locations || [];
+        if (locs.length === 0) {
+          st.toast(st.notFoundText);
+          return;
+        }
+        onLocations(locs, data);
+      })
+      .catch(function (err) {
+        if (err && err.name === 'AbortError') return;
+        recordFailure();
+        st.toast(st.errorText);
+      });
+  }
+
   function onClick(e) {
-    if (st.disabled) return;
+    if (isDisabled()) return;
     if (!e.metaKey && !e.ctrlKey) return;
     const hit = eligibleLineEl(e.target);
     if (!hit) return;
@@ -272,33 +301,13 @@
     hideTooltip();
     const url = '/api/lsp/definition?path=' + encodeURIComponent(hit.path) +
       '&line=' + hit.line + '&char=' + char;
-    document.documentElement.classList.add('lsp-busy');
-    fetch(url)
-      .finally(function () {
-        document.documentElement.classList.remove('lsp-busy');
-      })
-      .then(function (r) {
-        if (!r.ok) throw new Error('definition ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        recordSuccess();
-        const locs = data.locations || [];
-        if (locs.length === 0) {
-          st.toast(st.notFoundText);
-          return;
-        }
-        if (locs.length === 1) {
-          resolveJump(locs[0]);
-          return;
-        }
-        showPeek(locs, 0);
-      })
-      .catch(function (err) {
-        if (err && err.name === 'AbortError') return;
-        recordFailure();
-        st.toast(st.errorText);
-      });
+    fetchLocations(url, function (locs) {
+      if (locs.length === 1) {
+        resolveJump(locs[0]);
+        return;
+      }
+      showPeek(locs, 0);
+    });
   }
 
   // resolveJump tries the in-review jump first, falling back to the peek
@@ -421,37 +430,20 @@
     const from = st.peekLocs[st.peekActive];
     const url = '/api/lsp/definition?path=' + encodeURIComponent(from.path) +
       '&line=' + lineNo + '&char=' + char;
-    document.documentElement.classList.add('lsp-busy');
-    fetch(url)
-      .finally(function () {
-        document.documentElement.classList.remove('lsp-busy');
-      })
-      .then(function (r) {
-        if (!r.ok) throw new Error('definition ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        const locs = data.locations || [];
-        if (locs.length === 0) {
-          st.toast(st.notFoundText);
-          return;
-        }
-        if (locs.length === 1 && locs[0].in_session) {
-          // Chained jump landed back in the review: close and navigate.
-          Promise.resolve(st.jumpToLocation(locs[0])).then(function (handled) {
-            if (handled) {
-              hidePeek();
-            } else {
-              pushPeekView(panel, locs, 0);
-            }
-          });
-          return;
-        }
-        pushPeekView(panel, locs, 0);
-      })
-      .catch(function () {
-        st.toast(st.errorText);
-      });
+    fetchLocations(url, function (locs) {
+      if (locs.length === 1 && locs[0].in_session) {
+        // Chained jump landed back in the review: close and navigate.
+        Promise.resolve(st.jumpToLocation(locs[0])).then(function (handled) {
+          if (handled) {
+            hidePeek();
+          } else {
+            pushPeekView(panel, locs, 0);
+          }
+        });
+        return;
+      }
+      pushPeekView(panel, locs, 0);
+    });
   }
 
   function pushPeekView(panel, locs, active) {
