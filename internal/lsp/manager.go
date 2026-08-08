@@ -61,7 +61,7 @@ type Manager struct {
 
 // NewManager creates a manager for the given workspace root. baseCtx, when
 // non-nil, bounds the gopls subprocess lifetime (daemon shutdown kills it).
-// gopls is NOT spawned here — only on the first Hover/Definition call.
+// gopls is NOT spawned here — only on the first LSP request.
 func NewManager(root string, baseCtx context.Context) *Manager {
 	if baseCtx == nil {
 		baseCtx = context.Background()
@@ -92,6 +92,17 @@ func (m *Manager) Definition(absPath string, line, character int) ([]Location, e
 	err := m.withClient(absPath, func(c *Client) error {
 		var err error
 		out, err = c.Definition(absPath, line, character)
+		return err
+	})
+	return out, err
+}
+
+// References returns reference locations for a 0-based UTF-16 position.
+func (m *Manager) References(absPath string, line, character int) ([]Location, error) {
+	var out []Location
+	err := m.withClient(absPath, func(c *Client) error {
+		var err error
+		out, err = c.References(absPath, line, character)
 		return err
 	})
 	return out, err

@@ -84,6 +84,35 @@ test('findHunkForLine: hits and misses', function () {
   assert.strictEqual(lsp.findHunkForLine(null, 1), -1);
 });
 
+// ===== references helpers =====
+
+test('groupLocationsByFile: groups in order, keeps flat indices', function () {
+  const locs = [
+    { display_path: 'a.go', line: 3 },
+    { display_path: 'a.go', line: 9 },
+    { display_path: 'b.go', line: 1 },
+  ];
+  const groups = lsp.groupLocationsByFile(locs);
+  assert.strictEqual(groups.length, 2);
+  assert.strictEqual(groups[0].display_path, 'a.go');
+  assert.deepStrictEqual(groups[0].items.map(function (it) { return it.idx; }), [0, 1]);
+  assert.strictEqual(groups[1].display_path, 'b.go');
+  assert.strictEqual(groups[1].items[0].loc, locs[2]);
+  assert.deepStrictEqual(lsp.groupLocationsByFile([]), []);
+  assert.deepStrictEqual(lsp.groupLocationsByFile(null), []);
+});
+
+test('refSnippet: extracts the reference line from its peek window', function () {
+  const loc = { line: 12, peek_start: 10, peek: ['a', 'b', 'target', 'd'] };
+  assert.strictEqual(lsp.refSnippet(loc), 'target');
+});
+
+test('refSnippet: empty when no peek or line outside window', function () {
+  assert.strictEqual(lsp.refSnippet({ line: 5 }), '');
+  assert.strictEqual(lsp.refSnippet({ line: 5, peek_start: 10, peek: ['x'] }), '');
+  assert.strictEqual(lsp.refSnippet({ line: 11, peek_start: 10, peek: ['x'] }), '');
+});
+
 test('findGapForLine: inner gap only', function () {
   assert.deepStrictEqual(lsp.findGapForLine(HUNKS, 15), { prevIdx: 0, nextIdx: 1 });
   assert.deepStrictEqual(lsp.findGapForLine(HUNKS, 29), { prevIdx: 0, nextIdx: 1 });

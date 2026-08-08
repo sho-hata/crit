@@ -6198,3 +6198,56 @@ html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
   font-size: 11px;
   color: var(--crit-fg-muted);
 }
+
+/* References panel: right-docked so in-review jumps stay visible while the
+   user walks the list. Reuses .lsp-peek-* header/hint/num/code styles. */
+.lsp-refs {
+  position: fixed;
+  z-index: 300;
+  top: 10%;
+  right: 16px;
+  width: min(480px, calc(100vw - 32px));
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--crit-bg-elevated);
+  border: 1px solid var(--crit-border-strong);
+  border-radius: 10px;
+  box-shadow: var(--crit-shadow);
+  overflow: hidden;
+}
+.lsp-refs-body {
+  overflow: auto;
+  font-family: var(--crit-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 4px 0;
+}
+.lsp-refs-file {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--crit-fg-secondary);
+}
+.lsp-refs-count {
+  font-weight: 400;
+  color: var(--crit-fg-muted);
+}
+.lsp-refs-item {
+  display: flex;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  white-space: pre;
+  overflow: hidden;
+}
+.lsp-refs-item:hover { background: var(--crit-l-hover); }
+.lsp-refs-item.active { background: var(--crit-line-focus-bg); }

@@ -22,6 +22,8 @@ type fakeLSPProvider struct {
 	hoverErr      error
 	locations     []lsp.Location
 	definitionErr error
+	references    []lsp.Location
+	referencesErr error
 	goroot        string
 	gomodcache    string
 	shutdowns     int
@@ -33,6 +35,10 @@ func (f *fakeLSPProvider) Hover(string, int, int) (string, error) {
 
 func (f *fakeLSPProvider) Definition(string, int, int) ([]lsp.Location, error) {
 	return f.locations, f.definitionErr
+}
+
+func (f *fakeLSPProvider) References(string, int, int) ([]lsp.Location, error) {
+	return f.references, f.referencesErr
 }
 
 func (f *fakeLSPProvider) GoEnv() (string, string) { return f.goroot, f.gomodcache }
@@ -429,6 +435,127 @@ func TestLSPAbsolutePathScoping(t *testing.T) {
 				t.Errorf("status = %d, want %d (body: %s)", w.Code, tt.code, w.Body.String())
 			}
 		})
+	}
+}
+
+// lspReferencesResponse mirrors the /api/lsp/references payload in tests.
+type lspReferencesResponse struct {
+	Locations []lspLocationResponse `json:"locations"`
+	Truncated bool                  `json:"truncated"`
+}
+
+func TestLSPReferencesSortedWithSnippetPeek(t *testing.T) {
+	srv, sess := newLSPTestServer(t, nil)
+	helperPath := filepath.Join(sess.RepoRoot, "helper.go")
+	if err := os.WriteFile(helperPath, []byte("package main\n\nfunc helper() { main() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately unsorted: handler must sort by path, then line.
+	fake := &fakeLSPProvider{references: []lsp.Location{
+		{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 2, Character: 5},
+		{Path: helperPath, Line: 2, Character: 16},
+	}}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/references?path=main.go&line=3&char=6")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp lspReferencesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Truncated {
+		t.Error("truncated must be false for a small reference list")
+	}
+	if len(resp.Locations) != 2 {
+		t.Fatalf("got %d locations, want 2", len(resp.Locations))
+	}
+	if resp.Locations[0].Path != "helper.go" || resp.Locations[1].Path != "main.go" {
+		t.Errorf("locations not sorted by path: %q, %q", resp.Locations[0].Path, resp.Locations[1].Path)
+	}
+	ref := resp.Locations[1]
+	if !ref.InRepo || !ref.InSession || ref.Line != 3 {
+		t.Errorf("main.go reference = %+v; want in-repo in-session line 3", ref)
+	}
+	// Small files come back whole; the reference's own line must be inside
+	// the peek window so the UI can render a snippet row.
+	idx := ref.Line - ref.PeekStart
+	if idx < 0 || idx >= len(ref.Peek) {
+		t.Fatalf("reference line %d outside peek window start=%d len=%d", ref.Line, ref.PeekStart, len(ref.Peek))
+	}
+	if !strings.Contains(ref.Peek[idx], "func main()") {
+		t.Errorf("snippet = %q, want the reference line", ref.Peek[idx])
+	}
+}
+
+func TestLSPReferencesSmallPeekWindow(t *testing.T) {
+	srv, sess := newLSPTestServer(t, nil)
+	bigPath := filepath.Join(sess.RepoRoot, "big.go")
+	var b strings.Builder
+	b.WriteString("package main\n")
+	for i := 0; i < 100; i++ {
+		b.WriteString("// filler line\n")
+	}
+	if err := os.WriteFile(bigPath, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeLSPProvider{references: []lsp.Location{{Path: bigPath, Line: 50}}}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/references?path=main.go&line=1&char=0")
+	var resp lspReferencesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	loc := resp.Locations[0]
+	if !loc.PeekTruncated {
+		t.Error("reference peek in a >50-line file must be windowed")
+	}
+	if len(loc.Peek) != 2*10+1 {
+		t.Errorf("reference peek = %d lines, want %d (±10 window)", len(loc.Peek), 2*10+1)
+	}
+}
+
+func TestLSPReferencesTruncatesLongLists(t *testing.T) {
+	srv, sess := newLSPTestServer(t, nil)
+	mainPath := filepath.Join(sess.RepoRoot, "main.go")
+	refs := make([]lsp.Location, maxReferenceLocations+50)
+	for i := range refs {
+		refs[i] = lsp.Location{Path: mainPath, Line: i % 3}
+	}
+	fake := &fakeLSPProvider{references: refs}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/references?path=main.go&line=1&char=0")
+	var resp lspReferencesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Truncated {
+		t.Error("truncated must be true when the list is capped")
+	}
+	if len(resp.Locations) != maxReferenceLocations {
+		t.Errorf("got %d locations, want %d", len(resp.Locations), maxReferenceLocations)
+	}
+}
+
+func TestLSPReferencesProviderError(t *testing.T) {
+	fake := &fakeLSPProvider{referencesErr: os.ErrDeadlineExceeded}
+	srv, _ := newLSPTestServer(t, fake)
+
+	if w := doLSPRequest(t, srv, "/api/lsp/references?path=main.go&line=1&char=0"); w.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", w.Code)
+	}
+}
+
+func TestLSPReferencesMethodNotAllowed(t *testing.T) {
+	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
+	req := httptest.NewRequest(http.MethodPost, "/api/lsp/references?path=main.go&line=1&char=0", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
 	}
 }
 
