@@ -155,6 +155,36 @@ func TestClientInitializeAndHover(t *testing.T) {
 	})
 }
 
+func TestClientDefinition(t *testing.T) {
+	fs := startFake(func(method string, params json.RawMessage) any {
+		if method == "textDocument/definition" {
+			return []map[string]any{
+				{
+					"uri": "file:///tmp/repo/util.go",
+					"range": map[string]any{
+						"start": map[string]any{"line": 9, "character": 5},
+						"end":   map[string]any{"line": 9, "character": 12},
+					},
+				},
+			}
+		}
+		return nil
+	})
+	defer fs.client.Close()
+
+	locs, err := fs.client.Definition("/tmp/repo/main.go", 0, 0)
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("got %d locations, want 1", len(locs))
+	}
+	want := Location{Path: "/tmp/repo/util.go", Line: 9, Character: 5}
+	if locs[0] != want {
+		t.Errorf("location = %+v, want %+v", locs[0], want)
+	}
+}
+
 func TestClientAnswersServerRequests(t *testing.T) {
 	fs := startFake(nil)
 	defer fs.client.Close()
@@ -209,6 +239,44 @@ func TestHoverContentsToMarkdown(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := hoverContentsToMarkdown(json.RawMessage(tt.raw)); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseLocations(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []Location
+	}{
+		{
+			"single location",
+			`{"uri":"file:///a/b.go","range":{"start":{"line":1,"character":2}}}`,
+			[]Location{{Path: "/a/b.go", Line: 1, Character: 2}},
+		},
+		{
+			"location array",
+			`[{"uri":"file:///a.go","range":{"start":{"line":0,"character":0}}},{"uri":"file:///b.go","range":{"start":{"line":3,"character":4}}}]`,
+			[]Location{{Path: "/a.go"}, {Path: "/b.go", Line: 3, Character: 4}},
+		},
+		{
+			"location link array",
+			`[{"targetUri":"file:///c.go","targetSelectionRange":{"start":{"line":7,"character":1}}}]`,
+			[]Location{{Path: "/c.go", Line: 7, Character: 1}},
+		},
+		{"null", `null`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseLocations(json.RawMessage(tt.raw))
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d locations, want %d", len(got), len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("location[%d] = %+v, want %+v", i, got[i], tt.want[i])
+				}
 			}
 		})
 	}

@@ -52,11 +52,15 @@ type Manager struct {
 	client    *Client
 	files     map[string]fileState // abs path -> sync state
 	idleTimer *time.Timer
+
+	goEnvOnce  sync.Once
+	goroot     string
+	gomodcache string
 }
 
 // NewManager creates a manager for the given workspace root. baseCtx, when
 // non-nil, bounds the gopls subprocess lifetime (daemon shutdown kills it).
-// gopls is NOT spawned here — only on the first Hover call.
+// gopls is NOT spawned here — only on the first Hover/Definition call.
 func NewManager(root string, baseCtx context.Context) *Manager {
 	if baseCtx == nil {
 		baseCtx = context.Background()
@@ -76,6 +80,17 @@ func (m *Manager) Hover(absPath string, line, character int) (string, error) {
 	err := m.withClient(absPath, func(c *Client) error {
 		var err error
 		out, err = c.Hover(absPath, line, character)
+		return err
+	})
+	return out, err
+}
+
+// Definition returns definition locations for a 0-based UTF-16 position.
+func (m *Manager) Definition(absPath string, line, character int) ([]Location, error) {
+	var out []Location
+	err := m.withClient(absPath, func(c *Client) error {
+		var err error
+		out, err = c.Definition(absPath, line, character)
 		return err
 	})
 	return out, err
@@ -196,6 +211,25 @@ func (m *Manager) Shutdown() {
 		m.idleTimer.Stop()
 	}
 	m.dropClientLocked()
+}
+
+// GoEnv returns GOROOT and GOMODCACHE (cached after first call). Used to
+// validate that definition peek targets stay within known source roots.
+func (m *Manager) GoEnv() (goroot, gomodcache string) {
+	m.goEnvOnce.Do(func() {
+		out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
+		if err != nil {
+			return
+		}
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) >= 1 {
+			m.goroot = strings.TrimSpace(lines[0])
+		}
+		if len(lines) >= 2 {
+			m.gomodcache = strings.TrimSpace(lines[1])
+		}
+	})
+	return m.goroot, m.gomodcache
 }
 
 // startGopls spawns a real gopls subprocess rooted at rootDir.

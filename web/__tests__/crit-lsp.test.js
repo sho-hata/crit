@@ -1,7 +1,7 @@
 'use strict';
 
-// Tests for the pure helpers in crit-lsp.js (offset math).
-// DOM-dependent behavior (the hover tooltip) is exercised in E2E.
+// Tests for the pure helpers in crit-lsp.js (offset math + hunk lookup).
+// DOM-dependent behavior (tooltip, peek popup) is exercised in E2E.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -62,4 +62,35 @@ test('textOffsetIn: UTF-16 semantics (surrogate pairs count as 2)', function () 
   const t2 = textNode('cd');
   const root = el(t1, t2);
   assert.strictEqual(lsp.textOffsetIn(root, t2, 1), 5); // 1+2+1 + 1
+});
+
+// ===== hunk lookups =====
+
+const HUNKS = [
+  { NewStart: 10, NewCount: 5 },  // lines 10-14
+  { NewStart: 30, NewCount: 10 }, // lines 30-39
+  { NewStart: 40, NewCount: 3 },  // lines 40-42 (contiguous with previous)
+];
+
+test('findHunkForLine: hits and misses', function () {
+  assert.strictEqual(lsp.findHunkForLine(HUNKS, 10), 0);
+  assert.strictEqual(lsp.findHunkForLine(HUNKS, 14), 0);
+  assert.strictEqual(lsp.findHunkForLine(HUNKS, 15), -1); // gap
+  assert.strictEqual(lsp.findHunkForLine(HUNKS, 39), 1);
+  assert.strictEqual(lsp.findHunkForLine(HUNKS, 42), 2);
+  assert.strictEqual(lsp.findHunkForLine(HUNKS, 43), -1); // trailing
+  assert.strictEqual(lsp.findHunkForLine(HUNKS, 5), -1);  // leading
+  assert.strictEqual(lsp.findHunkForLine([], 1), -1);
+  assert.strictEqual(lsp.findHunkForLine(null, 1), -1);
+});
+
+test('findGapForLine: inner gap only', function () {
+  assert.deepStrictEqual(lsp.findGapForLine(HUNKS, 15), { prevIdx: 0, nextIdx: 1 });
+  assert.deepStrictEqual(lsp.findGapForLine(HUNKS, 29), { prevIdx: 0, nextIdx: 1 });
+  assert.strictEqual(lsp.findGapForLine(HUNKS, 10), null);  // inside hunk
+  assert.strictEqual(lsp.findGapForLine(HUNKS, 5), null);   // leading gap
+  assert.strictEqual(lsp.findGapForLine(HUNKS, 100), null); // trailing gap
+  // Contiguous hunks (40 directly follows 30..39): no gap between them.
+  assert.strictEqual(lsp.findGapForLine(HUNKS, 40), null);
+  assert.strictEqual(lsp.findGapForLine([], 1), null);
 });

@@ -12,7 +12,7 @@ Review and comment on plans, code diffs, frontend elements and send feedback dir
 
 > [!NOTE]
 > **This is a fork** of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) with features not (yet) in upstream. Fork-specific additions are marked **(fork-only)** below. Currently:
-> - **[Code intelligence for Go diffs (LSP)](#code-intelligence-for-go-diffs-lsp-fork-only)** — hover documentation powered by gopls
+> - **[Code intelligence for Go diffs (LSP)](#code-intelligence-for-go-diffs-lsp-fork-only)** — hover documentation and go-to-definition powered by gopls
 
 ![Crit UI for "notification-plan.md" showing comment left on "Queue - Redis Streams, SQS, RabbitMQ" line saying "Just use SQS - we're in AWS"](docs/images/demo-overview.png)
 
@@ -155,6 +155,10 @@ Click a line number to comment. Drag to select a range. Comments are rendered in
 Reviewing a Go diff, powered by [gopls](https://pkg.go.dev/golang.org/x/tools/gopls):
 
 - **Hover** over code on the new side of a diff → type signature + documentation tooltip
+- **⌘/Ctrl+Click** an identifier → go to definition:
+  - target in the review → jump there (collapsed diff gaps auto-expand)
+  - target elsewhere (unchanged repo file, stdlib, module cache) → an inline **peek popup** (whole file up to 2000 lines, scrollable, definition line highlighted)
+- **⌘/Ctrl+Click inside the peek popup** → follow definitions further; `←` / `Esc` steps back through the jump history
 
 #### Enabling it locally
 
@@ -179,6 +183,7 @@ Notes:
 
 - gopls starts **lazily** on the first hover and is stopped after 3 minutes of inactivity — running crit in many worktrees at once only keeps language servers alive for reviews you're actively hovering.
 - The very first hover after a cold start can take a few seconds while gopls loads the workspace (the tooltip shows a loading placeholder).
+- Definition targets are only read from your repo, `GOROOT`, and `GOMODCACHE`.
 
 ### Programmatic comments
 
@@ -322,7 +327,7 @@ All keys are optional — omit any you don't need.
 | `no_update_check`      | bool     | `false`                    | Don't check for new versions on startup.                                                                                                                                                |
 | `no_integration_check` | bool     | `false`                    | Skip the integration config freshness check on startup.                                                                                                                                 |
 | `vcs`                  | string   | auto-detected              | Preferred VCS backend: `"git"`, `"sl"`, or `"jj"`. When set, crit uses this VCS instead of auto-detecting. Falls back to git if the configured VCS isn't available. Can also be set via `--vcs` CLI flag (flag takes precedence over config). |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover documentation) for Go files. Only activates when `gopls` is on PATH. See [Code intelligence for Go diffs](#code-intelligence-for-go-diffs-lsp-fork-only). |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition) for Go files. Only activates when `gopls` is on PATH. See [Code intelligence for Go diffs](#code-intelligence-for-go-diffs-lsp-fork-only). |
 | `live_cookie`          | string   | `""`                       | Cookie header value forwarded to the upstream app in live mode (e.g. `"_crit_key=..."`). Global or project. Prefer `live_cookie_file` for secrets. |
 | `live_cookie_file`     | string   | `""`                       | Path to a file with upstream cookies for live mode (raw header lines or Netscape jar). Global or project; relative paths resolve from repo root. |
 | `live_cdp_url`         | string   | `""`                       | Chrome DevTools URL (e.g. `http://127.0.0.1:9222`) to reuse browser cookies for the live upstream. Global or project. |

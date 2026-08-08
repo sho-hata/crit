@@ -44,4 +44,13 @@ func TestRealGopls(t *testing.T) {
 	if got == "" {
 		t.Error("empty hover for fmt.Println")
 	}
+
+	locs, err := m.Definition(main, 5, 6)
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	t.Logf("definition: %+v", locs)
+	if len(locs) == 0 {
+		t.Error("no definition for fmt.Println")
+	}
 }

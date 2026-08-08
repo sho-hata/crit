@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,10 +13,26 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
 )
 
+// peekFullFileMaxLines is the largest file sent to the peek popup in full.
+// Above this (huge generated code in the module cache can reach tens of
+// thousands of lines) the peek falls back to a ±peekContextLines window so
+// neither the JSON payload nor the frontend's per-line highlighting balloons.
+const peekFullFileMaxLines = 2000
+
+// peekContextLines is how many lines of context a windowed peek carries on
+// each side of the target line when the file is too large to send in full.
+const peekContextLines = 100
+
+// peekMaxLineLen truncates pathological lines (minified/generated code) in
+// peek payloads.
+const peekMaxLineLen = 500
+
 // lspProvider is the slice of lsp.Manager the handlers need; an interface so
 // tests can inject a fake without spawning gopls.
 type lspProvider interface {
 	Hover(absPath string, line, character int) (string, error)
+	Definition(absPath string, line, character int) ([]lsp.Location, error)
+	GoEnv() (goroot, gomodcache string)
 	Shutdown()
 }
 
@@ -56,8 +73,8 @@ func (s *Server) lspAvailable() bool {
 }
 
 // lspManager returns the shared LSP provider, creating it on first call.
-// gopls itself is spawned even later — on the first Hover inside the manager
-// (lazy start keeps parallel worktree daemons cheap).
+// gopls itself is spawned even later — on the first Hover/Definition inside
+// the manager (lazy start keeps parallel worktree daemons cheap).
 func (s *Server) lspManager() lspProvider {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
@@ -115,8 +132,21 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 	}
 	repoRoot := s.session.Load().RepoRoot
 
+	if filepath.IsAbs(reqPath) {
+		// Absolute paths support chained jumps from the peek popup. They are
+		// accepted ONLY under the same roots the peek itself may read (repo
+		// root / GOROOT / GOMODCACHE) — this endpoint must not become a
+		// general filesystem probe.
+		absPath = filepath.Clean(reqPath)
+		if !s.lspPathAllowed(absPath, repoRoot) {
+			http.Error(w, "Access denied", http.StatusForbidden)
+			return "", 0, 0, false
+		}
+		return absPath, line - 1, char, true
+	}
+
 	cleaned := filepath.ToSlash(filepath.Clean(reqPath))
-	if filepath.IsAbs(reqPath) || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
 		http.Error(w, "Invalid file path", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
@@ -126,6 +156,22 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		return "", 0, 0, false
 	}
 	return absPath, line - 1, char, true
+}
+
+// lspPathAllowed reports whether an absolute path lies under one of the
+// roots LSP features may touch: repo root, GOROOT, or GOMODCACHE.
+func (s *Server) lspPathAllowed(absPath, repoRoot string) bool {
+	if pathWithinRoot(absPath, repoRoot) {
+		return true
+	}
+	goroot, gomodcache := s.lspManager().GoEnv()
+	if goroot != "" && pathWithinRoot(absPath, goroot) {
+		return true
+	}
+	if gomodcache != "" && pathWithinRoot(absPath, gomodcache) {
+		return true
+	}
+	return false
 }
 
 // handleLSPHover returns hover documentation for a position.
@@ -141,6 +187,132 @@ func (s *Server) handleLSPHover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"contents": contents})
+}
+
+// lspLocationResponse is one definition target sent to the frontend.
+type lspLocationResponse struct {
+	// Path is repo-relative (slash-separated) when InRepo, absolute otherwise.
+	Path        string   `json:"path"`
+	DisplayPath string   `json:"display_path"`
+	Line        int      `json:"line"` // 1-based
+	InSession   bool     `json:"in_session"`
+	InRepo      bool     `json:"in_repo"`
+	PeekStart   int      `json:"peek_start,omitempty"` // 1-based first line of Peek
+	Peek        []string `json:"peek,omitempty"`
+	// PeekTruncated is true when the file was too large to send in full and
+	// Peek is a ±peekContextLines window instead.
+	PeekTruncated bool `json:"peek_truncated,omitempty"`
+}
+
+// handleLSPDefinition returns definition locations for a position, each with
+// an inline peek so the frontend can always render something — including when
+// the target line is outside the visible diff.
+// GET /api/lsp/definition?path=internal/foo.go&line=42&char=13
+func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
+	absPath, line0, char, ok := s.parseLSPParams(w, r)
+	if !ok {
+		return
+	}
+	mgr := s.lspManager()
+	locations, err := mgr.Definition(absPath, line0, char)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("lsp definition: %v", err), http.StatusBadGateway)
+		return
+	}
+	sess := s.session.Load()
+	goroot, gomodcache := mgr.GoEnv()
+	resp := make([]lspLocationResponse, 0, len(locations))
+	for _, loc := range locations {
+		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache))
+	}
+	writeJSON(w, map[string]any{"locations": resp})
+}
+
+// resolveLocation classifies a definition target (session / repo / stdlib /
+// module cache) and attaches a peek when the file lives under a root crit is
+// allowed to read. Peek reads are restricted to paths gopls itself returned
+// AND within repoRoot, GOROOT, or GOMODCACHE — there is deliberately no
+// general file-read endpoint behind this.
+func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string) lspLocationResponse {
+	repoRoot := sess.RepoRoot
+	out := lspLocationResponse{Line: loc.Line + 1}
+
+	inRepo := pathWithinRoot(loc.Path, repoRoot)
+	readable := inRepo
+	if inRepo {
+		rel, err := filepath.Rel(repoRoot, loc.Path)
+		if err != nil {
+			rel = loc.Path
+		}
+		relSlash := filepath.ToSlash(rel)
+		out.Path = relSlash
+		out.DisplayPath = relSlash
+		out.InRepo = true
+		out.InSession = sess.FileByPath(relSlash) != nil
+	} else {
+		out.Path = loc.Path
+		out.DisplayPath = displayPathOutsideRepo(loc.Path, goroot, gomodcache)
+		if goroot != "" && pathWithinRoot(loc.Path, goroot) {
+			readable = true
+		}
+		if gomodcache != "" && pathWithinRoot(loc.Path, gomodcache) {
+			readable = true
+		}
+	}
+	if readable {
+		out.PeekStart, out.Peek, out.PeekTruncated = readPeek(loc.Path, loc.Line+1)
+	}
+	return out
+}
+
+// displayPathOutsideRepo shortens stdlib and module-cache paths for the UI.
+func displayPathOutsideRepo(path, goroot, gomodcache string) string {
+	if goroot != "" && pathWithinRoot(path, goroot) {
+		if rel, err := filepath.Rel(goroot, path); err == nil {
+			return "$GOROOT/" + filepath.ToSlash(rel)
+		}
+	}
+	if gomodcache != "" && pathWithinRoot(path, gomodcache) {
+		if rel, err := filepath.Rel(gomodcache, path); err == nil {
+			return "$GOMODCACHE/" + filepath.ToSlash(rel)
+		}
+	}
+	return path
+}
+
+// readPeek returns the file content around targetLine (1-based): the whole
+// file when it is small enough, otherwise a ±peekContextLines window
+// (truncated=true).
+func readPeek(absPath string, targetLine int) (start int, lines []string, truncated bool) {
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return 0, nil, false
+	}
+	all := strings.Split(string(data), "\n")
+	start, end := 1, len(all)
+	if len(all) > peekFullFileMaxLines {
+		truncated = true
+		start = targetLine - peekContextLines
+		if start < 1 {
+			start = 1
+		}
+		end = targetLine + peekContextLines
+		if end > len(all) {
+			end = len(all)
+		}
+	}
+	if start > len(all) {
+		return 0, nil, false
+	}
+	lines = make([]string, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		line := all[i-1]
+		if len(line) > peekMaxLineLen {
+			line = line[:peekMaxLineLen] + "…"
+		}
+		lines = append(lines, line)
+	}
+	return start, lines, truncated
 }
 
 // pathWithinRoot adapts pathsafe.ResolveUnder for callers that only need the

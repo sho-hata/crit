@@ -853,11 +853,13 @@
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
 
-    // LSP hover (Go files). Only wired when the server reports gopls
-    // available + enabled; the module owns all its listeners.
+    // LSP hover / go-to-definition (Go files). Only wired when the server
+    // reports gopls available + enabled; the module owns all its listeners.
     if (configRes.lsp_available && window.crit.lsp) {
       window.crit.lsp.init({
         renderMarkdown: function (text) { return commentMd.render(text); },
+        jumpToLocation: lspJumpToLocation,
+        toast: function (message) { showMiniToast(message); },
       });
     }
     promptTrustConfig = {
@@ -3516,6 +3518,74 @@
     };
     hunks.splice(prevIdx, nextIdx - prevIdx + 1, merged);
     renderFileByPath(file.path);
+  }
+
+  // ===== LSP definition jump =====
+
+  // lspJumpToLocation reveals a definition target inside the review UI.
+  // Resolves true when handled; false tells crit-lsp to fall back to its
+  // peek popup (story view, missing file, or line outside expandable hunks).
+  function lspJumpToLocation(loc) {
+    return new Promise(function (resolve) {
+      if (!loc.in_session || storyActive()) return resolve(false);
+      const file = getFileByPath(loc.path);
+      const section = document.getElementById('file-section-' + loc.path);
+      if (!file || !section) return resolve(false);
+      if (!section.open) section.open = true;
+      // Same suppression as scrollToFile: after a long-distance jump the
+      // observer mounts adjacent bodies, whose height changes would push the
+      // target line back out of view.
+      ignoreTreeObserverUntil = Date.now() + 200;
+      suppressBodyMountObserver(500);
+      const attempt = function () {
+        resolve(revealDiffLine(file, loc.path, loc.line));
+      };
+      if (file.lazy) {
+        loadLazyFile(section, file, function () { requestAnimationFrame(attempt); });
+        return;
+      }
+      ensureFileBodyMounted(section, file);
+      requestAnimationFrame(attempt);
+    });
+  }
+
+  // revealDiffLine scrolls a new-side line into view, expanding the collapsed
+  // gap that contains it first (same merge logic as the spacer click handler).
+  // Returns true when the line is now visible.
+  function revealDiffLine(file, path, line) {
+    const hunks = file.diffHunks || [];
+    if (window.crit.lsp.findHunkForLine(hunks, line) === -1) {
+      const gap = window.crit.lsp.findGapForLine(hunks, line);
+      if (!gap || !file.content) return false;
+      expandAll(file, gap.prevIdx, gap.nextIdx); // re-renders the file section
+    }
+    const el = findDiffLineEl(path, line);
+    if (!el) return false;
+    // 'instant': the page has CSS scroll-behavior: smooth, and a smooth
+    // animation over a long jump gets cancelled by lazy-mount layout shifts.
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    el.classList.add('lsp-jump-flash');
+    el.addEventListener('animationend', function onEnd() {
+      el.classList.remove('lsp-jump-flash');
+      el.removeEventListener('animationend', onEnd);
+    });
+    return true;
+  }
+
+  // findDiffLineEl locates the rendered new-side diff line for path:line.
+  // Covers both unified (.diff-line) and split (.diff-split-side) views.
+  function findDiffLineEl(path, line) {
+    const section = document.getElementById('file-section-' + path);
+    if (!section) return null;
+    const candidates = section.querySelectorAll(
+      '.diff-line[data-diff-line-num="' + line + '"], .diff-split-side[data-diff-line-num="' + line + '"]');
+    for (let i = 0; i < candidates.length; i++) {
+      if (candidates[i].dataset.diffSide !== 'old' &&
+          candidates[i].dataset.diffFilePath === path) {
+        return candidates[i];
+      }
+    }
+    return null;
   }
 
   const EXPAND_STEP = 20;
