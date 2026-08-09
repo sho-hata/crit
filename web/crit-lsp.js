@@ -628,11 +628,16 @@
         '<span class="lsp-refs-count">' + group.items.length + '</span></div>';
       for (let i = 0; i < group.items.length; i++) {
         const item = group.items[i];
+        const snippet = refSnippet(item.loc);
+        // Locations outside the readable roots carry no peek, so say so
+        // rather than rendering a clickable row with an empty code cell.
         // Each row is an isolated line, so highlight it on its own —
         // batching unrelated lines would leak parser state between rows.
+        const code = snippet
+          ? '<span class="lsp-peek-code">' + highlightGoPeek([snippet])[0] + '</span>'
+          : '<span class="lsp-peek-code lsp-refs-nopreview">' + esc(st.noPreviewText) + '</span>';
         html += '<button type="button" class="lsp-refs-item" data-idx="' + item.idx + '">' +
-          '<span class="lsp-peek-num">' + item.loc.line + '</span>' +
-          '<span class="lsp-peek-code">' + highlightGoPeek([refSnippet(item.loc)])[0] + '</span>' +
+          '<span class="lsp-peek-num">' + item.loc.line + '</span>' + code +
           '</button>';
       }
     }

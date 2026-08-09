@@ -181,6 +181,32 @@ const (
 	rootGomodcache
 )
 
+// rootCache memoizes classifyRoot per path for one request. References
+// return many locations concentrated in few files, and each classification
+// resolves symlinks against up to three roots.
+type rootCache struct {
+	repoRoot, goroot, gomodcache string
+	seen                         map[string]rootKind
+}
+
+func newRootCache(repoRoot, goroot, gomodcache string) *rootCache {
+	return &rootCache{
+		repoRoot:   repoRoot,
+		goroot:     goroot,
+		gomodcache: gomodcache,
+		seen:       make(map[string]rootKind),
+	}
+}
+
+func (c *rootCache) classify(absPath string) rootKind {
+	if kind, ok := c.seen[absPath]; ok {
+		return kind
+	}
+	kind := classifyRoot(absPath, c.repoRoot, c.goroot, c.gomodcache)
+	c.seen[absPath] = kind
+	return kind
+}
+
 // classifyRoot resolves absPath against the three roots LSP features may
 // touch and reports which one contains it. This is the single source of
 // truth for authorization (lspPathAllowed), peek readability, and display
@@ -252,9 +278,10 @@ func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := s.session.Load()
 	goroot, gomodcache := mgr.GoEnv()
+	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines))
+		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp})
 }
@@ -275,23 +302,64 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("lsp references: %v", err), http.StatusBadGateway)
 		return
 	}
-	sort.Slice(locations, func(i, j int) bool {
-		if locations[i].Path != locations[j].Path {
-			return locations[i].Path < locations[j].Path
-		}
-		return locations[i].Line < locations[j].Line
-	})
+	sess := s.session.Load()
+	goroot, gomodcache := mgr.GoEnv()
+	// Classification is memoized per file: references cluster in a handful
+	// of files, and each classifyRoot call resolves symlinks.
+	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
+	sortReferences(locations, sess, rc)
+
 	truncated := len(locations) > maxReferenceLocations
 	if truncated {
 		locations = locations[:maxReferenceLocations]
 	}
-	sess := s.session.Load()
-	goroot, gomodcache := mgr.GoEnv()
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines))
+		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp, "truncated": truncated})
+}
+
+// referenceRank orders files by how likely the reviewer cares about them, so
+// that the maxReferenceLocations cap drops the least relevant tail rather
+// than everything alphabetically after the cut.
+func referenceRank(path string, sess *Session, rc *rootCache) int {
+	kind := rc.classify(path)
+	if kind != rootRepo {
+		return 2 // stdlib, module cache, elsewhere
+	}
+	if rel, err := filepath.Rel(sess.RepoRoot, path); err == nil {
+		if sess.FileByPath(filepath.ToSlash(rel)) != nil {
+			return 0 // a file under review
+		}
+	}
+	return 1 // elsewhere in the repo
+}
+
+// sortReferences orders locations by relevance rank, then path, line, and
+// character. The character tiebreak matters: two references can share a line
+// (x := x), and without it their order — and which one survives the cap —
+// would be arbitrary.
+func sortReferences(locations []lsp.Location, sess *Session, rc *rootCache) {
+	rank := make(map[string]int, len(locations))
+	for _, loc := range locations {
+		if _, ok := rank[loc.Path]; !ok {
+			rank[loc.Path] = referenceRank(loc.Path, sess, rc)
+		}
+	}
+	sort.Slice(locations, func(i, j int) bool {
+		a, b := locations[i], locations[j]
+		if ra, rb := rank[a.Path], rank[b.Path]; ra != rb {
+			return ra < rb
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.Character < b.Character
+	})
 }
 
 // resolveLocation classifies a target (session / repo / stdlib / module
@@ -300,11 +368,11 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 // windows, references small ones). Peek reads are restricted to paths gopls
 // itself returned AND within repoRoot, GOROOT, or GOMODCACHE — there is
 // deliberately no general file-read endpoint behind this.
-func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int) lspLocationResponse {
+func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
 	repoRoot := sess.RepoRoot
 	out := lspLocationResponse{Line: loc.Line + 1}
 
-	kind := classifyRoot(loc.Path, repoRoot, goroot, gomodcache)
+	kind := rc.classify(loc.Path)
 	if kind == rootRepo {
 		rel, err := filepath.Rel(repoRoot, loc.Path)
 		if err != nil {

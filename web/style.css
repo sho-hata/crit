@@ -6251,3 +6251,14 @@ html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
 }
 .lsp-refs-item:hover { background: var(--crit-l-hover); }
 .lsp-refs-item.active { background: var(--crit-line-focus-bg); }
+.lsp-refs-nopreview {
+  color: var(--crit-fg-muted);
+  font-style: italic;
+}
+@media (pointer: coarse) {
+  /* Reference rows stack densely; give them a tappable height (WCAG 2.5.5). */
+  .lsp-refs-item {
+    min-height: 44px;
+    align-items: center;
+  }
+}

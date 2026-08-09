@@ -175,7 +175,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/file/comments", s.withReady(s.handleFileComments))
 	mux.HandleFunc("/api/comment/", s.withReady(s.handleCommentByID))
 
-	// Language-server features (hover, go-to-definition) for Go files
+	// Language-server features (hover, go-to-definition, find-references) for Go files
 	mux.HandleFunc("/api/lsp/hover", s.withReady(s.handleLSPHover))
 	mux.HandleFunc("/api/lsp/definition", s.withReady(s.handleLSPDefinition))
 	mux.HandleFunc("/api/lsp/references", s.withReady(s.handleLSPReferences))
@@ -470,7 +470,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// Glob patterns the frontend auto-marks viewed (collapsed) once per launch
 		"auto_viewed_patterns": s.cfg.AutoViewedPatterns,
 
-		// Language-server features (hover / go-to-definition). True only when
+		// Language-server features (hover / go-to-definition / find-references). True only when
 		// enabled in config AND gopls is on PATH AND the session has a repo root.
 		"lsp_available": s.lspAvailable(),
 

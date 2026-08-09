@@ -450,10 +450,11 @@ func TestLSPReferencesSortedWithSnippetPeek(t *testing.T) {
 	if err := os.WriteFile(helperPath, []byte("package main\n\nfunc helper() { main() }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Deliberately unsorted: handler must sort by path, then line.
+	// helper.go sorts first alphabetically but is not part of the review, so
+	// the in-session main.go must come first.
 	fake := &fakeLSPProvider{references: []lsp.Location{
-		{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 2, Character: 5},
 		{Path: helperPath, Line: 2, Character: 16},
+		{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 2, Character: 5},
 	}}
 	srv.lsp.newProvider = func() lspProvider { return fake }
 
@@ -471,10 +472,11 @@ func TestLSPReferencesSortedWithSnippetPeek(t *testing.T) {
 	if len(resp.Locations) != 2 {
 		t.Fatalf("got %d locations, want 2", len(resp.Locations))
 	}
-	if resp.Locations[0].Path != "helper.go" || resp.Locations[1].Path != "main.go" {
-		t.Errorf("locations not sorted by path: %q, %q", resp.Locations[0].Path, resp.Locations[1].Path)
+	if resp.Locations[0].Path != "main.go" || resp.Locations[1].Path != "helper.go" {
+		t.Errorf("in-session file must sort first, got %q then %q",
+			resp.Locations[0].Path, resp.Locations[1].Path)
 	}
-	ref := resp.Locations[1]
+	ref := resp.Locations[0]
 	if !ref.InRepo || !ref.InSession || ref.Line != 3 {
 		t.Errorf("main.go reference = %+v; want in-repo in-session line 3", ref)
 	}
@@ -486,6 +488,56 @@ func TestLSPReferencesSortedWithSnippetPeek(t *testing.T) {
 	}
 	if !strings.Contains(ref.Peek[idx], "func main()") {
 		t.Errorf("snippet = %q, want the reference line", ref.Peek[idx])
+	}
+}
+
+// TestLSPReferencesCapKeepsRelevantFiles covers the interaction between the
+// relevance sort and the maxReferenceLocations cap: when more references
+// exist than fit, the ones in files under review must survive even though
+// their paths sort last alphabetically.
+func TestLSPReferencesCapKeepsRelevantFiles(t *testing.T) {
+	srv, sess := newLSPTestServer(t, nil)
+	// aaa.go is in the repo but not under review, and sorts before main.go.
+	bulkPath := filepath.Join(sess.RepoRoot, "aaa.go")
+	if err := os.WriteFile(bulkPath, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refs := make([]lsp.Location, 0, maxReferenceLocations+10)
+	for i := 0; i < maxReferenceLocations+5; i++ {
+		refs = append(refs, lsp.Location{Path: bulkPath, Line: i})
+	}
+	refs = append(refs, lsp.Location{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 2})
+	fake := &fakeLSPProvider{references: refs}
+	srv.lsp.newProvider = func() lspProvider { return fake }
+
+	w := doLSPRequest(t, srv, "/api/lsp/references?path=main.go&line=3&char=6")
+	var resp lspReferencesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Truncated || len(resp.Locations) != maxReferenceLocations {
+		t.Fatalf("truncated=%v with %d locations, want true with %d",
+			resp.Truncated, len(resp.Locations), maxReferenceLocations)
+	}
+	if resp.Locations[0].Path != "main.go" {
+		t.Errorf("first location = %q, want the in-session main.go to survive the cap",
+			resp.Locations[0].Path)
+	}
+}
+
+// TestReferenceCharacterTiebreak pins the character tiebreak: two references
+// on the same line must have a deterministic order.
+func TestReferenceCharacterTiebreak(t *testing.T) {
+	_, sess := newLSPTestServer(t, nil)
+	path := filepath.Join(sess.RepoRoot, "main.go")
+	locs := []lsp.Location{
+		{Path: path, Line: 4, Character: 20},
+		{Path: path, Line: 4, Character: 3},
+	}
+	rc := newRootCache(sess.RepoRoot, "", "")
+	sortReferences(locs, sess, rc)
+	if locs[0].Character != 3 || locs[1].Character != 20 {
+		t.Errorf("same-line references not ordered by character: %+v", locs)
 	}
 }
 
