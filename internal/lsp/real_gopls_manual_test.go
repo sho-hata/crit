@@ -53,4 +53,15 @@ func TestRealGopls(t *testing.T) {
 	if len(locs) == 0 {
 		t.Error("no definition for fmt.Println")
 	}
+
+	// References to main (line 5 → 0-based 4; "func main" → char 5): at
+	// minimum the declaration itself (includeDeclaration).
+	refs, err := m.References(main, 4, 5)
+	if err != nil {
+		t.Fatalf("References: %v", err)
+	}
+	t.Logf("references: %+v", refs)
+	if len(refs) == 0 {
+		t.Error("no references for main")
+	}
 }

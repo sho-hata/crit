@@ -1,7 +1,8 @@
 // Package lsp implements a minimal Language Server Protocol client used to
-// provide hover and go-to-definition in the review UI. It speaks just enough
-// LSP (initialize, didOpen/didChange, hover, definition, shutdown) to drive
-// gopls over stdio; it is not a general-purpose LSP library.
+// provide hover, go-to-definition, and find-references in the review UI. It
+// speaks just enough LSP (initialize, didOpen/didChange, hover, definition,
+// references, shutdown) to drive gopls over stdio; it is not a
+// general-purpose LSP library.
 package lsp
 
 import (
@@ -264,6 +265,7 @@ func (c *Client) Initialize(rootDir string) error {
 					"contentFormat": []string{"markdown", "plaintext"},
 				},
 				"definition": map[string]any{},
+				"references": map[string]any{},
 			},
 		},
 	}
@@ -320,6 +322,17 @@ type Location struct {
 func (c *Client) Definition(path string, line, character int) ([]Location, error) {
 	var raw json.RawMessage
 	if err := c.call("textDocument/definition", positionParams(path, line, character), &raw); err != nil {
+		return nil, err
+	}
+	return parseLocations(raw), nil
+}
+
+// References returns all reference locations (including the declaration).
+func (c *Client) References(path string, line, character int) ([]Location, error) {
+	params := positionParams(path, line, character)
+	params["context"] = map[string]any{"includeDeclaration": true}
+	var raw json.RawMessage
+	if err := c.call("textDocument/references", params, &raw); err != nil {
 		return nil, err
 	}
 	return parseLocations(raw), nil

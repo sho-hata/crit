@@ -42,7 +42,7 @@ crit/
 14. **Centralized review storage** — `~/.crit/reviews/<key>.json` keyed by cwd + branch (git mode) or cwd + args (file mode)
 15. **VCS abstraction** — `vcs.go` defines a backend interface; `git_vcs.go`, `sapling.go`, and `jj.go` are the implementations. Auto-detected, overridable via `--vcs` flag or `vcs` config key. Subcommands not yet threaded through (see TODO at `main.go:1826`).
 16. **Focus mode** — sub-views over the file list: file focus, range focus (`--range A..B`), stacked focus (range layer in a stacked PR). Lives in `focus_*.go` and `/api/focus`.
-17. **LSP integration (Go)** — `internal/lsp` speaks minimal LSP to `gopls` over stdio for hover / go-to-definition (`/api/lsp/*`, frontend `web/crit-lsp.js`). Lifecycle: **lazy start** (spawned on first LSP request, not daemon start) + **idle shutdown** (killed after 3 min without requests) + killed on daemon shutdown. Each daemon owns its own manager, so N parallel worktree reviews only pin gopls processes for sessions actively being hovered. Positions are UTF-16 (LSP default = JS native — no conversion). Definition peeks only read files under repo root / GOROOT / GOMODCACHE; there is deliberately no general file-read endpoint.
+17. **LSP integration (Go)** — `internal/lsp` speaks minimal LSP to `gopls` over stdio for hover / go-to-definition / find-references (`/api/lsp/*`, frontend `web/crit-lsp.js`). Lifecycle: **lazy start** (spawned on first LSP request, not daemon start) + **idle shutdown** (killed after 3 min without requests) + killed on daemon shutdown. Each daemon owns its own manager, so N parallel worktree reviews only pin gopls processes for sessions actively being hovered. Positions are UTF-16 (LSP default = JS native — no conversion). Definition/reference peeks only read files under repo root / GOROOT / GOMODCACHE; there is deliberately no general file-read endpoint.
 
 <important if="you need to build, test, lint, or run crit">
 
@@ -213,6 +213,7 @@ File-scoped (require `?path=X`):
 - `GET|POST /api/file/comments?path=X` — list/add comments (10MB body limit on POST)
 - `GET  /api/lsp/hover?path=X&line=N&char=M` — gopls hover markdown for a Go file position (line 1-based, char 0-based UTF-16)
 - `GET  /api/lsp/definition?path=X&line=N&char=M` — definition locations, each with an inline peek when the target is under repo root / GOROOT / GOMODCACHE (whole file ≤2000 lines; ±100-line window + `peek_truncated` above that). `path` is repo-relative from the review pane, or absolute for chained jumps from the peek popup — absolute paths are accepted ONLY under those same three roots (403 otherwise); never widen this into a general file API.
+- `GET  /api/lsp/references?path=X&line=N&char=M` — reference locations (declaration included), sorted by path+line, capped at 200 (`truncated: true` beyond). Same path rules and peek roots as definition, but with small peek windows (whole file ≤50 lines; ±10-line window above that) since lists can be long.
 - `PUT|DELETE /api/comment/{id}?path=X` — update or delete (10MB body limit on PUT)
 - `POST|PUT|DELETE /api/comment/{id}/replies[/{rid}]?path=X` — reply CRUD
 - `PUT /api/comment/{id}/resolve?path=X` — set resolved state

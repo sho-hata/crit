@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,11 +30,21 @@ const peekContextLines = 100
 // peek payloads.
 const peekMaxLineLen = 500
 
+// References can return many locations, so each carries a much smaller peek
+// window than a definition (the list row shows one line; the window only
+// feeds the click-to-peek popup) and the total count is capped.
+const (
+	refPeekFullFileMaxLines = 50
+	refPeekContextLines     = 10
+	maxReferenceLocations   = 200
+)
+
 // lspProvider is the slice of lsp.Manager the handlers need; an interface so
 // tests can inject a fake without spawning gopls.
 type lspProvider interface {
 	Hover(absPath string, line, character int) (string, error)
 	Definition(absPath string, line, character int) ([]lsp.Location, error)
+	References(absPath string, line, character int) ([]lsp.Location, error)
 	GoEnv() (goroot, gomodcache string)
 	Shutdown()
 }
@@ -75,8 +86,8 @@ func (s *Server) lspAvailable() bool {
 }
 
 // lspManager returns the shared LSP provider, creating it on first call.
-// gopls itself is spawned even later — on the first Hover/Definition inside
-// the manager (lazy start keeps parallel worktree daemons cheap).
+// gopls itself is spawned even later — on the first LSP request inside the
+// manager (lazy start keeps parallel worktree daemons cheap).
 func (s *Server) lspManager() lspProvider {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
@@ -170,6 +181,32 @@ const (
 	rootGomodcache
 )
 
+// rootCache memoizes classifyRoot per path for one request. References
+// return many locations concentrated in few files, and each classification
+// resolves symlinks against up to three roots.
+type rootCache struct {
+	repoRoot, goroot, gomodcache string
+	seen                         map[string]rootKind
+}
+
+func newRootCache(repoRoot, goroot, gomodcache string) *rootCache {
+	return &rootCache{
+		repoRoot:   repoRoot,
+		goroot:     goroot,
+		gomodcache: gomodcache,
+		seen:       make(map[string]rootKind),
+	}
+}
+
+func (c *rootCache) classify(absPath string) rootKind {
+	if kind, ok := c.seen[absPath]; ok {
+		return kind
+	}
+	kind := classifyRoot(absPath, c.repoRoot, c.goroot, c.gomodcache)
+	c.seen[absPath] = kind
+	return kind
+}
+
 // classifyRoot resolves absPath against the three roots LSP features may
 // touch and reports which one contains it. This is the single source of
 // truth for authorization (lspPathAllowed), peek readability, and display
@@ -241,23 +278,101 @@ func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := s.session.Load()
 	goroot, gomodcache := mgr.GoEnv()
+	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache))
+		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp})
 }
 
-// resolveLocation classifies a definition target (session / repo / stdlib /
-// module cache) and attaches a peek when the file lives under a root crit is
-// allowed to read. Peek reads are restricted to paths gopls itself returned
-// AND within repoRoot, GOROOT, or GOMODCACHE — there is deliberately no
-// general file-read endpoint behind this.
-func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string) lspLocationResponse {
+// handleLSPReferences returns all reference locations for a position
+// (declaration included), sorted by path and line for stable per-file
+// grouping in the UI. Each location carries a small peek window; the list is
+// capped at maxReferenceLocations.
+// GET /api/lsp/references?path=internal/foo.go&line=42&char=13
+func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
+	absPath, line0, char, ok := s.parseLSPParams(w, r)
+	if !ok {
+		return
+	}
+	mgr := s.lspManager()
+	locations, err := mgr.References(absPath, line0, char)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("lsp references: %v", err), http.StatusBadGateway)
+		return
+	}
+	sess := s.session.Load()
+	goroot, gomodcache := mgr.GoEnv()
+	// Classification is memoized per file: references cluster in a handful
+	// of files, and each classifyRoot call resolves symlinks.
+	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
+	sortReferences(locations, sess, rc)
+
+	truncated := len(locations) > maxReferenceLocations
+	if truncated {
+		locations = locations[:maxReferenceLocations]
+	}
+	resp := make([]lspLocationResponse, 0, len(locations))
+	for _, loc := range locations {
+		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines, rc))
+	}
+	writeJSON(w, map[string]any{"locations": resp, "truncated": truncated})
+}
+
+// referenceRank orders files by how likely the reviewer cares about them, so
+// that the maxReferenceLocations cap drops the least relevant tail rather
+// than everything alphabetically after the cut.
+func referenceRank(path string, sess *Session, rc *rootCache) int {
+	kind := rc.classify(path)
+	if kind != rootRepo {
+		return 2 // stdlib, module cache, elsewhere
+	}
+	if rel, err := filepath.Rel(sess.RepoRoot, path); err == nil {
+		if sess.FileByPath(filepath.ToSlash(rel)) != nil {
+			return 0 // a file under review
+		}
+	}
+	return 1 // elsewhere in the repo
+}
+
+// sortReferences orders locations by relevance rank, then path, line, and
+// character. The character tiebreak matters: two references can share a line
+// (x := x), and without it their order — and which one survives the cap —
+// would be arbitrary.
+func sortReferences(locations []lsp.Location, sess *Session, rc *rootCache) {
+	rank := make(map[string]int, len(locations))
+	for _, loc := range locations {
+		if _, ok := rank[loc.Path]; !ok {
+			rank[loc.Path] = referenceRank(loc.Path, sess, rc)
+		}
+	}
+	sort.Slice(locations, func(i, j int) bool {
+		a, b := locations[i], locations[j]
+		if ra, rb := rank[a.Path], rank[b.Path]; ra != rb {
+			return ra < rb
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.Character < b.Character
+	})
+}
+
+// resolveLocation classifies a target (session / repo / stdlib / module
+// cache) and attaches a peek when the file lives under a root crit is allowed
+// to read. fullMaxLines/contextLines size the peek (definitions get generous
+// windows, references small ones). Peek reads are restricted to paths gopls
+// itself returned AND within repoRoot, GOROOT, or GOMODCACHE — there is
+// deliberately no general file-read endpoint behind this.
+func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
 	repoRoot := sess.RepoRoot
 	out := lspLocationResponse{Line: loc.Line + 1}
 
-	kind := classifyRoot(loc.Path, repoRoot, goroot, gomodcache)
+	kind := rc.classify(loc.Path)
 	if kind == rootRepo {
 		rel, err := filepath.Rel(repoRoot, loc.Path)
 		if err != nil {
@@ -273,7 +388,7 @@ func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodc
 		out.DisplayPath = displayPathOutsideRepo(loc.Path, kind, goroot, gomodcache)
 	}
 	if kind != rootNone {
-		out.PeekStart, out.Peek, out.PeekTruncated = readPeek(loc.Path, loc.Line+1)
+		out.PeekStart, out.Peek, out.PeekTruncated = readPeek(loc.Path, loc.Line+1, fullMaxLines, contextLines)
 	}
 	return out
 }
@@ -294,26 +409,26 @@ func displayPathOutsideRepo(path string, kind rootKind, goroot, gomodcache strin
 }
 
 // readPeek returns the file content around targetLine (1-based): the whole
-// file when it is small enough, otherwise a ±peekContextLines window
+// file when it is at most fullMaxLines long, otherwise a ±contextLines window
 // (truncated=true).
-func readPeek(absPath string, targetLine int) (start int, lines []string, truncated bool) {
+func readPeek(absPath string, targetLine, fullMaxLines, contextLines int) (start int, lines []string, truncated bool) {
 	f, err := os.Open(absPath)
 	if err != nil {
 		return 0, nil, false
 	}
 	defer f.Close()
 
-	windowStart := targetLine - peekContextLines
+	windowStart := targetLine - contextLines
 	if windowStart < 1 {
 		windowStart = 1
 	}
-	windowEnd := targetLine + peekContextLines
+	windowEnd := targetLine + contextLines
 
 	// Scan line by line so a huge generated file costs the window, not the
-	// whole file: once we know the file exceeds peekFullFileMaxLines AND the
-	// window is fully collected, stop reading. Scanning (unlike splitting the
-	// raw bytes on \n) also never yields a phantom empty line after a
-	// trailing newline.
+	// whole file: once we know the file exceeds fullMaxLines AND the window
+	// is fully collected, stop reading. Scanning (unlike splitting the raw
+	// bytes on \n) also never yields a phantom empty line after a trailing
+	// newline.
 	var full, window []string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -321,17 +436,20 @@ func readPeek(absPath string, targetLine int) (start int, lines []string, trunca
 	for sc.Scan() {
 		n++
 		line := truncateLine(sc.Text())
-		if n <= peekFullFileMaxLines {
+		if n <= fullMaxLines {
 			full = append(full, line)
 		}
 		if n >= windowStart && n <= windowEnd {
 			window = append(window, line)
 		}
-		if n > peekFullFileMaxLines && n > windowEnd {
+		if n > fullMaxLines && n > windowEnd {
 			break
 		}
 	}
-	if n <= peekFullFileMaxLines {
+	// A scan error — in practice a line longer than the buffer, which
+	// generated code can hit — stops the loop early, so what we collected is
+	// a prefix of the file and must never be advertised as a whole-file peek.
+	if n <= fullMaxLines && sc.Err() == nil {
 		if len(full) == 0 || windowStart > n {
 			return 0, nil, false
 		}

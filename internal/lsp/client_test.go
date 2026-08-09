@@ -185,6 +185,53 @@ func TestClientDefinition(t *testing.T) {
 	}
 }
 
+func TestClientReferences(t *testing.T) {
+	fs := startFake(func(method string, params json.RawMessage) any {
+		if method == "textDocument/references" {
+			var p struct {
+				Context struct {
+					IncludeDeclaration bool `json:"includeDeclaration"`
+				} `json:"context"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				t.Errorf("bad references params: %v", err)
+			}
+			if !p.Context.IncludeDeclaration {
+				t.Error("references must request includeDeclaration")
+			}
+			return []map[string]any{
+				{
+					"uri":   "file:///tmp/repo/main.go",
+					"range": map[string]any{"start": map[string]any{"line": 4, "character": 1}},
+				},
+				{
+					"uri":   "file:///tmp/repo/util.go",
+					"range": map[string]any{"start": map[string]any{"line": 9, "character": 5}},
+				},
+			}
+		}
+		return nil
+	})
+	defer fs.client.Close()
+
+	locs, err := fs.client.References("/tmp/repo/main.go", 4, 1)
+	if err != nil {
+		t.Fatalf("References: %v", err)
+	}
+	want := []Location{
+		{Path: "/tmp/repo/main.go", Line: 4, Character: 1},
+		{Path: "/tmp/repo/util.go", Line: 9, Character: 5},
+	}
+	if len(locs) != len(want) {
+		t.Fatalf("got %d locations, want %d", len(locs), len(want))
+	}
+	for i := range locs {
+		if locs[i] != want[i] {
+			t.Errorf("location[%d] = %+v, want %+v", i, locs[i], want[i])
+		}
+	}
+}
+
 func TestClientAnswersServerRequests(t *testing.T) {
 	fs := startFake(nil)
 	defer fs.client.Close()
