@@ -18,8 +18,8 @@
   // For text nodes (nodeType 3) offsetInNode is a character offset; for
   // elements it is a child index (caretPositionFromPoint can return either).
   function textOffsetIn(root, target, offsetInNode) {
-    var total = 0;
-    var found = false;
+    let total = 0;
+    let found = false;
     function textLen(node) {
       return (node.textContent || '').length;
     }
@@ -29,8 +29,8 @@
         if (node.nodeType === 3) {
           total += offsetInNode;
         } else {
-          var kids = node.childNodes || [];
-          for (var i = 0; i < offsetInNode && i < kids.length; i++) total += textLen(kids[i]);
+          const kids = node.childNodes || [];
+          for (let i = 0; i < offsetInNode && i < kids.length; i++) total += textLen(kids[i]);
         }
         found = true;
         return;
@@ -39,8 +39,8 @@
         total += textLen(node);
         return;
       }
-      var children = node.childNodes || [];
-      for (var j = 0; j < children.length; j++) {
+      const children = node.childNodes || [];
+      for (let j = 0; j < children.length; j++) {
         walk(children[j]);
         if (found) return;
       }
@@ -51,14 +51,14 @@
 
   // ===== Controller =====
 
-  var HOVER_DELAY_MS = 350;
-  var MAX_CONSECUTIVE_FAILURES = 3;
+  const HOVER_DELAY_MS = 350;
+  const MAX_CONSECUTIVE_FAILURES = 3;
   // After the breaker trips, allow another attempt this long after the last
   // failure (half-open): gopls warm-up on large repos can outlast the
   // server's retry window, and a permanent disable would outlive the outage.
-  var DISABLE_RETRY_MS = 30000;
+  const DISABLE_RETRY_MS = 30000;
 
-  var st = null; // controller state; null until init()
+  let st = null; // controller state; null until init()
 
   function esc(s) {
     return window.crit.shared.escapeHTML(s);
@@ -70,30 +70,30 @@
   // same data-diff-* attributes via tagDiffLine.
   function eligibleLineEl(target) {
     if (!target || !target.closest) return null;
-    var contentEl = target.closest('.diff-content');
+    const contentEl = target.closest('.diff-content');
     if (!contentEl) return null;
-    var lineEl = contentEl.closest('.diff-line, .diff-split-side');
+    const lineEl = contentEl.closest('.diff-line, .diff-split-side');
     if (!lineEl) return null;
-    var path = lineEl.dataset.diffFilePath;
+    const path = lineEl.dataset.diffFilePath;
     if (!path || !/\.go$/.test(path)) return null;
     if (lineEl.dataset.diffSide === 'old') return null;
-    var line = parseInt(lineEl.dataset.diffLineNum, 10);
+    const line = parseInt(lineEl.dataset.diffLineNum, 10);
     if (!line) return null;
     return { lineEl: lineEl, contentEl: contentEl, path: path, line: line };
   }
 
   // caretCharOffset computes the UTF-16 column under the pointer, or -1.
   function caretCharOffset(contentEl, x, y) {
-    var node = null;
-    var offset = 0;
+    let node = null;
+    let offset = 0;
     if (document.caretPositionFromPoint) {
-      var pos = document.caretPositionFromPoint(x, y);
+      const pos = document.caretPositionFromPoint(x, y);
       if (pos) {
         node = pos.offsetNode;
         offset = pos.offset;
       }
     } else if (document.caretRangeFromPoint) {
-      var range = document.caretRangeFromPoint(x, y);
+      const range = document.caretRangeFromPoint(x, y);
       if (range) {
         node = range.startContainer;
         offset = range.startOffset;
@@ -131,7 +131,7 @@
 
   function ensureTooltip() {
     if (st.tooltip) return st.tooltip;
-    var el = document.createElement('div');
+    const el = document.createElement('div');
     el.className = 'lsp-tooltip';
     el.setAttribute('role', 'tooltip');
     el.hidden = true;
@@ -154,17 +154,17 @@
   }
 
   function showTooltip(html, x, y) {
-    var tip = ensureTooltip();
+    const tip = ensureTooltip();
     tip.innerHTML = html;
     tip.hidden = false;
     // Position after layout so we can clamp to the viewport: prefer above
     // the cursor, fall back to below.
     tip.style.left = '0px';
     tip.style.top = '0px';
-    var rect = tip.getBoundingClientRect();
-    var left = Math.min(x, window.innerWidth - rect.width - 8);
+    const rect = tip.getBoundingClientRect();
+    let left = Math.min(x, window.innerWidth - rect.width - 8);
     if (left < 8) left = 8;
-    var top = y - rect.height - 12;
+    let top = y - rect.height - 12;
     if (top < 8) top = y + 20;
     tip.style.left = left + 'px';
     tip.style.top = top + 'px';
@@ -172,7 +172,7 @@
 
   function onMouseMove(e) {
     if (isDisabled()) return;
-    var hit = eligibleLineEl(e.target);
+    const hit = eligibleLineEl(e.target);
     if (!hit) {
       // Moving onto the tooltip itself keeps it open (lets users select
       // text) — but drop any pending hover request from the last on-line
@@ -192,19 +192,19 @@
   }
 
   function requestHover(hit, x, y) {
-    var char = caretCharOffset(hit.contentEl, x, y);
+    const char = caretCharOffset(hit.contentEl, x, y);
     if (char < 0) return;
-    var key = hit.path + ':' + hit.line + ':' + char;
+    const key = hit.path + ':' + hit.line + ':' + char;
     if (st.hoverKey === key && st.tooltip && !st.tooltip.hidden) return;
     abortInflight();
-    var ctl = new AbortController();
+    const ctl = new AbortController();
     st.inflight = ctl;
     // Slow-response indicator: the first request after gopls spawns can take
     // seconds (workspace load). Show a placeholder so the wait is visible.
-    var loadingTimer = setTimeout(function () {
+    const loadingTimer = setTimeout(function () {
       showTooltip('<div class="lsp-tooltip-loading">' + esc(st.loadingText) + '</div>', x, y);
     }, 400);
-    var url = '/api/lsp/hover?path=' + encodeURIComponent(hit.path) +
+    const url = '/api/lsp/hover?path=' + encodeURIComponent(hit.path) +
       '&line=' + hit.line + '&char=' + char;
     fetch(url, { signal: ctl.signal })
       .then(function (r) {
@@ -260,7 +260,7 @@
     document.addEventListener('scroll', onScroll, true);
   }
 
-  var api = {
+  const api = {
     init: init,
     textOffsetIn: textOffsetIn,
   };
