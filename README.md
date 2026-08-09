@@ -177,7 +177,7 @@ Reviewing a Go diff, powered by [gopls](https://pkg.go.dev/golang.org/x/tools/go
 
 Notes:
 
-- gopls starts **lazily** on the first hover and is stopped after 10 minutes of inactivity — running crit in many worktrees at once only keeps language servers alive for reviews you're actively hovering.
+- gopls starts **lazily** on the first hover and is stopped after 3 minutes of inactivity — running crit in many worktrees at once only keeps language servers alive for reviews you're actively hovering.
 - The very first hover after a cold start can take a few seconds while gopls loads the workspace (the tooltip shows a loading placeholder).
 
 ### Programmatic comments

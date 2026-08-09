@@ -16,7 +16,7 @@ import (
 // request. Multiple crit daemons (e.g. one per worktree) each own a manager,
 // so idle shutdown is what keeps N parallel reviews from pinning N gopls
 // processes: only actively-hovered sessions hold one.
-const defaultIdleTimeout = 10 * time.Minute
+const defaultIdleTimeout = 3 * time.Minute
 
 // goLanguageID is the LSP language identifier sent with didOpen. The manager
 // only ever feeds Go files to gopls.
