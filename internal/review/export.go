@@ -1,6 +1,6 @@
 package review
 
-import "github.com/tomasz-tomczyk/crit/internal/session"
+import "github.com/sho-hata/crit/internal/session"
 
 // FindReviewFileByCommentID scans review files for a comment ID.
 func FindReviewFileByCommentID(commentID string, excludePath string) (string, error) {

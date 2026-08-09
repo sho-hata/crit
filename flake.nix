@@ -24,7 +24,7 @@
             ldflags = [ "-s" "-w" "-X main.version=${version}" ];
             meta = with nixpkgs.lib; {
               description = "Browser-based markdown review tool with inline commenting";
-              homepage = "https://github.com/tomasz-tomczyk/crit";
+              homepage = "https://github.com/sho-hata/crit";
               license = licenses.mit;
               mainProgram = "crit";
             };

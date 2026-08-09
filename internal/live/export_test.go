@@ -3,9 +3,9 @@ package live
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/server"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/server"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 type serverConfig struct {

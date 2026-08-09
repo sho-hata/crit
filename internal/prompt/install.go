@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	integrationassets "github.com/tomasz-tomczyk/crit/integrations"
+	integrationassets "github.com/sho-hata/crit/integrations"
 )
 
 var stockPromptFiles = []string{

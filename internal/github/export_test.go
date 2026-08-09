@@ -6,11 +6,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/comment"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/comment"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 type (

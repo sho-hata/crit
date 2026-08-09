@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // Reason sentinels written into StorySupportEntry.Reason by ingest.

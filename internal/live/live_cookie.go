@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
+	"github.com/sho-hata/crit/internal/config"
 )
 
 // stringSliceFlag collects repeated --cookie values.

@@ -14,16 +14,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/github"
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/server"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/story"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/github"
+	"github.com/sho-hata/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/server"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/story"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // storyFlags holds parsed `crit story` options. Diff-scope flags (--pr,

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/prompt"
 )
 
 // EnvPrefix is the namespace for hook environment variables. Crit sets

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 func TestParseNameStatus(t *testing.T) {
@@ -439,7 +439,7 @@ func TestChangedFilesBranch(t *testing.T) {
 
 // TestMergeBase_OriginMain verifies that MergeBase("origin/main") works correctly
 // when a feature branch is based on origin/main and local main is behind.
-// This is the scenario from https://github.com/tomasz-tomczyk/crit/issues/313.
+// This is the scenario from https://github.com/sho-hata/crit/issues/313.
 func TestMergeBase_OriginMain(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
 	origDir, _ := os.Getwd()
@@ -528,7 +528,7 @@ func TestMergeBase_OriginMain(t *testing.T) {
 
 // TestDefaultBaseRef_PrefersOrigin verifies that when origin/<defaultBranch>
 // exists, defaultBaseRef returns it instead of the bare local name. This is
-// the fix for https://github.com/tomasz-tomczyk/crit/issues/377 — auto-detect
+// the fix for https://github.com/sho-hata/crit/issues/377 — auto-detect
 // should diff against the remote-tracking ref so a stale local main doesn't
 // produce a bloated diff.
 func TestDefaultBaseRef_PrefersOrigin(t *testing.T) {

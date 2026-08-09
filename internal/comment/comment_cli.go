@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // isAbsoluteOrTraversal reports whether p looks like an absolute path or

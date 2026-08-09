@@ -1,10 +1,10 @@
 package preview
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/server"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/server"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 type (

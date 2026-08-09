@@ -3,7 +3,7 @@ package story
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func TestFromScope_SplitsIndexedAndIgnored(t *testing.T) {

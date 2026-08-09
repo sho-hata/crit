@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/browser"
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/focus"
+	"github.com/sho-hata/crit/internal/browser"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/focus"
 )
 
 type smokeKind int

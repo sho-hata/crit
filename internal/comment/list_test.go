@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 func writeTestReview(t *testing.T, dir string, cj CritJSON) string {

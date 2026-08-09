@@ -1,6 +1,6 @@
 package github
 
-import "github.com/tomasz-tomczyk/crit/internal/session"
+import "github.com/sho-hata/crit/internal/session"
 
 type (
 	GhReplyForPush = ghReplyForPush

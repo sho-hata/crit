@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // TestRunPushLive_AuthRotationMidPush regresses issue #452: when `gh`'s

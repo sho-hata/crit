@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func RunPR(args []string) error {

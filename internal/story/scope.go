@@ -3,7 +3,7 @@ package story
 import (
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // FromScope converts a session's neutral StoryScope snapshot into the inputs

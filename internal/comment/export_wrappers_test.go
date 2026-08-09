@@ -3,8 +3,8 @@ package comment
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func TestParseLineSpecExport(t *testing.T) {

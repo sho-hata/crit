@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // TestWhitespaceIgnoredHunks_ShortCircuits verifies that WhitespaceIgnoredHunks

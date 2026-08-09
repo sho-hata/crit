@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // bucketReason describes why a comment was diverted from the postable bucket.

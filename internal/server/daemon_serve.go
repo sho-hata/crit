@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // CreateSession builds the review session for a daemon from resolved CLI config.

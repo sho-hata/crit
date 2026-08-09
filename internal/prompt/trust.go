@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
+	"github.com/sho-hata/crit/internal/config"
 )
 
 const (

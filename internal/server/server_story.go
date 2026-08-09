@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/story"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/story"
 )
 
 // handleStory serves GET/POST/DELETE /api/story (spec §6, §7.1, §9 Phase 5).

@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"path/filepath"
 
-	"github.com/tomasz-tomczyk/crit/internal/browser"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/browser"
+	"github.com/sho-hata/crit/internal/daemon"
 )
 
 var startDaemonForConnect = daemon.StartDaemon

@@ -1,6 +1,6 @@
 package focus
 
-import "github.com/tomasz-tomczyk/crit/internal/vcs"
+import "github.com/sho-hata/crit/internal/vcs"
 
 // PRResolveInfo carries PR metadata needed to build a Focus without importing github.
 type PRResolveInfo struct {

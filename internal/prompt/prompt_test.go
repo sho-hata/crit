@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 func TestLookupPrompt_ModeFallback(t *testing.T) {

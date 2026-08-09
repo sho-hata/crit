@@ -878,7 +878,7 @@
         kind: 'brew',
         version: configRes.latest_version,
         label: 'Crit ' + configRes.latest_version + ' available',
-        labelUrl: 'https://github.com/tomasz-tomczyk/crit/releases/tag/v' + configRes.latest_version,
+        labelUrl: 'https://github.com/sho-hata/crit/releases/tag/v' + configRes.latest_version,
         hint: 'brew update && brew upgrade crit'
       });
     }
@@ -9092,7 +9092,7 @@
     // Update card (shown only when an update is available)
     if (cfg.latest_version && cfg.version && cfg.latest_version !== cfg.version && !cfg.no_update_check) {
       const upgradeCmd = 'brew update && brew upgrade crit';
-      const releaseUrl = 'https://github.com/tomasz-tomczyk/crit/releases/tag/v' + escapeHtml(cfg.latest_version);
+      const releaseUrl = 'https://github.com/sho-hata/crit/releases/tag/v' + escapeHtml(cfg.latest_version);
       const alreadyDismissed = getSetting('updatesDismissed', '') === cfg.latest_version;
       html += '<div class="config-card config-card--orange"><div class="config-card-header">';
       html += '<span class="config-card-icon" style="color:var(--crit-yellow)">&#11014;</span>';
@@ -9126,7 +9126,7 @@
       html += '<span class="config-card-icon" style="color:var(--crit-yellow)">&#9675;</span>';
       html += '<span class="config-card-title">Agent Command</span>';
       html += '</div>';
-      html += '<div class="config-card-body">Edit <code>~/.crit.config.json</code> and set <code>agent_cmd</code> to send comments directly to your AI agent. <a href="https://github.com/tomasz-tomczyk/crit#send-to-agent-experimental" target="_blank" rel="noopener" style="color:var(--crit-brand)">Learn more</a></div>';
+      html += '<div class="config-card-body">Edit <code>~/.crit.config.json</code> and set <code>agent_cmd</code> to send comments directly to your AI agent. <a href="https://github.com/sho-hata/crit#send-to-agent-experimental" target="_blank" rel="noopener" style="color:var(--crit-brand)">Learn more</a></div>';
       html += '<div class="config-card-snippet">{"agent_cmd": "claude -p"}\n// Also: "opencode run", "aider --message"</div>';
       html += '</div>';
     }

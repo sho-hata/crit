@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func TestPrintPushSummary_NoWork(t *testing.T) {

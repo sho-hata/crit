@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // Avoid shelling out to `gh` during tests. Tests that want to exercise

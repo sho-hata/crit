@@ -12,8 +12,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/lsp"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/lsp"
 )
 
 // fakeLSPProvider implements lspProvider without spawning gopls.

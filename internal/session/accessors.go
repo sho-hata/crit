@@ -1,6 +1,6 @@
 package session
 
-import "github.com/tomasz-tomczyk/crit/internal/vcs"
+import "github.com/sho-hata/crit/internal/vcs"
 
 // RLock, RUnlock, Lock, and Unlock expose the session mutex for internal/server
 // HTTP handlers that need read-consistent snapshots of session state.

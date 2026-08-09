@@ -1,17 +1,17 @@
 package main
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/browser"
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/focus"
-	"github.com/tomasz-tomczyk/crit/internal/github"
-	"github.com/tomasz-tomczyk/crit/internal/live"
-	"github.com/tomasz-tomczyk/crit/internal/notify"
-	"github.com/tomasz-tomczyk/crit/internal/preview"
-	"github.com/tomasz-tomczyk/crit/internal/server"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/browser"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/focus"
+	"github.com/sho-hata/crit/internal/github"
+	"github.com/sho-hata/crit/internal/live"
+	"github.com/sho-hata/crit/internal/notify"
+	"github.com/sho-hata/crit/internal/preview"
+	"github.com/sho-hata/crit/internal/server"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 type (

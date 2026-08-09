@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // writeReviewFixture writes a CritJSON with the given branch into

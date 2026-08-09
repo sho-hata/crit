@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func resetDefaultBranchOnce() {

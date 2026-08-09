@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tomasz-tomczyk/crit/internal/diff"
+	"github.com/sho-hata/crit/internal/diff"
 )
 
 // FileChange represents a single file change detected by git.

@@ -23,14 +23,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/comment"
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/diff"
-	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/comment"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/diff"
+	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // sseHeartbeatInterval is the cadence for SSE keepalive comments. It's a var
@@ -420,7 +420,7 @@ func (s *Server) CheckForUpdates() {
 		base = "https://api.github.com"
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(base + "/repos/tomasz-tomczyk/crit/releases/latest")
+	resp, err := client.Get(base + "/repos/sho-hata/crit/releases/latest")
 	if err != nil {
 		return
 	}

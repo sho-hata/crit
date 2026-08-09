@@ -1,4 +1,4 @@
-module github.com/tomasz-tomczyk/crit
+module github.com/sho-hata/crit
 
 go 1.26.0
 

@@ -3,7 +3,7 @@ package live
 import (
 	"flag"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/clicmd"
 )
 
 type serverFlagSet struct {

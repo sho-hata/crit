@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/prompt"
 )
 
 func storyData() map[string]any {

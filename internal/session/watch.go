@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/diff"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/diff"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // RefreshDiffs re-computes diff hunks for all files.

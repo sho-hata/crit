@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/hooks"
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/hooks"
+	"github.com/sho-hata/crit/internal/prompt"
 )
 
 func TestFilenames(t *testing.T) {
