@@ -446,7 +446,10 @@ func readPeek(absPath string, targetLine, fullMaxLines, contextLines int) (start
 			break
 		}
 	}
-	if n <= fullMaxLines {
+	// A scan error — in practice a line longer than the buffer, which
+	// generated code can hit — stops the loop early, so what we collected is
+	// a prefix of the file and must never be advertised as a whole-file peek.
+	if n <= fullMaxLines && sc.Err() == nil {
 		if len(full) == 0 || windowStart > n {
 			return 0, nil, false
 		}
