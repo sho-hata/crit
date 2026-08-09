@@ -17,6 +17,7 @@ import (
 
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/diff"
+	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
 	"github.com/tomasz-tomczyk/crit/internal/vcs"
 )
 
@@ -2516,15 +2517,8 @@ func (s *Session) GetFileSnapshotFromDisk(path string) (map[string]any, bool) {
 	if !strings.HasPrefix(absPath, repoRoot+string(filepath.Separator)) && absPath != repoRoot {
 		return nil, false
 	}
-	resolved, err := filepath.EvalSymlinks(absPath)
+	resolved, err := pathsafe.ResolveUnder(absPath, repoRoot)
 	if err != nil {
-		return nil, false
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(repoRoot)
-	if err != nil {
-		return nil, false
-	}
-	if !strings.HasPrefix(resolved, resolvedRoot+string(filepath.Separator)) && resolved != resolvedRoot {
 		return nil, false
 	}
 	data, err := os.ReadFile(resolved)

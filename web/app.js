@@ -853,6 +853,13 @@
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
 
+    // LSP hover (Go files). Only wired when the server reports gopls
+    // available + enabled; the module owns all its listeners.
+    if (configRes.lsp_available && window.crit.lsp) {
+      window.crit.lsp.init({
+        renderMarkdown: function (text) { return commentMd.render(text); },
+      });
+    }
     promptTrustConfig = {
       project_prompts_untrusted: !!configRes.project_prompts_untrusted,
       project_prompt_sources: configRes.project_prompt_sources || [],

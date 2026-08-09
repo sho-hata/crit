@@ -26,6 +26,7 @@ import (
 	"github.com/tomasz-tomczyk/crit/internal/comment"
 	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/diff"
+	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
 	"github.com/tomasz-tomczyk/crit/internal/prompt"
 	"github.com/tomasz-tomczyk/crit/internal/review"
 	"github.com/tomasz-tomczyk/crit/internal/session"
@@ -95,6 +96,9 @@ type Server struct {
 	// runners) that must complete before the daemon writes the review file
 	// during shutdown. The shutdown path Wait()s on this with a timeout.
 	bgWG sync.WaitGroup
+
+	// lsp holds the lazily-created language-server manager (see lsp_handlers.go).
+	lsp lspState
 
 	// sessionStartedAt records when the daemon started, used by stats recording.
 	sessionStartedAt time.Time
@@ -170,6 +174,9 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/file/diff", s.withReady(s.handleFileDiff))
 	mux.HandleFunc("/api/file/comments", s.withReady(s.handleFileComments))
 	mux.HandleFunc("/api/comment/", s.withReady(s.handleCommentByID))
+
+	// Language-server features (hover) for Go files
+	mux.HandleFunc("/api/lsp/hover", s.withReady(s.handleLSPHover))
 
 	// Attachment upload (POST) and serving (GET /api/attachments/{filename}).
 	// The trailing slash form ServeMux uses means the bare /api/attachments
@@ -460,6 +467,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Glob patterns the frontend auto-marks viewed (collapsed) once per launch
 		"auto_viewed_patterns": s.cfg.AutoViewedPatterns,
+
+		// Language-server features (hover / go-to-definition). True only when
+		// enabled in config AND gopls is on PATH AND the session has a repo root.
+		"lsp_available": s.lspAvailable(),
 
 		// Available integrations (always included)
 		"integrations_available": availableIntegrations(),
@@ -2048,18 +2059,13 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	baseDir := s.session.Load().RepoRoot
 	fullPath := filepath.Join(baseDir, reqPath)
-	cleanPath, err := filepath.EvalSymlinks(fullPath)
+	cleanPath, err := pathsafe.ResolveUnder(fullPath, baseDir)
 	if err != nil {
-		http.Error(w, "File not found", http.StatusNotFound)
-		return
-	}
-	resolvedBase, err := filepath.EvalSymlinks(baseDir)
-	if err != nil {
-		http.Error(w, "Access denied", http.StatusForbidden)
-		return
-	}
-	if !strings.HasPrefix(cleanPath, resolvedBase+string(filepath.Separator)) {
-		http.Error(w, "Access denied", http.StatusForbidden)
+		if errors.Is(err, pathsafe.ErrNotFound) {
+			http.Error(w, "File not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Access denied", http.StatusForbidden)
+		}
 		return
 	}
 
