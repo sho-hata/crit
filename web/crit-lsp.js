@@ -628,9 +628,11 @@
         '<span class="lsp-refs-count">' + group.items.length + '</span></div>';
       for (let i = 0; i < group.items.length; i++) {
         const item = group.items[i];
+        // Each row is an isolated line, so highlight it on its own —
+        // batching unrelated lines would leak parser state between rows.
         html += '<button type="button" class="lsp-refs-item" data-idx="' + item.idx + '">' +
           '<span class="lsp-peek-num">' + item.loc.line + '</span>' +
-          '<span class="lsp-peek-code">' + highlightGoLine(refSnippet(item.loc)) + '</span>' +
+          '<span class="lsp-peek-code">' + highlightGoPeek([refSnippet(item.loc)])[0] + '</span>' +
           '</button>';
       }
     }
