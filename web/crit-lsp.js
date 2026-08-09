@@ -7,6 +7,7 @@
 //
 // Dependencies (window.crit.* namespaces read):
 //   - crit.shared (escapeHTML)
+//   - crit.lineBlocks (splitHighlightedCode — peek syntax highlighting)
 // UI adapters are injected via init(opts) so pure logic stays testable:
 //   - opts.renderMarkdown(text) -> safe HTML for hover markdown
 //   - opts.jumpToLocation(loc)  -> Promise<boolean>; true when the app
@@ -344,13 +345,21 @@
     }
   }
 
-  function highlightGoLine(text) {
-    if (window.hljs) {
+  // highlightGoPeek highlights all lines in ONE hljs pass and splits the
+  // result per line with splitHighlightedCode (span state carries across
+  // lines), so multi-line constructs — block comments, raw strings — keep
+  // correct colors and a 2000-line peek costs one highlight call, not 2000.
+  // Falls back to escaped plain text when hljs or the splitter is missing.
+  function highlightGoPeek(lines) {
+    const lineBlocks = window.crit.lineBlocks;
+    if (window.hljs && lineBlocks && lineBlocks.splitHighlightedCode) {
       try {
-        return window.hljs.highlight(text, { language: 'go' }).value;
+        const html = window.hljs.highlight(lines.join('\n'), { language: 'go' }).value;
+        const split = lineBlocks.splitHighlightedCode(html);
+        if (split.length === lines.length) return split;
       } catch (err) { /* fall through to escaped text */ }
     }
-    return esc(text);
+    return lines.map(esc);
   }
 
   // Maximum chained-jump history entries kept for the back button.
@@ -401,11 +410,12 @@
     if (loc.peek_truncated) {
       html += '<div class="lsp-peek-truncated">' + esc(st.truncatedText) + '</div>';
     }
+    const codeLines = highlightGoPeek(loc.peek);
     for (let i = 0; i < loc.peek.length; i++) {
       const lineNo = loc.peek_start + i;
       const cls = 'lsp-peek-line' + (lineNo === loc.line ? ' lsp-peek-target' : '');
       html += '<div class="' + cls + '" data-line="' + lineNo + '"><span class="lsp-peek-num">' + lineNo +
-        '</span><span class="lsp-peek-code">' + highlightGoLine(loc.peek[i]) + '</span></div>';
+        '</span><span class="lsp-peek-code">' + codeLines[i] + '</span></div>';
     }
     body.innerHTML = html;
     const target = body.querySelector('.lsp-peek-target');
