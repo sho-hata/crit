@@ -289,7 +289,7 @@ func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 // handleLSPReferences returns all reference locations for a position
 // (declaration included), sorted by path and line for stable per-file
 // grouping in the UI. Each location carries a small peek window; the list is
-// capped at maxReferenceLocations (truncated=true when it was).
+// capped at maxReferenceLocations.
 // GET /api/lsp/references?path=internal/foo.go&line=42&char=13
 func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 	absPath, line0, char, ok := s.parseLSPParams(w, r)

@@ -97,7 +97,7 @@ func (m *Manager) Definition(absPath string, line, character int) ([]Location, e
 	return out, err
 }
 
-// References returns reference locations for a 0-based UTF-16 position.
+// References returns reference locations.
 func (m *Manager) References(absPath string, line, character int) ([]Location, error) {
 	var out []Location
 	err := m.withClient(absPath, func(c *Client) error {

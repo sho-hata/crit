@@ -327,8 +327,7 @@ func (c *Client) Definition(path string, line, character int) ([]Location, error
 	return parseLocations(raw), nil
 }
 
-// References returns all reference locations (including the declaration) for
-// a 0-based UTF-16 position.
+// References returns all reference locations (including the declaration).
 func (c *Client) References(path string, line, character int) ([]Location, error) {
 	params := positionParams(path, line, character)
 	params["context"] = map[string]any{"includeDeclaration": true}
