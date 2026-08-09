@@ -175,8 +175,9 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/file/comments", s.withReady(s.handleFileComments))
 	mux.HandleFunc("/api/comment/", s.withReady(s.handleCommentByID))
 
-	// Language-server features (hover) for Go files
+	// Language-server features (hover, go-to-definition) for Go files
 	mux.HandleFunc("/api/lsp/hover", s.withReady(s.handleLSPHover))
+	mux.HandleFunc("/api/lsp/definition", s.withReady(s.handleLSPDefinition))
 
 	// Attachment upload (POST) and serving (GET /api/attachments/{filename}).
 	// The trailing slash form ServeMux uses means the bare /api/attachments

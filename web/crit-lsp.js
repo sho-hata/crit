@@ -1,12 +1,18 @@
-// crit-lsp.js — LSP hover documentation for code-review mode.
+// crit-lsp.js — LSP hover + go-to-definition for code-review mode.
 //
 // Talks to the local Go server's /api/lsp/* endpoints (which proxy gopls).
-// Rest the mouse over Go code in a diff → documentation tooltip.
+// Hover: rest the mouse over Go code in a diff → documentation tooltip.
+// Definition: Cmd/Ctrl+Click → jump within the review, or a peek popup when
+// the target lives outside the visible diff / session / repo.
 //
 // Dependencies (window.crit.* namespaces read):
 //   - crit.shared (escapeHTML)
+//   - crit.lineBlocks (splitHighlightedCode — peek syntax highlighting)
 // UI adapters are injected via init(opts) so pure logic stays testable:
 //   - opts.renderMarkdown(text) -> safe HTML for hover markdown
+//   - opts.jumpToLocation(loc)  -> Promise<boolean>; true when the app
+//     revealed the location inside the review UI
+//   - opts.toast(message)       -> transient error/info notice
 (function () {
   'use strict';
 
@@ -47,6 +53,29 @@
     }
     walk(root);
     return found ? total : -1;
+  }
+
+  // findHunkForLine returns the index of the hunk whose new-side range
+  // contains line (1-based), or -1.
+  function findHunkForLine(hunks, line) {
+    for (let i = 0; i < (hunks || []).length; i++) {
+      const h = hunks[i];
+      if (line >= h.NewStart && line < h.NewStart + h.NewCount) return i;
+    }
+    return -1;
+  }
+
+  // findGapForLine returns {prevIdx, nextIdx} when line (1-based, new side)
+  // falls in the collapsed gap between two adjacent hunks, or null. Leading
+  // and trailing gaps are not covered — callers fall back to the peek popup.
+  function findGapForLine(hunks, line) {
+    for (let i = 1; i < (hunks || []).length; i++) {
+      const prevEnd = hunks[i - 1].NewStart + hunks[i - 1].NewCount;
+      if (line >= prevEnd && line < hunks[i].NewStart) {
+        return { prevIdx: i - 1, nextIdx: i };
+      }
+    }
+    return null;
   }
 
   // ===== Controller =====
@@ -155,7 +184,7 @@
 
   function showTooltip(html, x, y) {
     const tip = ensureTooltip();
-    tip.innerHTML = html;
+    tip.innerHTML = html + '<div class="lsp-tooltip-hint">' + esc(st.defHintText) + '</div>';
     tip.hidden = false;
     // Position after layout so we can clamp to the viewport: prefer above
     // the cursor, fall back to below.
@@ -229,7 +258,293 @@
       });
   }
 
+  // ===== Definition jump =====
+
+  // setBusy keeps the shared progress cursor accurate under overlapping
+  // requests: a counter, not a boolean, so the first response to settle
+  // cannot clear the cursor while another request is still in flight.
+  function setBusy(on) {
+    st.busyCount += on ? 1 : -1;
+    document.documentElement.classList.toggle('lsp-busy', st.busyCount > 0);
+  }
+
+  // fetchLocations GETs a location-list LSP endpoint with the busy cursor,
+  // response check, and breaker accounting in one place. onLocations handles
+  // the outcome; errors toast and count toward the failure breaker.
+  //
+  // Each call bumps st.defSeq and the UI callbacks only run while this
+  // request is still the newest one — a later click (or hidePeek, which also
+  // bumps the sequence) invalidates responses still in flight, so a stale
+  // result can never scroll the review or render into a closed peek.
+  function fetchLocations(url, onLocations) {
+    const seq = ++st.defSeq;
+    setBusy(true);
+    fetch(url)
+      .finally(function () {
+        setBusy(false);
+      })
+      .then(function (r) {
+        if (!r.ok) throw new Error('lsp ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        recordSuccess();
+        if (seq !== st.defSeq) return;
+        const locs = data.locations || [];
+        if (locs.length === 0) {
+          st.toast(st.notFoundText);
+          return;
+        }
+        onLocations(locs, data);
+      })
+      .catch(function (err) {
+        if (err && err.name === 'AbortError') return;
+        recordFailure();
+        if (seq !== st.defSeq) return;
+        st.toast(st.errorText);
+      });
+  }
+
+  function onClick(e) {
+    if (isDisabled()) return;
+    if (!e.metaKey && !e.ctrlKey) return;
+    const hit = eligibleLineEl(e.target);
+    if (!hit) return;
+    const char = caretCharOffset(hit.contentEl, e.clientX, e.clientY);
+    if (char < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    clearTimeout(st.hoverTimer);
+    hideTooltip();
+    const url = '/api/lsp/definition?path=' + encodeURIComponent(hit.path) +
+      '&line=' + hit.line + '&char=' + char;
+    fetchLocations(url, function (locs) {
+      if (locs.length === 1) {
+        resolveJump(locs[0]);
+        return;
+      }
+      showPeek(locs, 0);
+    });
+  }
+
+  // resolveJump tries the in-review jump first, falling back to the peek
+  // popup (the server always attaches a peek when the file is readable).
+  function resolveJump(loc) {
+    Promise.resolve(loc.in_session ? st.jumpToLocation(loc) : false)
+      .then(function (handled) {
+        if (!handled) showPeek([loc], 0);
+      });
+  }
+
+  // ===== Peek popup =====
+
+  function hidePeek() {
+    if (st.peek) {
+      st.peek.remove();
+      st.peek = null;
+      st.peekStack = [];
+      st.peekLocs = null;
+      st.peekActive = 0;
+      // Invalidate chained-jump requests still in flight: their target
+      // panel is gone.
+      st.defSeq++;
+      document.removeEventListener('keydown', onPeekKeydown, true);
+    }
+  }
+
+  function onPeekKeydown(e) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      // Step back through chained jumps first; close once at the root.
+      if (st.peek && st.peekStack.length > 0) {
+        popPeekView(st.peek);
+      } else {
+        hidePeek();
+      }
+    }
+    // ← steps back through the jump history (matches the on-screen back
+    // button). Only when history exists — otherwise leave the key to the
+    // browser for horizontal scrolling of wide peek lines.
+    if (e.key === 'ArrowLeft' && st.peek && st.peekStack.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      popPeekView(st.peek);
+    }
+  }
+
+  // highlightGoPeek highlights all lines in ONE hljs pass and splits the
+  // result per line with splitHighlightedCode (span state carries across
+  // lines), so multi-line constructs — block comments, raw strings — keep
+  // correct colors and a 2000-line peek costs one highlight call, not 2000.
+  // Falls back to escaped plain text when hljs or the splitter is missing.
+  function highlightGoPeek(lines) {
+    const lineBlocks = window.crit.lineBlocks;
+    if (window.hljs && lineBlocks && lineBlocks.splitHighlightedCode) {
+      try {
+        const html = window.hljs.highlight(lines.join('\n'), { language: 'go' }).value;
+        const split = lineBlocks.splitHighlightedCode(html);
+        if (split.length === lines.length) return split;
+      } catch (err) { /* fall through to escaped text */ }
+    }
+    return lines.map(esc);
+  }
+
+  // Maximum chained-jump history entries kept for the back button.
+  const PEEK_HISTORY_MAX = 20;
+
+  function renderPeekView(panel) {
+    const locs = st.peekLocs;
+    const active = st.peekActive;
+    const loc = locs[active];
+
+    const back = panel.querySelector('.lsp-peek-back');
+    back.hidden = st.peekStack.length === 0;
+
+    const title = panel.querySelector('.lsp-peek-title');
+    title.textContent = loc.display_path + ':' + loc.line;
+
+    const actions = panel.querySelector('.lsp-peek-actions');
+    actions.innerHTML = '';
+    if (loc.in_repo) {
+      const open = document.createElement('a');
+      open.className = 'lsp-peek-open';
+      open.textContent = st.openFullText;
+      open.href = '/files/' + loc.path.split('/').map(encodeURIComponent).join('/');
+      open.target = '_blank';
+      open.rel = 'noopener';
+      actions.appendChild(open);
+    }
+
+    const tabsEl = panel.querySelector('.lsp-peek-tabs');
+    if (locs.length > 1) {
+      tabsEl.hidden = false;
+      tabsEl.innerHTML = locs.map(function (l, i) {
+        const cls = 'lsp-peek-tab' + (i === active ? ' active' : '');
+        return '<button type="button" class="' + cls + '" data-idx="' + i + '">' +
+          esc(l.display_path + ':' + l.line) + '</button>';
+      }).join('');
+    } else {
+      tabsEl.hidden = true;
+      tabsEl.innerHTML = '';
+    }
+
+    const body = panel.querySelector('.lsp-peek-body');
+    if (!loc.peek || loc.peek.length === 0) {
+      body.innerHTML = '<div class="lsp-peek-empty">' + esc(st.noPreviewText) + '</div>';
+      return;
+    }
+    let html = '';
+    if (loc.peek_truncated) {
+      html += '<div class="lsp-peek-truncated">' + esc(st.truncatedText) + '</div>';
+    }
+    // Highlight once per location and cache: tab switches and history steps
+    // re-render, but the peek content never changes.
+    loc.hl = loc.hl || highlightGoPeek(loc.peek);
+    const codeLines = loc.hl;
+    for (let i = 0; i < loc.peek.length; i++) {
+      const lineNo = loc.peek_start + i;
+      const cls = 'lsp-peek-line' + (lineNo === loc.line ? ' lsp-peek-target' : '');
+      html += '<div class="' + cls + '" data-line="' + lineNo + '"><span class="lsp-peek-num">' + lineNo +
+        '</span><span class="lsp-peek-code">' + codeLines[i] + '</span></div>';
+    }
+    body.innerHTML = html;
+    const target = body.querySelector('.lsp-peek-target');
+    if (target) target.scrollIntoView({ block: 'center' });
+  }
+
+  // chainedJumpFromPeek handles Cmd/Ctrl+Click on code inside the popup:
+  // definition-from-definition. The server only accepts these positions for
+  // files under repo root / GOROOT / GOMODCACHE — the same roots the peek
+  // content itself came from.
+  function chainedJumpFromPeek(panel, e) {
+    const codeEl = e.target.closest('.lsp-peek-code');
+    if (!codeEl) return;
+    const from = st.peekLocs[st.peekActive];
+    // Peeks also render non-Go targets (embed assets, runtime assembly);
+    // the server only answers definition requests for .go files, so don't
+    // send one — a guaranteed 4xx would just feed the failure breaker.
+    if (!from || !/\.go$/.test(from.path)) return;
+    const lineEl = codeEl.closest('.lsp-peek-line');
+    if (!lineEl) return;
+    const lineNo = parseInt(lineEl.dataset.line, 10);
+    if (!lineNo) return;
+    const char = caretCharOffset(codeEl, e.clientX, e.clientY);
+    if (char < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const url = '/api/lsp/definition?path=' + encodeURIComponent(from.path) +
+      '&line=' + lineNo + '&char=' + char;
+    fetchLocations(url, function (locs) {
+      if (st.peek !== panel) return; // peek replaced while in flight
+      if (locs.length === 1 && locs[0].in_session) {
+        // Chained jump landed back in the review: close and navigate.
+        Promise.resolve(st.jumpToLocation(locs[0])).then(function (handled) {
+          if (handled) {
+            hidePeek();
+          } else {
+            pushPeekView(panel, locs, 0);
+          }
+        });
+        return;
+      }
+      pushPeekView(panel, locs, 0);
+    });
+  }
+
+  function pushPeekView(panel, locs, active) {
+    st.peekStack.push({ locs: st.peekLocs, active: st.peekActive });
+    if (st.peekStack.length > PEEK_HISTORY_MAX) st.peekStack.shift();
+    st.peekLocs = locs;
+    st.peekActive = active;
+    renderPeekView(panel);
+  }
+
+  function popPeekView(panel) {
+    const prev = st.peekStack.pop();
+    if (!prev) return;
+    st.peekLocs = prev.locs;
+    st.peekActive = prev.active;
+    renderPeekView(panel);
+  }
+
+  function showPeek(locs, active) {
+    hidePeek();
+    const panel = document.createElement('div');
+    panel.className = 'lsp-peek';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Definition preview');
+    panel.innerHTML =
+      '<div class="lsp-peek-header">' +
+      '<button type="button" class="lsp-peek-back" aria-label="Back to previous definition" hidden>&larr;</button>' +
+      '<span class="lsp-peek-title"></span>' +
+      '<span class="lsp-peek-actions"></span>' +
+      '<button type="button" class="lsp-peek-close" aria-label="Close definition preview">&times;</button>' +
+      '</div><div class="lsp-peek-tabs" hidden></div><div class="lsp-peek-body"></div>' +
+      '<div class="lsp-peek-hint">' + esc(st.peekHintText) + '</div>';
+    document.body.appendChild(panel);
+    st.peek = panel;
+    st.peekStack = [];
+    st.peekLocs = locs;
+    st.peekActive = active;
+    renderPeekView(panel);
+    panel.querySelector('.lsp-peek-close').addEventListener('click', hidePeek);
+    panel.querySelector('.lsp-peek-back').addEventListener('click', function () {
+      popPeekView(panel);
+    });
+    panel.addEventListener('click', function (e) {
+      const tab = e.target.closest('.lsp-peek-tab');
+      if (tab) {
+        st.peekActive = parseInt(tab.dataset.idx, 10);
+        renderPeekView(panel);
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) chainedJumpFromPeek(panel, e);
+    });
+    document.addEventListener('keydown', onPeekKeydown, true);
+  }
+
   function onGlobalMousedown(e) {
+    if (st.peek && !st.peek.contains(e.target)) hidePeek();
     if (st.tooltip && !st.tooltip.hidden && !st.tooltip.contains(e.target)) hideTooltip();
   }
 
@@ -246,16 +561,32 @@
     if (st) return;
     st = {
       renderMarkdown: opts.renderMarkdown,
+      jumpToLocation: opts.jumpToLocation,
+      toast: opts.toast || function () {},
+      defHintText: opts.defHintText || '⌘/Ctrl+Click: go to definition',
+      notFoundText: opts.notFoundText || 'No definition found',
+      errorText: opts.errorText || 'Language server request failed',
       loadingText: opts.loadingText || 'Loading documentation… (first request warms up gopls)',
+      openFullText: opts.openFullText || 'Open full file ↗',
+      noPreviewText: opts.noPreviewText || 'No preview available',
+      truncatedText: opts.truncatedText || 'Large file — showing an excerpt around the definition',
+      peekHintText: opts.peekHintText || '⌘/Ctrl+Click: follow definition · Esc: back / close',
+      peekStack: [],
+      peekLocs: null,
+      peekActive: 0,
       tooltip: null,
+      peek: null,
       hoverTimer: 0,
       hoverKey: null,
       inflight: null,
       failures: 0,
       disabled: false,
       disabledAt: 0,
+      busyCount: 0,
+      defSeq: 0,
     };
     document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('click', onClick, true);
     document.addEventListener('mousedown', onGlobalMousedown, true);
     document.addEventListener('scroll', onScroll, true);
   }
@@ -263,6 +594,8 @@
   const api = {
     init: init,
     textOffsetIn: textOffsetIn,
+    findHunkForLine: findHunkForLine,
+    findGapForLine: findGapForLine,
   };
   if (typeof window !== 'undefined') {
     window.crit = window.crit || {};

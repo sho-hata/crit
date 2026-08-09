@@ -36,7 +36,7 @@ type Config struct {
 	// NotifyOnRoundReady controls desktop notifications when a review round
 	// becomes ready for the human. Defaults to false when unset (opt-in).
 	NotifyOnRoundReady *bool `json:"notify_on_round_ready,omitempty"`
-	// LSP controls language-server features (hover documentation) in the
+	// LSP controls language-server features (hover, go-to-definition) in the
 	// review UI. Defaults to true when unset; features only activate when the
 	// language server binary (gopls) is on PATH. Mergeable from project config —
 	// the spawned binary name is fixed, so a repo cannot hijack the command.
@@ -83,7 +83,7 @@ func (c Config) CloseOnApproveAfterMsEnabled() (ms int, enabled bool) {
 	return *c.CloseOnApproveAfterMs, true
 }
 
-// LSPEnabled returns whether language-server features (hover)
+// LSPEnabled returns whether language-server features (hover, definition)
 // are enabled. Defaults to true if not explicitly set.
 func (c Config) LSPEnabled() bool {
 	if c.LSP != nil {

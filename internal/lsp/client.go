@@ -1,7 +1,7 @@
 // Package lsp implements a minimal Language Server Protocol client used to
-// provide hover documentation in the review UI. It speaks just enough LSP
-// (initialize, didOpen/didChange, hover, shutdown) to drive gopls over
-// stdio; it is not a general-purpose LSP library.
+// provide hover and go-to-definition in the review UI. It speaks just enough
+// LSP (initialize, didOpen/didChange, hover, definition, shutdown) to drive
+// gopls over stdio; it is not a general-purpose LSP library.
 package lsp
 
 import (
@@ -263,6 +263,7 @@ func (c *Client) Initialize(rootDir string) error {
 				"hover": map[string]any{
 					"contentFormat": []string{"markdown", "plaintext"},
 				},
+				"definition": map[string]any{},
 			},
 		},
 	}
@@ -306,6 +307,22 @@ func (c *Client) Hover(path string, line, character int) (string, error) {
 		return "", err
 	}
 	return hoverContentsToMarkdown(result.Contents), nil
+}
+
+// Location is a definition target. Line and Character are 0-based (UTF-16).
+type Location struct {
+	Path      string
+	Line      int
+	Character int
+}
+
+// Definition returns definition locations for a 0-based UTF-16 position.
+func (c *Client) Definition(path string, line, character int) ([]Location, error) {
+	var raw json.RawMessage
+	if err := c.call("textDocument/definition", positionParams(path, line, character), &raw); err != nil {
+		return nil, err
+	}
+	return parseLocations(raw), nil
 }
 
 // Close performs the polite shutdown handshake, then force-terminates the
@@ -372,6 +389,55 @@ func hoverContentsToMarkdown(raw json.RawMessage) string {
 		return strings.Join(parts, "\n\n")
 	}
 	return ""
+}
+
+// parseLocations normalizes Location | Location[] | LocationLink[] into a
+// flat list.
+func parseLocations(raw json.RawMessage) []Location {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	type lspRange struct {
+		Start struct {
+			Line      int `json:"line"`
+			Character int `json:"character"`
+		} `json:"start"`
+	}
+	type lspLocation struct {
+		URI       string   `json:"uri"`
+		Range     lspRange `json:"range"`
+		TargetURI string   `json:"targetUri"`
+		TargetSel lspRange `json:"targetSelectionRange"`
+	}
+	toLocation := func(l lspLocation) (Location, bool) {
+		uri, rng := l.URI, l.Range
+		if uri == "" {
+			uri, rng = l.TargetURI, l.TargetSel
+		}
+		path := URIToPath(uri)
+		if path == "" {
+			return Location{}, false
+		}
+		return Location{Path: path, Line: rng.Start.Line, Character: rng.Start.Character}, true
+	}
+	var one lspLocation
+	if err := json.Unmarshal(raw, &one); err == nil && (one.URI != "" || one.TargetURI != "") {
+		if loc, ok := toLocation(one); ok {
+			return []Location{loc}
+		}
+		return nil
+	}
+	var many []lspLocation
+	if err := json.Unmarshal(raw, &many); err != nil {
+		return nil
+	}
+	locs := make([]Location, 0, len(many))
+	for _, l := range many {
+		if loc, ok := toLocation(l); ok {
+			locs = append(locs, loc)
+		}
+	}
+	return locs
 }
 
 // PathToURI converts an absolute filesystem path to a file:// URI.
