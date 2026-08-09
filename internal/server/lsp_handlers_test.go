@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -261,6 +262,45 @@ func TestTruncateLineKeepsRuneBoundary(t *testing.T) {
 	short := "short あいう line"
 	if got := truncateLine(short); got != short {
 		t.Errorf("short line must be unchanged, got %q", got)
+	}
+}
+
+func TestReadPeekBoundaries(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, lineCount int) string {
+		path := filepath.Join(dir, name)
+		var b strings.Builder
+		for i := 0; i < lineCount; i++ {
+			fmt.Fprintf(&b, "line %d\n", i+1)
+		}
+		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	// A trailing newline must not produce a phantom empty line past EOF.
+	small := write("small.go", 3)
+	start, lines, truncated := readPeek(small, 2)
+	if start != 1 || truncated || len(lines) != 3 {
+		t.Errorf("small file: start=%d truncated=%v lines=%d, want 1/false/3", start, truncated, len(lines))
+	}
+
+	// Exactly peekFullFileMaxLines lines (newline-terminated) is still a
+	// whole-file peek, not a truncated window.
+	exact := write("exact.go", peekFullFileMaxLines)
+	start, lines, truncated = readPeek(exact, 1000)
+	if start != 1 || truncated || len(lines) != peekFullFileMaxLines {
+		t.Errorf("exact-limit file: start=%d truncated=%v lines=%d, want 1/false/%d",
+			start, truncated, len(lines), peekFullFileMaxLines)
+	}
+
+	// One line over the limit tips it into the ±peekContextLines window.
+	over := write("over.go", peekFullFileMaxLines+1)
+	start, lines, truncated = readPeek(over, 1000)
+	if !truncated || start != 1000-peekContextLines || len(lines) != 2*peekContextLines+1 {
+		t.Errorf("over-limit file: start=%d truncated=%v lines=%d, want %d/true/%d",
+			start, truncated, len(lines), 1000-peekContextLines, 2*peekContextLines+1)
 	}
 }
 

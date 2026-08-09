@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
 	"os"
@@ -159,20 +160,38 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 	return absPath, line - 1, char, true
 }
 
+// rootKind classifies which allowed root contains an LSP path.
+type rootKind int
+
+const (
+	rootNone rootKind = iota
+	rootRepo
+	rootGoroot
+	rootGomodcache
+)
+
+// classifyRoot resolves absPath against the three roots LSP features may
+// touch and reports which one contains it. This is the single source of
+// truth for authorization (lspPathAllowed), peek readability, and display
+// formatting — the classification must never drift between those uses.
+func classifyRoot(absPath, repoRoot, goroot, gomodcache string) rootKind {
+	if pathWithinRoot(absPath, repoRoot) {
+		return rootRepo
+	}
+	if goroot != "" && pathWithinRoot(absPath, goroot) {
+		return rootGoroot
+	}
+	if gomodcache != "" && pathWithinRoot(absPath, gomodcache) {
+		return rootGomodcache
+	}
+	return rootNone
+}
+
 // lspPathAllowed reports whether an absolute path lies under one of the
 // roots LSP features may touch: repo root, GOROOT, or GOMODCACHE.
 func (s *Server) lspPathAllowed(absPath, repoRoot string) bool {
-	if pathWithinRoot(absPath, repoRoot) {
-		return true
-	}
 	goroot, gomodcache := s.lspManager().GoEnv()
-	if goroot != "" && pathWithinRoot(absPath, goroot) {
-		return true
-	}
-	if gomodcache != "" && pathWithinRoot(absPath, gomodcache) {
-		return true
-	}
-	return false
+	return classifyRoot(absPath, repoRoot, goroot, gomodcache) != rootNone
 }
 
 // handleLSPHover returns hover documentation for a position.
@@ -238,9 +257,8 @@ func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodc
 	repoRoot := sess.RepoRoot
 	out := lspLocationResponse{Line: loc.Line + 1}
 
-	inRepo := pathWithinRoot(loc.Path, repoRoot)
-	readable := inRepo
-	if inRepo {
+	kind := classifyRoot(loc.Path, repoRoot, goroot, gomodcache)
+	if kind == rootRepo {
 		rel, err := filepath.Rel(repoRoot, loc.Path)
 		if err != nil {
 			rel = loc.Path
@@ -252,28 +270,22 @@ func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodc
 		out.InSession = sess.FileByPath(relSlash) != nil
 	} else {
 		out.Path = loc.Path
-		out.DisplayPath = displayPathOutsideRepo(loc.Path, goroot, gomodcache)
-		if goroot != "" && pathWithinRoot(loc.Path, goroot) {
-			readable = true
-		}
-		if gomodcache != "" && pathWithinRoot(loc.Path, gomodcache) {
-			readable = true
-		}
+		out.DisplayPath = displayPathOutsideRepo(loc.Path, kind, goroot, gomodcache)
 	}
-	if readable {
+	if kind != rootNone {
 		out.PeekStart, out.Peek, out.PeekTruncated = readPeek(loc.Path, loc.Line+1)
 	}
 	return out
 }
 
 // displayPathOutsideRepo shortens stdlib and module-cache paths for the UI.
-func displayPathOutsideRepo(path, goroot, gomodcache string) string {
-	if goroot != "" && pathWithinRoot(path, goroot) {
+func displayPathOutsideRepo(path string, kind rootKind, goroot, gomodcache string) string {
+	switch kind {
+	case rootGoroot:
 		if rel, err := filepath.Rel(goroot, path); err == nil {
 			return "$GOROOT/" + filepath.ToSlash(rel)
 		}
-	}
-	if gomodcache != "" && pathWithinRoot(path, gomodcache) {
+	case rootGomodcache:
 		if rel, err := filepath.Rel(gomodcache, path); err == nil {
 			return "$GOMODCACHE/" + filepath.ToSlash(rel)
 		}
@@ -285,31 +297,50 @@ func displayPathOutsideRepo(path, goroot, gomodcache string) string {
 // file when it is small enough, otherwise a ±peekContextLines window
 // (truncated=true).
 func readPeek(absPath string, targetLine int) (start int, lines []string, truncated bool) {
-	data, err := os.ReadFile(absPath)
+	f, err := os.Open(absPath)
 	if err != nil {
 		return 0, nil, false
 	}
-	all := strings.Split(string(data), "\n")
-	start, end := 1, len(all)
-	if len(all) > peekFullFileMaxLines {
-		truncated = true
-		start = targetLine - peekContextLines
-		if start < 1 {
-			start = 1
+	defer f.Close()
+
+	windowStart := targetLine - peekContextLines
+	if windowStart < 1 {
+		windowStart = 1
+	}
+	windowEnd := targetLine + peekContextLines
+
+	// Scan line by line so a huge generated file costs the window, not the
+	// whole file: once we know the file exceeds peekFullFileMaxLines AND the
+	// window is fully collected, stop reading. Scanning (unlike splitting the
+	// raw bytes on \n) also never yields a phantom empty line after a
+	// trailing newline.
+	var full, window []string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	n := 0
+	for sc.Scan() {
+		n++
+		line := truncateLine(sc.Text())
+		if n <= peekFullFileMaxLines {
+			full = append(full, line)
 		}
-		end = targetLine + peekContextLines
-		if end > len(all) {
-			end = len(all)
+		if n >= windowStart && n <= windowEnd {
+			window = append(window, line)
+		}
+		if n > peekFullFileMaxLines && n > windowEnd {
+			break
 		}
 	}
-	if start > len(all) {
+	if n <= peekFullFileMaxLines {
+		if len(full) == 0 || windowStart > n {
+			return 0, nil, false
+		}
+		return 1, full, false
+	}
+	if len(window) == 0 {
 		return 0, nil, false
 	}
-	lines = make([]string, 0, end-start+1)
-	for i := start; i <= end; i++ {
-		lines = append(lines, truncateLine(all[i-1]))
-	}
-	return start, lines, truncated
+	return windowStart, window, true
 }
 
 // truncateLine caps pathological lines (minified/generated code) at

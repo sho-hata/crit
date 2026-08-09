@@ -260,14 +260,28 @@
 
   // ===== Definition jump =====
 
+  // setBusy keeps the shared progress cursor accurate under overlapping
+  // requests: a counter, not a boolean, so the first response to settle
+  // cannot clear the cursor while another request is still in flight.
+  function setBusy(on) {
+    st.busyCount += on ? 1 : -1;
+    document.documentElement.classList.toggle('lsp-busy', st.busyCount > 0);
+  }
+
   // fetchLocations GETs a location-list LSP endpoint with the busy cursor,
-  // response check, and breaker accounting in one place. onEmpty/onLocations
-  // handle the outcome; errors toast and count toward the failure breaker.
+  // response check, and breaker accounting in one place. onLocations handles
+  // the outcome; errors toast and count toward the failure breaker.
+  //
+  // Each call bumps st.defSeq and the UI callbacks only run while this
+  // request is still the newest one — a later click (or hidePeek, which also
+  // bumps the sequence) invalidates responses still in flight, so a stale
+  // result can never scroll the review or render into a closed peek.
   function fetchLocations(url, onLocations) {
-    document.documentElement.classList.add('lsp-busy');
+    const seq = ++st.defSeq;
+    setBusy(true);
     fetch(url)
       .finally(function () {
-        document.documentElement.classList.remove('lsp-busy');
+        setBusy(false);
       })
       .then(function (r) {
         if (!r.ok) throw new Error('lsp ' + r.status);
@@ -275,6 +289,7 @@
       })
       .then(function (data) {
         recordSuccess();
+        if (seq !== st.defSeq) return;
         const locs = data.locations || [];
         if (locs.length === 0) {
           st.toast(st.notFoundText);
@@ -285,6 +300,7 @@
       .catch(function (err) {
         if (err && err.name === 'AbortError') return;
         recordFailure();
+        if (seq !== st.defSeq) return;
         st.toast(st.errorText);
       });
   }
@@ -329,6 +345,9 @@
       st.peekStack = [];
       st.peekLocs = null;
       st.peekActive = 0;
+      // Invalidate chained-jump requests still in flight: their target
+      // panel is gone.
+      st.defSeq++;
       document.removeEventListener('keydown', onPeekKeydown, true);
     }
   }
@@ -342,6 +361,14 @@
       } else {
         hidePeek();
       }
+    }
+    // ← steps back through the jump history (matches the on-screen back
+    // button). Only when history exists — otherwise leave the key to the
+    // browser for horizontal scrolling of wide peek lines.
+    if (e.key === 'ArrowLeft' && st.peek && st.peekStack.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      popPeekView(st.peek);
     }
   }
 
@@ -410,7 +437,10 @@
     if (loc.peek_truncated) {
       html += '<div class="lsp-peek-truncated">' + esc(st.truncatedText) + '</div>';
     }
-    const codeLines = highlightGoPeek(loc.peek);
+    // Highlight once per location and cache: tab switches and history steps
+    // re-render, but the peek content never changes.
+    loc.hl = loc.hl || highlightGoPeek(loc.peek);
+    const codeLines = loc.hl;
     for (let i = 0; i < loc.peek.length; i++) {
       const lineNo = loc.peek_start + i;
       const cls = 'lsp-peek-line' + (lineNo === loc.line ? ' lsp-peek-target' : '');
@@ -429,6 +459,11 @@
   function chainedJumpFromPeek(panel, e) {
     const codeEl = e.target.closest('.lsp-peek-code');
     if (!codeEl) return;
+    const from = st.peekLocs[st.peekActive];
+    // Peeks also render non-Go targets (embed assets, runtime assembly);
+    // the server only answers definition requests for .go files, so don't
+    // send one — a guaranteed 4xx would just feed the failure breaker.
+    if (!from || !/\.go$/.test(from.path)) return;
     const lineEl = codeEl.closest('.lsp-peek-line');
     if (!lineEl) return;
     const lineNo = parseInt(lineEl.dataset.line, 10);
@@ -437,10 +472,10 @@
     if (char < 0) return;
     e.preventDefault();
     e.stopPropagation();
-    const from = st.peekLocs[st.peekActive];
     const url = '/api/lsp/definition?path=' + encodeURIComponent(from.path) +
       '&line=' + lineNo + '&char=' + char;
     fetchLocations(url, function (locs) {
+      if (st.peek !== panel) return; // peek replaced while in flight
       if (locs.length === 1 && locs[0].in_session) {
         // Chained jump landed back in the review: close and navigate.
         Promise.resolve(st.jumpToLocation(locs[0])).then(function (handled) {
@@ -547,6 +582,8 @@
       failures: 0,
       disabled: false,
       disabledAt: 0,
+      busyCount: 0,
+      defSeq: 0,
     };
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('click', onClick, true);
