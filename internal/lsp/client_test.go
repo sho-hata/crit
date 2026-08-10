@@ -5,11 +5,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// nativePath maps a POSIX-shaped test path to the platform's native absolute
+// form (C:\tmp\repo\main.go on Windows) so path assertions hold on both.
+func nativePath(p string) string {
+	if runtime.GOOS == "windows" {
+		return "C:" + filepath.FromSlash(p)
+	}
+	return p
+}
+
+// fileURI is the file:// URI a language server sends for nativePath(p). The
+// argument keeps URI escaping, so pass "sub%20dir", not "sub dir".
+func fileURI(p string) string {
+	if runtime.GOOS == "windows" {
+		return "file:///C:" + p
+	}
+	return "file://" + p
+}
 
 // fakeServer is an in-process LSP server wired to a Client via io.Pipe —
 // no gopls subprocess involved.
@@ -160,7 +180,7 @@ func TestClientDefinition(t *testing.T) {
 		if method == "textDocument/definition" {
 			return []map[string]any{
 				{
-					"uri": "file:///tmp/repo/util.go",
+					"uri": fileURI("/tmp/repo/util.go"),
 					"range": map[string]any{
 						"start": map[string]any{"line": 9, "character": 5},
 						"end":   map[string]any{"line": 9, "character": 12},
@@ -172,14 +192,14 @@ func TestClientDefinition(t *testing.T) {
 	})
 	defer fs.client.Close()
 
-	locs, err := fs.client.Definition("/tmp/repo/main.go", 0, 0)
+	locs, err := fs.client.Definition(nativePath("/tmp/repo/main.go"), 0, 0)
 	if err != nil {
 		t.Fatalf("Definition: %v", err)
 	}
 	if len(locs) != 1 {
 		t.Fatalf("got %d locations, want 1", len(locs))
 	}
-	want := Location{Path: "/tmp/repo/util.go", Line: 9, Character: 5}
+	want := Location{Path: nativePath("/tmp/repo/util.go"), Line: 9, Character: 5}
 	if locs[0] != want {
 		t.Errorf("location = %+v, want %+v", locs[0], want)
 	}
@@ -201,11 +221,11 @@ func TestClientReferences(t *testing.T) {
 			}
 			return []map[string]any{
 				{
-					"uri":   "file:///tmp/repo/main.go",
+					"uri":   fileURI("/tmp/repo/main.go"),
 					"range": map[string]any{"start": map[string]any{"line": 4, "character": 1}},
 				},
 				{
-					"uri":   "file:///tmp/repo/util.go",
+					"uri":   fileURI("/tmp/repo/util.go"),
 					"range": map[string]any{"start": map[string]any{"line": 9, "character": 5}},
 				},
 			}
@@ -214,13 +234,13 @@ func TestClientReferences(t *testing.T) {
 	})
 	defer fs.client.Close()
 
-	locs, err := fs.client.References("/tmp/repo/main.go", 4, 1)
+	locs, err := fs.client.References(nativePath("/tmp/repo/main.go"), 4, 1)
 	if err != nil {
 		t.Fatalf("References: %v", err)
 	}
 	want := []Location{
-		{Path: "/tmp/repo/main.go", Line: 4, Character: 1},
-		{Path: "/tmp/repo/util.go", Line: 9, Character: 5},
+		{Path: nativePath("/tmp/repo/main.go"), Line: 4, Character: 1},
+		{Path: nativePath("/tmp/repo/util.go"), Line: 9, Character: 5},
 	}
 	if len(locs) != len(want) {
 		t.Fatalf("got %d locations, want %d", len(locs), len(want))
@@ -299,18 +319,18 @@ func TestParseLocations(t *testing.T) {
 	}{
 		{
 			"single location",
-			`{"uri":"file:///a/b.go","range":{"start":{"line":1,"character":2}}}`,
-			[]Location{{Path: "/a/b.go", Line: 1, Character: 2}},
+			`{"uri":"` + fileURI("/a/b.go") + `","range":{"start":{"line":1,"character":2}}}`,
+			[]Location{{Path: nativePath("/a/b.go"), Line: 1, Character: 2}},
 		},
 		{
 			"location array",
-			`[{"uri":"file:///a.go","range":{"start":{"line":0,"character":0}}},{"uri":"file:///b.go","range":{"start":{"line":3,"character":4}}}]`,
-			[]Location{{Path: "/a.go"}, {Path: "/b.go", Line: 3, Character: 4}},
+			`[{"uri":"` + fileURI("/a.go") + `","range":{"start":{"line":0,"character":0}}},{"uri":"` + fileURI("/b.go") + `","range":{"start":{"line":3,"character":4}}}]`,
+			[]Location{{Path: nativePath("/a.go")}, {Path: nativePath("/b.go"), Line: 3, Character: 4}},
 		},
 		{
 			"location link array",
-			`[{"targetUri":"file:///c.go","targetSelectionRange":{"start":{"line":7,"character":1}}}]`,
-			[]Location{{Path: "/c.go", Line: 7, Character: 1}},
+			`[{"targetUri":"` + fileURI("/c.go") + `","targetSelectionRange":{"start":{"line":7,"character":1}}}]`,
+			[]Location{{Path: nativePath("/c.go"), Line: 7, Character: 1}},
 		},
 		{"null", `null`, nil},
 	}
@@ -329,18 +349,18 @@ func TestParseLocations(t *testing.T) {
 	}
 }
 
-// The Windows-only branches (drive-letter prefixes) cannot run on other
-// platforms because runtime.GOOS is a constant; these tables cover the
-// POSIX behavior plus the URI-shape invariants gopls relies on.
+// nativePath/fileURI keep these tables platform-agnostic: on Windows they
+// exercise the drive-letter branches, elsewhere the POSIX ones, and both cover
+// the URI-shape invariants gopls relies on.
 func TestPathToURI(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
 		want string
 	}{
-		{"absolute path", "/tmp/repo/main.go", "file:///tmp/repo/main.go"},
-		{"space is percent-encoded", "/tmp/repo/sub dir/file.go", "file:///tmp/repo/sub%20dir/file.go"},
-		{"plus survives, parens percent-encoded", "/tmp/a+b (c)/f.go", "file:///tmp/a+b%20%28c%29/f.go"},
+		{"absolute path", nativePath("/tmp/repo/main.go"), fileURI("/tmp/repo/main.go")},
+		{"space is percent-encoded", nativePath("/tmp/repo/sub dir/file.go"), fileURI("/tmp/repo/sub%20dir/file.go")},
+		{"plus survives, parens percent-encoded", nativePath("/tmp/a+b (c)/f.go"), fileURI("/tmp/a+b%20%28c%29/f.go")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -357,8 +377,8 @@ func TestURIToPath(t *testing.T) {
 		uri  string
 		want string
 	}{
-		{"file URI", "file:///tmp/repo/main.go", "/tmp/repo/main.go"},
-		{"percent-encoded space", "file:///tmp/repo/sub%20dir/file.go", "/tmp/repo/sub dir/file.go"},
+		{"file URI", fileURI("/tmp/repo/main.go"), nativePath("/tmp/repo/main.go")},
+		{"percent-encoded space", fileURI("/tmp/repo/sub%20dir/file.go"), nativePath("/tmp/repo/sub dir/file.go")},
 		{"non-file scheme", "https://example.com/x.go", ""},
 		{"unparseable URI", ":no-scheme", ""},
 		{"empty string", "", ""},
@@ -374,9 +394,9 @@ func TestURIToPath(t *testing.T) {
 
 func TestPathURIRoundtrip(t *testing.T) {
 	paths := []string{
-		"/tmp/repo/main.go",
-		"/tmp/repo/sub dir/file.go",
-		"/tmp/リポジトリ/課題.go", // non-ASCII must survive encode/decode
+		nativePath("/tmp/repo/main.go"),
+		nativePath("/tmp/repo/sub dir/file.go"),
+		nativePath("/tmp/リポジトリ/課題.go"), // non-ASCII must survive encode/decode
 	}
 	for _, path := range paths {
 		uri := PathToURI(path)
