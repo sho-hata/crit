@@ -375,6 +375,7 @@
   let settingsPanelOpen = false;
   let settingsPanelTab = 'settings';
   let cachedConfig = null; // populated on first panel open
+  let codeFontsRequest = null; // deferred until the Settings overlay opens
 
   let diffMode = getSetting('diffMode', 'split'); // 'split' or 'unified'
   // Mobile viewports always render unified diffs. Split is unusable in <=768px
@@ -817,6 +818,9 @@
   async function init() {
     initTheme();
     initWidth();
+    // Code font is a pure CSS-variable override; no mode-specific work here,
+    // so the shared helper owns read + apply.
+    if (window.crit && window.crit.shared) window.crit.shared.applyCodeFontFromCookie();
     initSidebarWidths();
 
     // Measure actual header height and set CSS variable for sticky offsets
@@ -9242,11 +9246,22 @@
         settingsPanelOpen = true;
         settingsPanelTab = tab || 'settings';
         if (!cachedConfig) {
-          fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
+          fetch('/api/config').then(function (r) {
+            if (!r.ok) throw new Error('Could not load configuration');
+            return r.json();
+          }).then(function (cfg) {
             cachedConfig = cfg;
             renderSettingsPane(cfg);
             renderAboutPane(cfg);
+            loadCodeFonts(cfg);
+          }).catch(function () {
+            cachedConfig = {};
+            renderSettingsPane(cachedConfig);
+            renderAboutPane(cachedConfig);
+            loadCodeFonts(cachedConfig);
           });
+        } else {
+          loadCodeFonts(cachedConfig);
         }
         renderShortcutsPane();
       },
@@ -9254,6 +9269,27 @@
       onClose: function () { settingsPanelOpen = false; },
     });
     return settingsCtl;
+  }
+
+  function loadCodeFonts(cfg) {
+    if (Array.isArray(cfg.code_fonts)) return;
+    if (!codeFontsRequest) {
+      codeFontsRequest = fetch('/api/code-fonts').then(function (r) {
+        if (!r.ok) throw new Error('Could not load code fonts');
+        return r.json();
+      }).then(function (data) {
+        return Array.isArray(data.code_fonts) ? data.code_fonts : [];
+      });
+    }
+    const request = codeFontsRequest;
+    request.then(function (families) {
+      cfg.code_fonts = families;
+      if (settingsPanelOpen) renderSettingsPane(cfg);
+    }).catch(function () {
+      // Keep the built-ins visible and retry after a transient failure when
+      // the user next opens Settings.
+      if (codeFontsRequest === request) codeFontsRequest = null;
+    });
   }
   function openSettingsPanel(tab) {
     settingsPanelTab = tab || 'settings';
