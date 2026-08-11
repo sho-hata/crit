@@ -1,8 +1,8 @@
 # Crit
 
-[![CI](https://github.com/tomasz-tomczyk/crit/actions/workflows/test.yml/badge.svg)](https://github.com/tomasz-tomczyk/crit/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/tomasz-tomczyk/crit/graph/badge.svg)](https://codecov.io/gh/tomasz-tomczyk/crit)
-[![Release](https://img.shields.io/github/release/tomasz-tomczyk/crit.svg)](https://github.com/tomasz-tomczyk/crit/releases)
+[![CI](https://github.com/sho-hata/crit/actions/workflows/test.yml/badge.svg)](https://github.com/sho-hata/crit/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/sho-hata/crit/graph/badge.svg)](https://codecov.io/gh/sho-hata/crit)
+[![Release](https://img.shields.io/github/release/sho-hata/crit.svg)](https://github.com/sho-hata/crit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **This is a private fork of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit).** Differences from upstream:
@@ -41,28 +41,28 @@ brew install crit
 
 Go:
 ```bash
-go install github.com/tomasz-tomczyk/crit/cmd/crit@latest
+go install github.com/sho-hata/crit/cmd/crit@latest
 ```
 
 Nix:
 ```bash
-nix profile install github:tomasz-tomczyk/crit
+nix profile install github:sho-hata/crit
 ```
 
 Windows:
 ```bash
-iwr https://github.com/tomasz-tomczyk/crit/releases/latest/download/crit-windows-amd64.exe -OutFile crit.exe
+iwr https://github.com/sho-hata/crit/releases/latest/download/crit-windows-amd64.exe -OutFile crit.exe
 ```
 > Note: Then move crit.exe somewhere on your PATH. ARM64 users: swap amd64 for arm64. WSL users: use the Linux binary instead.
 
 </details>
 
-Or download the latest release from [GitHub](https://github.com/tomasz-tomczyk/crit/releases/latest).
+Or download the latest release from [GitHub](https://github.com/sho-hata/crit/releases/latest).
 
 ## 2. Integrate with your agent
 Claude Code:
 ```
-claude plugin marketplace add tomasz-tomczyk/crit
+claude plugin marketplace add sho-hata/crit
 claude plugin install crit@crit
 ```
 
@@ -354,7 +354,7 @@ Run your own scripts when you **Finish Review** or **Approve** — deterministic
 }
 ```
 
-See the **[command hooks guide](docs/agent-hooks.md)** for the full env-var/stdin reference, trust flow, and examples (including the “snapshot commented-on files” recipe). Reference example hook scripts live under [`docs/example-hooks/`](https://github.com/tomasz-tomczyk/crit/tree/main/docs/example-hooks) in the repo — they're documentation, not installed by `crit install` and not tracked among the integrations (hooks are opt-in and not used by default).
+See the **[command hooks guide](docs/agent-hooks.md)** for the full env-var/stdin reference, trust flow, and examples (including the “snapshot commented-on files” recipe). Reference example hook scripts live under [`docs/example-hooks/`](https://github.com/sho-hata/crit/tree/main/docs/example-hooks) in the repo — they're documentation, not installed by `crit install` and not tracked among the integrations (hooks are opt-in and not used by default).
 
 ### Global-only config keys
 
@@ -427,7 +427,7 @@ crit --no-ignore
 Requires Go 1.26+:
 
 ```bash
-git clone https://github.com/tomasz-tomczyk/crit.git
+git clone https://github.com/sho-hata/crit.git
 cd crit
 go build -o crit ./cmd/crit
 mv crit /usr/local/bin/
@@ -436,28 +436,28 @@ mv crit /usr/local/bin/
 ### Go
 
 ```bash
-go install github.com/tomasz-tomczyk/crit/cmd/crit@latest
+go install github.com/sho-hata/crit/cmd/crit@latest
 ```
 
 ### Nix
 
 ```bash
-nix run github:tomasz-tomczyk/crit -- --help
+nix run github:sho-hata/crit -- --help
 ```
 
 Or add it to a `flake.nix`:
 
 ```nix
-inputs.crit.url = "github:tomasz-tomczyk/crit";
+inputs.crit.url = "github:sho-hata/crit";
 ```
 
 ### Download Binary
 
-Grab the latest binary for your platform from [Releases](https://github.com/tomasz-tomczyk/crit/releases).
+Grab the latest binary for your platform from [Releases](https://github.com/sho-hata/crit/releases).
 
 ### Windows
 
-Native Windows: download `crit-windows-amd64.exe` (or `crit-windows-arm64.exe`) from [Releases](https://github.com/tomasz-tomczyk/crit/releases), rename to `crit.exe`, and place it on your `PATH`.
+Native Windows: download `crit-windows-amd64.exe` (or `crit-windows-arm64.exe`) from [Releases](https://github.com/sho-hata/crit/releases), rename to `crit.exe`, and place it on your `PATH`.
 
 WSL: install the Linux binary as you would on Linux (`go install`, `nix run`, or download `crit-linux-amd64` from Releases). Crit detects WSL and opens URLs in your Windows host browser via `wslview` / `powershell.exe` / `cmd.exe`.
 

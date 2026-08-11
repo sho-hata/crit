@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // PRHeadInfo is the subset of PR metadata redirectReviewPathForPR needs.

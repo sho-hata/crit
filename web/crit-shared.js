@@ -923,7 +923,7 @@
 
   // ===== project prompt trust =====
 
-  var AGENT_PROMPTS_GUIDE_URL = 'https://github.com/tomasz-tomczyk/crit/blob/main/docs/agent-prompts.md';
+  var AGENT_PROMPTS_GUIDE_URL = 'https://github.com/sho-hata/crit/blob/main/docs/agent-prompts.md';
 
   var activeProjectPromptTrustResolve = null;
 

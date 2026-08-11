@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // FocusKind tags which arm of Focus is populated.

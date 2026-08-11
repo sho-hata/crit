@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/github"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/github"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // StackEntry is one row in the picker's "Your stack" section. Sorted by

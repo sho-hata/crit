@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // hunk is a tiny constructor for a HunkID in tests.

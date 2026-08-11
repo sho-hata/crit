@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func RunCleanup(args []string) error {

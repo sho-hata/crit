@@ -3,8 +3,8 @@ package session
 import (
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // StoryScopeHunk is one diff hunk in a story scope. It mirrors vcs.DiffHunk but

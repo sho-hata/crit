@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/daemon"
 )
 
 // TestClientExitsOnFinish verifies the agent-integration contract: an agent

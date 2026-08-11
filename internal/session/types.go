@@ -1,7 +1,7 @@
 package session
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // VCS type aliases for cross-package use within session.

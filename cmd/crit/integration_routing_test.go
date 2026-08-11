@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 // These tests cover the destination-routing rules for non-aider integrations.

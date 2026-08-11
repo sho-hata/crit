@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/prompt"
 )
 
 func runInstall(args []string) {

@@ -7,11 +7,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/focus"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/focus"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // PrintHelpFn is wired from cmd/crit for flag-set usage text.

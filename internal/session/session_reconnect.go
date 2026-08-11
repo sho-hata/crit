@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/daemon"
 )
 
 // startDaemonForReconnect is daemon.StartDaemon in production; tests may replace it.

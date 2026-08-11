@@ -3,7 +3,7 @@ package focus
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func TestResolveFocusFromPR(t *testing.T) {

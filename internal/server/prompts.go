@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/hooks"
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/hooks"
+	"github.com/sho-hata/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func (s *Server) promptTrustState() (prompt.TrustState, error) {

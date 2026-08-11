@@ -38,7 +38,7 @@ For the full experience, install via the plugin marketplace. This gives you:
 - A model-discoverable `crit-cli` skill for review files, `crit comment`, `crit pull/push`, etc.
 
 ```
-claude plugin marketplace add tomasz-tomczyk/crit
+claude plugin marketplace add sho-hata/crit
 claude plugin install crit@crit
 ```
 

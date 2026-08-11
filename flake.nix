@@ -17,14 +17,14 @@
             inherit version;
             src = self;
             subPackages = [ "cmd/crit" ];
-            vendorHash = "sha256-xgNFYuYw6if40UmxoAGNve9FWy6Gt5MCEIz+7CIqjRo=";
+            vendorHash = "sha256-GRCDq56dgpQtWEgad7Iz+YVSKNcpLQz4OVhXjai6UqA=";
             # Tests run in dedicated CI jobs (test + e2e); the Nix sandbox's
             # /build TMPDIR cleanup races with the debounced review file writer.
             doCheck = false;
             ldflags = [ "-s" "-w" "-X main.version=${version}" ];
             meta = with nixpkgs.lib; {
               description = "Browser-based markdown review tool with inline commenting";
-              homepage = "https://github.com/tomasz-tomczyk/crit";
+              homepage = "https://github.com/sho-hata/crit";
               license = licenses.mit;
               mainProgram = "crit";
             };

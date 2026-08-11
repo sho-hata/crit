@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/testutil"
 	"time"
 )
 

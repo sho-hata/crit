@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 // writeStaleReview writes a review file aged `days` days into a reviews dir so

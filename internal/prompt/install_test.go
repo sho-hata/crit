@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/prompt"
+	"github.com/sho-hata/crit/internal/prompt"
 )
 
 func TestInstallPrompts(t *testing.T) {

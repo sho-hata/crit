@@ -3,8 +3,8 @@ package server
 import (
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func saveAttachment(reviewPath string, data []byte) (string, error) {

@@ -1,11 +1,11 @@
 package main
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/focus"
-	"github.com/tomasz-tomczyk/crit/internal/live"
-	"github.com/tomasz-tomczyk/crit/internal/preview"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/focus"
+	"github.com/sho-hata/crit/internal/live"
+	"github.com/sho-hata/crit/internal/preview"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 type positionalRoute int

@@ -1,8 +1,8 @@
 package comment
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/daemon"
 )
 
 type commentFlags struct {

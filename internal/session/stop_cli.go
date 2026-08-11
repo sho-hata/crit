@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 var stopDaemonByKey = daemon.StopDaemon

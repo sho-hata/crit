@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/review"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/review"
 )
 
 func loadOutputReview(t *testing.T, dataRoot string) CritJSON {

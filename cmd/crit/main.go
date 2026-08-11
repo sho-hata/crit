@@ -3,10 +3,10 @@ package main
 import (
 	"os"
 
-	integrationassets "github.com/tomasz-tomczyk/crit/integrations"
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	webassets "github.com/tomasz-tomczyk/crit/web"
+	integrationassets "github.com/sho-hata/crit/integrations"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/session"
+	webassets "github.com/sho-hata/crit/web"
 )
 
 var frontendFS = webassets.FS

@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // CommentFocusOverride captures the user's --scope flag for `crit comment`.

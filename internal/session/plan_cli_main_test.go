@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 func TestResolvePlanConfig_NameAndFile(t *testing.T) {

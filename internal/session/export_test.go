@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/diff"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/diff"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 type (

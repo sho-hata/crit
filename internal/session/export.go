@@ -3,7 +3,7 @@ package session
 import (
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 const MaxAttachmentBytes = maxAttachmentBytes

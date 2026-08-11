@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func skipIfNoGH(t *testing.T) {

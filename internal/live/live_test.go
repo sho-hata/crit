@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/focus"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/focus"
 )
 
 func TestAddLivePin_AssignsMonotonicGlobalPinNumbers(t *testing.T) {

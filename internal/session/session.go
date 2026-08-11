@@ -15,10 +15,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/diff"
-	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/diff"
+	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // ErrNoChangedFiles is returned by DetectVCSChanges when the working tree and

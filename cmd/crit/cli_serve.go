@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/reviewpath"
-	"github.com/tomasz-tomczyk/crit/internal/server"
+	"github.com/sho-hata/crit/internal/reviewpath"
+	"github.com/sho-hata/crit/internal/server"
 )
 
 // liveSessionArgsTag is the leading element of sessionEntry.Args for a

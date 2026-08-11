@@ -1,6 +1,6 @@
 package daemon
 
-import "github.com/tomasz-tomczyk/crit/internal/config"
+import "github.com/sho-hata/crit/internal/config"
 
 type commonDaemonFlags = CommonDaemonFlags
 

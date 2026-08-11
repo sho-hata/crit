@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func TestSplitCommitRange(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/daemon"
 )
 
 type staleReview struct {

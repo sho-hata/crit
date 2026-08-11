@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func TestResolveDefaultBranchSHA_Git(t *testing.T) {

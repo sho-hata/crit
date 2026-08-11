@@ -1,6 +1,6 @@
 package github
 
-import "github.com/tomasz-tomczyk/crit/internal/review"
+import "github.com/sho-hata/crit/internal/review"
 
 func init() {
 	review.FetchPRHeadInfoFn = func(prNumber int) (*review.PRHeadInfo, error) {

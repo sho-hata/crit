@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 func TestWire_ResolveServerConfigPassesSessionID(t *testing.T) {

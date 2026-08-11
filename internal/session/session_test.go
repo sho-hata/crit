@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func newTestSession(t *testing.T) *Session {

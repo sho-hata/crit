@@ -1,14 +1,14 @@
 package main
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/comment"
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/github"
-	"github.com/tomasz-tomczyk/crit/internal/live"
-	"github.com/tomasz-tomczyk/crit/internal/preview"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/session"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/comment"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/github"
+	"github.com/sho-hata/crit/internal/live"
+	"github.com/sho-hata/crit/internal/preview"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 func runConfig(args []string)   { clicmd.Exit(config.RunConfig(args)) }

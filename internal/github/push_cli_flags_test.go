@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/clicmd"
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/clicmd"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 func TestParsePushFlags(t *testing.T) {

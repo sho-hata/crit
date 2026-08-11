@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	sesspkg "github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	sesspkg "github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func init() {
@@ -1081,7 +1081,7 @@ func TestGetConfig(t *testing.T) {
 
 func TestCheckForUpdates(t *testing.T) {
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/tomasz-tomczyk/crit/releases/latest" {
+		if r.URL.Path != "/repos/sho-hata/crit/releases/latest" {
 			http.NotFound(w, r)
 			return
 		}

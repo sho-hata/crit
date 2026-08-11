@@ -1,9 +1,9 @@
 package review
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 type (

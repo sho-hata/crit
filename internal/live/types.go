@@ -1,13 +1,13 @@
 package live
 
 import (
-	"github.com/tomasz-tomczyk/crit/internal/comment"
-	"github.com/tomasz-tomczyk/crit/internal/config"
-	"github.com/tomasz-tomczyk/crit/internal/github"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/server"
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/comment"
+	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/github"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/server"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 var writeFile = testutil.WriteFile

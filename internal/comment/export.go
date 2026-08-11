@@ -1,6 +1,6 @@
 package comment
 
-import "github.com/tomasz-tomczyk/crit/internal/session"
+import "github.com/sho-hata/crit/internal/session"
 
 func CheckCommentCLIAllowed(critPath string) error {
 	return checkCommentCLIAllowed(critPath)

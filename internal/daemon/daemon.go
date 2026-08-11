@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
+	"github.com/sho-hata/crit/internal/config"
 )
 
 type CommonDaemonFlags struct {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/review"
+	"github.com/sho-hata/crit/internal/review"
 )
 
 func TestLooksLikeLineSpec(t *testing.T) {

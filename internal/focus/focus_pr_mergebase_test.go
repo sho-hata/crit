@@ -3,7 +3,7 @@ package focus
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // TestResolveFocusFromPR_UsesMergeBaseNotBaseTip is the regression guard for the

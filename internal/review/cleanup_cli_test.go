@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/session"
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 func TestFindStaleReviews_FlatFile(t *testing.T) {

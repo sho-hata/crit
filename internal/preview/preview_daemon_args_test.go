@@ -3,7 +3,7 @@ package preview
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
+	"github.com/sho-hata/crit/internal/config"
 )
 
 func TestBuildPreviewStartArgs_PublicURL(t *testing.T) {

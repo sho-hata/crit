@@ -12,8 +12,8 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/tomasz-tomczyk/crit/internal/lsp"
-	"github.com/tomasz-tomczyk/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/lsp"
+	"github.com/sho-hata/crit/internal/pathsafe"
 )
 
 // peekFullFileMaxLines is the largest file sent to the peek popup in full.

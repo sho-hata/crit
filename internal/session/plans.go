@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/config"
+	"github.com/sho-hata/crit/internal/config"
 )
 
 // planStorageDir returns the managed storage directory for a plan session.

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/daemon"
-	"github.com/tomasz-tomczyk/crit/internal/review"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func withDaemonFocus(t *testing.T, f *Focus) {

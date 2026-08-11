@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 // TestRunReviewClientRaw_WaitsForReadiness verifies that runReviewClientRaw

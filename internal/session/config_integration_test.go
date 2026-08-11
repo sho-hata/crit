@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/testutil"
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/testutil"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 func TestNewSessionFromGitWithIgnore(t *testing.T) {

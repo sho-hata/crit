@@ -1,6 +1,6 @@
 package prompt
 
-import integrationassets "github.com/tomasz-tomczyk/crit/integrations"
+import integrationassets "github.com/sho-hata/crit/integrations"
 
 // LoadStockTemplate reads a built-in finish template from embedded integrations/prompts/.
 func LoadStockTemplate(hook, mode string) (text, source string, ok bool) {

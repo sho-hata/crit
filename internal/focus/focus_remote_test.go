@@ -3,7 +3,7 @@ package focus
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/vcs"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // fakeStackVCS implements vcs.VCS just enough for ResolveFocus remote tests.

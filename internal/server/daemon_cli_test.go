@@ -3,7 +3,7 @@ package server_test
 import (
 	"testing"
 
-	"github.com/tomasz-tomczyk/crit/internal/server"
+	"github.com/sho-hata/crit/internal/server"
 )
 
 func TestResolveDaemonCLIConfig_RemoteFlagIgnoredWithoutFocus(t *testing.T) {
