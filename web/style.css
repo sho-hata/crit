@@ -4391,6 +4391,16 @@ body.sidebar-resizing * {
 .diff-split-side.deletion .diff-gutter-num { background: var(--crit-diff-del-gutter); }
 .diff-split-side.addition .diff-gutter-num { background: var(--crit-diff-add-gutter); }
 .diff-split-side.has-comment .diff-gutter-num { background: transparent; }
+/* Skip layout for diff rows far outside the viewport: .diff-content is
+   `pre-wrap`, so otherwise every window-width change re-wraps the whole diff.
+   `auto` learns each row's real height, so the scrollbar runs short until
+   wrapped rows have been scrolled past once. */
+.diff-container.unified .diff-line,
+.diff-split-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 20px;
+}
+
 .diff-container.split .comment-block { padding-left: 48px; width: 50%; max-width: none; margin: 0; }
 .diff-container.split .comment-form-wrapper { padding-left: 48px; width: 50%; max-width: none; margin: 0; }
 .diff-container.split .comment-block.diff-comment-right,
