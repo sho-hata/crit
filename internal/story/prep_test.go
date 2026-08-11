@@ -6,6 +6,8 @@ import (
 )
 
 func TestBuildPrep_HunkSectionsAndIDs(t *testing.T) {
+	t.Parallel()
+
 	in := PrepInput{
 		BaseSHA:        "base123",
 		HeadSHA:        "head456",
@@ -52,6 +54,8 @@ func TestBuildPrep_HunkSectionsAndIDs(t *testing.T) {
 }
 
 func TestBuildPrep_ScopeHeaderSnapshot(t *testing.T) {
+	t.Parallel()
+
 	in := PrepInput{
 		BaseSHA: "base123",
 		HeadSHA: "head456",
@@ -67,6 +71,8 @@ func TestBuildPrep_ScopeHeaderSnapshot(t *testing.T) {
 }
 
 func TestBuildPrep_FingerprintOverIndexedHunks(t *testing.T) {
+	t.Parallel()
+
 	in := PrepInput{
 		BaseSHA: "b",
 		HeadSHA: "h",
@@ -93,6 +99,8 @@ func TestBuildPrep_FingerprintOverIndexedHunks(t *testing.T) {
 }
 
 func TestBuildPrep_HeaderIncludesFilePathAndStatus(t *testing.T) {
+	t.Parallel()
+
 	in := PrepInput{
 		Files: []PrepFile{
 			{Path: "x/y.go", Status: "modified", Hunks: []PrepHunk{{OldStart: 3, Header: "@@ -3 +3 @@"}}},

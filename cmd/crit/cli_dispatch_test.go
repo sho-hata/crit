@@ -15,6 +15,8 @@ var publicCommandNames = []string{
 }
 
 func TestCommandRegistry_PublicInventory(t *testing.T) {
+	t.Parallel()
+
 	got := visibleCommandNames()
 	if !slices.Equal(got, publicCommandNames) {
 		t.Fatalf("public commands = %v, want %v", got, publicCommandNames)
@@ -22,6 +24,8 @@ func TestCommandRegistry_PublicInventory(t *testing.T) {
 }
 
 func TestCommandRegistry_Invariants(t *testing.T) {
+	t.Parallel()
+
 	seen := make(map[string]bool)
 	for _, command := range commandRegistry {
 		if seen[command.name] {
@@ -114,12 +118,16 @@ func TestRootHelpAliasesAndHiddenOmission(t *testing.T) {
 }
 
 func TestHelpInterceptionOnlyUsesLeadingCommandArgument(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"comment", "--", "--help"},
 		{"comment", "--output", "--help"},
 		{"story", "--story-file", "--help"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
+			t.Parallel()
+
 			registry := append([]commandDescriptor(nil), commandRegistry...)
 			var received []string
 			for i := range registry {
@@ -184,10 +192,14 @@ func TestCommandHelpDocumentsKeyOptions(t *testing.T) {
 }
 
 func TestInvalidHelpTopicReturnsError(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"help", "unknown"},
 	} {
 		t.Run(strings.Join(args, "/"), func(t *testing.T) {
+			t.Parallel()
+
 			handled, err := dispatchWithRegistry(args, commandRegistry)
 			if !handled {
 				t.Fatal("help command was not dispatched")

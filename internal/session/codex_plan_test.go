@@ -10,6 +10,8 @@ import (
 )
 
 func TestExtractProposedPlan(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		in   string
@@ -46,6 +48,8 @@ func TestExtractProposedPlan(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, ok := extractProposedPlan(tt.in)
 			if ok != tt.ok {
 				t.Fatalf("ok = %v, want %v", ok, tt.ok)
@@ -58,6 +62,8 @@ func TestExtractProposedPlan(t *testing.T) {
 }
 
 func TestProposedPlanFromCodexEventFallsBackToTranscript(t *testing.T) {
+	t.Parallel()
+
 	transcript := writeCodexTranscript(t,
 		codexTurnContextLine(t, "turn-1"),
 		codexAssistantMessageLine(t, "<proposed_plan>\n- old plan\n</proposed_plan>"),
@@ -79,6 +85,8 @@ func TestProposedPlanFromCodexEventFallsBackToTranscript(t *testing.T) {
 }
 
 func TestProposedPlanFromCodexEventUsesTaggedPlanOutsidePlanMode(t *testing.T) {
+	t.Parallel()
+
 	visible := "<proposed_plan>\n- should run\n</proposed_plan>"
 	got, ok := proposedPlanFromCodexEvent(codexStopHookEvent{
 		PermissionMode:       "default",
@@ -93,6 +101,8 @@ func TestProposedPlanFromCodexEventUsesTaggedPlanOutsidePlanMode(t *testing.T) {
 }
 
 func TestProposedPlanFromCodexEventDoesNotReuseOldTranscriptPlan(t *testing.T) {
+	t.Parallel()
+
 	transcript := writeCodexTranscript(t,
 		codexTurnContextLine(t, "turn-1"),
 		codexAssistantMessageLine(t, "<proposed_plan>\n- old plan\n</proposed_plan>"),
@@ -156,6 +166,8 @@ func TestRunCodexPlanHookSkipsStopHookActiveWithoutTaggedPlan(t *testing.T) {
 }
 
 func TestProposedPlanFromCodexEventFallsBackToTranscriptWhenStopHookActive(t *testing.T) {
+	t.Parallel()
+
 	transcript := writeCodexTranscript(t,
 		codexTurnContextLine(t, "turn-1"),
 		codexAssistantMessageLine(t, "<proposed_plan>\n- old plan\n</proposed_plan>"),
@@ -177,6 +189,8 @@ func TestProposedPlanFromCodexEventFallsBackToTranscriptWhenStopHookActive(t *te
 }
 
 func TestProposedPlanFromCodexEventDoesNotReuseSameTurnStaleTranscriptPlan(t *testing.T) {
+	t.Parallel()
+
 	transcript := writeCodexTranscript(t,
 		codexTurnContextLine(t, "turn-1"),
 		codexAssistantMessageLine(t, "<proposed_plan>\n- stale plan\n</proposed_plan>"),

@@ -12,6 +12,8 @@ func testStatus() (*Status, *bytes.Buffer) {
 }
 
 func TestStatusListening(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.Listening("http://localhost:3247")
 	want := "  Listening on http://localhost:3247\n"
@@ -21,6 +23,8 @@ func TestStatusListening(t *testing.T) {
 }
 
 func TestStatusRoundFinished_WithComments(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.RoundFinished(1, 3, true)
 	want := "→ Round 1: 3 comments added\n→ Finish review — prompt copied ✓\n"
@@ -30,6 +34,8 @@ func TestStatusRoundFinished_WithComments(t *testing.T) {
 }
 
 func TestStatusRoundFinished_SingleComment(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.RoundFinished(2, 1, true)
 	want := "→ Round 2: 1 comment added\n→ Finish review — prompt copied ✓\n"
@@ -39,6 +45,8 @@ func TestStatusRoundFinished_SingleComment(t *testing.T) {
 }
 
 func TestStatusRoundFinished_NoComments(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.RoundFinished(1, 0, false)
 	want := "→ Finish review\n"
@@ -48,6 +56,8 @@ func TestStatusRoundFinished_NoComments(t *testing.T) {
 }
 
 func TestStatusWaitingForAgent(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.WaitingForAgent()
 	want := "→ Waiting for agent…\n"
@@ -57,6 +67,8 @@ func TestStatusWaitingForAgent(t *testing.T) {
 }
 
 func TestStatusFileUpdated(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.FileUpdated(8)
 	want := "→ File updated (8 edits detected)\n"
@@ -66,6 +78,8 @@ func TestStatusFileUpdated(t *testing.T) {
 }
 
 func TestStatusFileUpdated_Singular(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.FileUpdated(1)
 	want := "→ File updated (1 edit detected)\n"
@@ -75,6 +89,8 @@ func TestStatusFileUpdated_Singular(t *testing.T) {
 }
 
 func TestStatusFileUpdated_Zero(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.FileUpdated(0)
 	if got := buf.String(); got != "" {
@@ -83,6 +99,8 @@ func TestStatusFileUpdated_Zero(t *testing.T) {
 }
 
 func TestStatusRoundReady_ResolvedAndOpen(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.RoundReady(2, 2, 1)
 	want := "→ Round 2: diff ready — 2 resolved, 1 open\n"
@@ -92,6 +110,8 @@ func TestStatusRoundReady_ResolvedAndOpen(t *testing.T) {
 }
 
 func TestStatusRoundReady_AllResolved(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.RoundReady(2, 3, 0)
 	want := "→ Round 2: diff ready — 3 resolved\n"
@@ -101,6 +121,8 @@ func TestStatusRoundReady_AllResolved(t *testing.T) {
 }
 
 func TestStatusRoundReady_NoneResolved(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.RoundReady(3, 0, 2)
 	want := "→ Round 3: diff ready — 2 open\n"
@@ -110,6 +132,8 @@ func TestStatusRoundReady_NoneResolved(t *testing.T) {
 }
 
 func TestStatusRoundReady_NoPreviousComments(t *testing.T) {
+	t.Parallel()
+
 	s, buf := testStatus()
 	s.RoundReady(2, 0, 0)
 	want := "→ Round 2: diff ready\n"
@@ -119,6 +143,8 @@ func TestStatusRoundReady_NoPreviousComments(t *testing.T) {
 }
 
 func TestStatusColor_IncludesAnsiCodes(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 	s := &Status{w: &buf, color: true}
 	s.Listening("http://localhost:3247")
@@ -132,6 +158,8 @@ func TestStatusColor_IncludesAnsiCodes(t *testing.T) {
 }
 
 func TestStatusColor_GreenInRoundReady(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 	s := &Status{w: &buf, color: true}
 	s.RoundReady(2, 2, 1)

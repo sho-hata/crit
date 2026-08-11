@@ -28,6 +28,8 @@ func configureOutputForTest(t *testing.T) string {
 }
 
 func TestParsePullFlags(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		args    []string
@@ -44,6 +46,8 @@ func TestParsePullFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := parsePullFlags(tt.args)
 			if tt.wantErr {
 				if err == nil {
@@ -110,6 +114,8 @@ func TestParseResolvedPullFlags(t *testing.T) {
 }
 
 func TestShouldRedirectReviewForPR(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name         string
 		prFlag       int
@@ -122,6 +128,8 @@ func TestShouldRedirectReviewForPR(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := shouldRedirectReviewForPR(tt.prFlag, tt.pinnedOutput); got != tt.want {
 				t.Fatalf("shouldRedirectReviewForPR(%d, %v) = %v, want %v", tt.prFlag, tt.pinnedOutput, got, tt.want)
 			}
@@ -145,6 +153,8 @@ func TestRunPull_GHMissing(t *testing.T) {
 }
 
 func TestRunPull_FlagParseError(t *testing.T) {
+	t.Parallel()
+
 	// gh present is irrelevant: the bad flag value surfaces a usage exit before
 	// any network call. We still need gh to pass the RequireGH gate, so this
 	// asserts the parse-error exit code only when gh happens to be installed;
@@ -160,6 +170,8 @@ func TestRunPull_FlagParseError(t *testing.T) {
 }
 
 func TestParsePullFlags_ErrorIsExitCode1(t *testing.T) {
+	t.Parallel()
+
 	_, err := parsePullFlags([]string{"--output"})
 	var exitErr clicmd.ExitError
 	if !errors.As(err, &exitErr) {
@@ -171,6 +183,8 @@ func TestParsePullFlags_ErrorIsExitCode1(t *testing.T) {
 }
 
 func TestParsePullFlagsSession(t *testing.T) {
+	t.Parallel()
+
 	got, err := parsePullFlags([]string{"--session", "aaaaaaaaaaaa", "42"})
 	if err != nil {
 		t.Fatal(err)
@@ -210,6 +224,8 @@ func TestParseResolvedPullFlagsSession(t *testing.T) {
 }
 
 func TestShouldRedirectReviewForPRWithSession(t *testing.T) {
+	t.Parallel()
+
 	// --session pins the review identity the same way --output does.
 	if shouldRedirectReviewForPR(42, true) {
 		t.Fatal("pinned session should not redirect")

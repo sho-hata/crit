@@ -78,6 +78,8 @@ func newWatchSession(t *testing.T, v *fakeWatchVCS) *Session {
 }
 
 func TestRefreshDiffs_SkipsDeletedAndLazyFiles(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeWatchVCS{
 		currentBranch: "feature",
 		defaultBranch: "main",
@@ -123,6 +125,8 @@ func TestRefreshDiffs_SkipsDeletedAndLazyFiles(t *testing.T) {
 }
 
 func TestRefreshFileList_AddsAndRemoves(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeWatchVCS{
 		currentBranch: "feature",
 		defaultBranch: "main",
@@ -178,6 +182,8 @@ func TestRefreshFileList_AddsAndRemoves(t *testing.T) {
 }
 
 func TestRefreshFileList_LazyThresholdMarksOverflow(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeWatchVCS{
 		currentBranch: "feature",
 		defaultBranch: "main",
@@ -252,6 +258,8 @@ func TestWatch_RefreshDiffsAndFileList_RaceFree(t *testing.T) {
 }
 
 func TestHandleRoundCompleteGit_AdvancesRoundAndRefreshes(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeWatchVCS{
 		currentBranch: "feature",
 		defaultBranch: "main",

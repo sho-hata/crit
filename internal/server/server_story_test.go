@@ -63,6 +63,8 @@ func validStoryBody(t *testing.T) []byte {
 }
 
 func TestHandleStory_GetEmpty_204(t *testing.T) {
+	t.Parallel()
+
 	s, _ := storyTestServer(t)
 	req := httptest.NewRequest("GET", "/api/story", nil)
 	w := httptest.NewRecorder()
@@ -77,6 +79,8 @@ func TestHandleStory_GetEmpty_204(t *testing.T) {
 }
 
 func TestHandleStory_PostValid_SavedAndGettable(t *testing.T) {
+	t.Parallel()
+
 	s, session := storyTestServer(t)
 
 	req := httptest.NewRequest("POST", "/api/story", bytes.NewReader(validStoryBody(t)))
@@ -108,6 +112,8 @@ func TestHandleStory_PostValid_SavedAndGettable(t *testing.T) {
 }
 
 func TestHandleStory_PostValid_Idempotent(t *testing.T) {
+	t.Parallel()
+
 	s, _ := storyTestServer(t)
 
 	for i := 0; i < 2; i++ {
@@ -121,6 +127,8 @@ func TestHandleStory_PostValid_Idempotent(t *testing.T) {
 }
 
 func TestHandleStory_PostRejected_DuplicateHunk_ReturnsCoverageAndDoesNotSave(t *testing.T) {
+	t.Parallel()
+
 	s, session := storyTestServer(t)
 
 	body := map[string]any{
@@ -193,6 +201,8 @@ func TestHandleStory_PostRejected_DuplicateHunk_ReturnsCoverageAndDoesNotSave(t 
 }
 
 func TestHandleStory_PostInvalidJSON_400(t *testing.T) {
+	t.Parallel()
+
 	s, _ := storyTestServer(t)
 	req := httptest.NewRequest("POST", "/api/story", bytes.NewReader([]byte("not json")))
 	w := httptest.NewRecorder()
@@ -203,6 +213,8 @@ func TestHandleStory_PostInvalidJSON_400(t *testing.T) {
 }
 
 func TestHandleStory_Delete(t *testing.T) {
+	t.Parallel()
+
 	s, session := storyTestServer(t)
 
 	req := httptest.NewRequest("POST", "/api/story", bytes.NewReader(validStoryBody(t)))
@@ -232,6 +244,8 @@ func TestHandleStory_Delete(t *testing.T) {
 }
 
 func TestHandleStory_PostBroadcastsSSE(t *testing.T) {
+	t.Parallel()
+
 	s, session := storyTestServer(t)
 	ch := session.Subscribe()
 	defer session.Unsubscribe(ch)
@@ -263,6 +277,8 @@ func TestHandleStory_PostBroadcastsSSE(t *testing.T) {
 }
 
 func TestHandleStory_DeleteBroadcastsSSEWithNullStory(t *testing.T) {
+	t.Parallel()
+
 	s, session := storyTestServer(t)
 
 	req := httptest.NewRequest("POST", "/api/story", bytes.NewReader(validStoryBody(t)))
@@ -302,6 +318,8 @@ func TestHandleStory_DeleteBroadcastsSSEWithNullStory(t *testing.T) {
 }
 
 func TestHandleStory_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := storyTestServer(t)
 	req := httptest.NewRequest("PUT", "/api/story", nil)
 	w := httptest.NewRecorder()
@@ -312,6 +330,8 @@ func TestHandleStory_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleStory_SessionInfoCarriesStory(t *testing.T) {
+	t.Parallel()
+
 	s, _ := storyTestServer(t)
 
 	req := httptest.NewRequest("POST", "/api/story", bytes.NewReader(validStoryBody(t)))

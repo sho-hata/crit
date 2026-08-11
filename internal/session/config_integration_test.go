@@ -60,6 +60,8 @@ func TestNewSessionFromGitWithIgnore(t *testing.T) {
 }
 
 func TestNewSessionFromFilesWithIgnore(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main\n")
 	testutil.WriteFile(t, filepath.Join(dir, "generated", "types.go"), "package gen\n")

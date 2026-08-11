@@ -19,6 +19,8 @@ import (
 )
 
 func TestParsePushFlags(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		args    []string
@@ -44,6 +46,8 @@ func TestParsePushFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := parsePushFlags(tt.args)
 			if tt.wantErr {
 				if err == nil {
@@ -113,6 +117,8 @@ func TestParseResolvedPushFlags(t *testing.T) {
 }
 
 func TestParsePushFlags_NonNumericExitCode(t *testing.T) {
+	t.Parallel()
+
 	_, err := parsePushFlags([]string{"bogus"})
 	var exitErr clicmd.ExitError
 	if !errors.As(err, &exitErr) {
@@ -124,6 +130,8 @@ func TestParsePushFlags_NonNumericExitCode(t *testing.T) {
 }
 
 func TestResolveCurrentPRHead_NotInRange(t *testing.T) {
+	t.Parallel()
+
 	sha, err := resolveCurrentPRHead(5, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -177,6 +185,8 @@ func TestResolveCurrentPRHead_FetchError(t *testing.T) {
 }
 
 func TestPushShouldExitFailure(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name                              string
 		posted, patched, deleted          int
@@ -191,6 +201,8 @@ func TestPushShouldExitFailure(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := pushShouldExitFailure(tt.posted, tt.patched, tt.deleted, tt.exportPath, tt.postFailed, tt.deleteFailed)
 			if got != tt.wantOut {
 				t.Errorf("pushShouldExitFailure = %v, want %v", got, tt.wantOut)
@@ -207,6 +219,8 @@ func TestRunPush_GHMissing(t *testing.T) {
 }
 
 func TestParsePushFlagsSession(t *testing.T) {
+	t.Parallel()
+
 	got, err := parsePushFlags([]string{"--session", "aaaaaaaaaaaa", "--dry-run", "12"})
 	if err != nil {
 		t.Fatal(err)

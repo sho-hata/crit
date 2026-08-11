@@ -8,6 +8,8 @@ import (
 )
 
 func TestBucketComments_PureLayer(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -27,6 +29,8 @@ func TestBucketComments_PureLayer(t *testing.T) {
 }
 
 func TestBucketComments_MixedScope(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -46,6 +50,8 @@ func TestBucketComments_MixedScope(t *testing.T) {
 }
 
 func TestBucketComments_StaleHead(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -68,6 +74,8 @@ func TestBucketComments_StaleHead(t *testing.T) {
 }
 
 func TestBucketComments_NoAnchor(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -86,6 +94,8 @@ func TestBucketComments_NoAnchor(t *testing.T) {
 }
 
 func TestBucketComments_FullStackToOrphan(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "full_stack",
 		Files: map[string]CritJSONFile{
@@ -104,6 +114,8 @@ func TestBucketComments_FullStackToOrphan(t *testing.T) {
 }
 
 func TestBucketComments_StaleToOrphan(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -119,6 +131,8 @@ func TestBucketComments_StaleToOrphan(t *testing.T) {
 }
 
 func TestBucketComments_NoAnchorToOrphan(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -134,6 +148,8 @@ func TestBucketComments_NoAnchorToOrphan(t *testing.T) {
 }
 
 func TestBucketComments_WorkingTreeKeepsAll(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "",
 		Files: map[string]CritJSONFile{
@@ -149,6 +165,8 @@ func TestBucketComments_WorkingTreeKeepsAll(t *testing.T) {
 }
 
 func TestBucketComments_WorkingTree(t *testing.T) {
+	t.Parallel()
+
 	// Empty HeadSHA when NOT in range mode is the today's-default: legacy
 	// comment, postable.
 	cj := CritJSON{
@@ -169,6 +187,8 @@ func TestBucketComments_WorkingTree(t *testing.T) {
 }
 
 func TestBucketComments_ResolvedSkipped(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -186,6 +206,8 @@ func TestBucketComments_ResolvedSkipped(t *testing.T) {
 }
 
 func TestBucketComments_AlreadyOnGitHub(t *testing.T) {
+	t.Parallel()
+
 	// Comments with GitHubID != 0 are already pushed; mirror the existing
 	// critJSONToGHComments behavior and skip them.
 	cj := CritJSON{
@@ -203,6 +225,8 @@ func TestBucketComments_AlreadyOnGitHub(t *testing.T) {
 }
 
 func TestRenderOrphanMarkdown_StructureAndContent(t *testing.T) {
+	t.Parallel()
+
 	b := pushBuckets{
 		FullStack: []scopedComment{{
 			Path:    "src/foo.go",
@@ -236,6 +260,8 @@ func TestRenderOrphanMarkdown_StructureAndContent(t *testing.T) {
 }
 
 func TestRenderOrphanMarkdown_OmitsEmptySections(t *testing.T) {
+	t.Parallel()
+
 	b := pushBuckets{FullStack: []scopedComment{{
 		Path:    "x.go",
 		Comment: Comment{EndLine: 1, Body: "x"},
@@ -248,6 +274,8 @@ func TestRenderOrphanMarkdown_OmitsEmptySections(t *testing.T) {
 }
 
 func TestWriteOrphanExport_CreatesFileAtExpectedPath(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	b := pushBuckets{Unmapped: []scopedComment{{
 		Path:    "a.go",
@@ -277,6 +305,8 @@ func TestWriteOrphanExport_CreatesFileAtExpectedPath(t *testing.T) {
 }
 
 func TestWriteOrphanExport_CreatesDir(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	target := filepath.Join(root, "nested", "exports")
 	b := pushBuckets{Unmapped: []scopedComment{{
@@ -294,6 +324,8 @@ func TestWriteOrphanExport_CreatesDir(t *testing.T) {
 }
 
 func TestSummarizeBuckets_FormatsCorrectly(t *testing.T) {
+	t.Parallel()
+
 	b := pushBuckets{
 		Postable:  make([]scopedComment, 12),
 		FullStack: make([]scopedComment, 2),
@@ -307,6 +339,8 @@ func TestSummarizeBuckets_FormatsCorrectly(t *testing.T) {
 }
 
 func TestDetailedDryRun_PerBucketSections(t *testing.T) {
+	t.Parallel()
+
 	b := pushBuckets{
 		Postable: []scopedComment{{
 			Path: "a.go", Comment: Comment{EndLine: 5, Body: "ship it"},
@@ -336,6 +370,8 @@ func TestDetailedDryRun_PerBucketSections(t *testing.T) {
 }
 
 func TestDetailedDryRun_TruncatesLongBody(t *testing.T) {
+	t.Parallel()
+
 	long := strings.Repeat("x", 200)
 	b := pushBuckets{Postable: []scopedComment{{
 		Path: "a.go", Comment: Comment{EndLine: 1, Body: long},
@@ -347,6 +383,8 @@ func TestDetailedDryRun_TruncatesLongBody(t *testing.T) {
 }
 
 func TestBucketsToGHComments_ShapesCorrectly(t *testing.T) {
+	t.Parallel()
+
 	postable := []scopedComment{
 		{Path: "a.go", Comment: Comment{StartLine: 3, EndLine: 3, Body: "single"}},
 		{Path: "b.go", Comment: Comment{StartLine: 5, EndLine: 8, Body: "range"}},
@@ -373,6 +411,8 @@ func TestBucketsToGHComments_ShapesCorrectly(t *testing.T) {
 }
 
 func TestBucketsToGHComments_EmptyInput(t *testing.T) {
+	t.Parallel()
+
 	if got := bucketsToGHComments(nil, nil); got != nil {
 		t.Errorf("nil input should return nil, got %+v", got)
 	}
@@ -385,6 +425,8 @@ func TestBucketsToGHComments_EmptyInput(t *testing.T) {
 // "view in Crit" placeholder. Verifies the body sent to GitHub doesn't
 // leak relative attachments/<uuid> paths.
 func TestBucketsToGHComments_StripsLocalAttachmentRefsByDefault(t *testing.T) {
+	t.Parallel()
+
 	uuid, _ := randomUUID()
 	body := "look at this:\n\n![](attachments/" + uuid + ".png)\n\nthoughts?"
 	postable := []scopedComment{{
@@ -409,6 +451,8 @@ func TestBucketsToGHComments_StripsLocalAttachmentRefsByDefault(t *testing.T) {
 // production scenario — production passes stripBodyRewriter — but the
 // rewriter parameter is part of the function's contract.
 func TestBucketsToGHComments_SwapsLocalAttachmentRefsWhenUpload(t *testing.T) {
+	t.Parallel()
+
 	uuid, _ := randomUUID()
 	body := "look at this:\n\n![bug.png](attachments/" + uuid + ".png)\n\nthoughts?"
 	swap := func(b string) string {
@@ -438,6 +482,8 @@ func TestBucketsToGHComments_SwapsLocalAttachmentRefsWhenUpload(t *testing.T) {
 }
 
 func TestBucketComments_ReviewLevelSurfaced(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "",
 		ReviewComments: []Comment{
@@ -458,6 +504,8 @@ func TestBucketComments_ReviewLevelSurfaced(t *testing.T) {
 }
 
 func TestSummarizeBuckets_AppendsReviewLevelOnlyWhenPresent(t *testing.T) {
+	t.Parallel()
+
 	withRL := pushBuckets{
 		Postable:    make([]scopedComment, 1),
 		ReviewLevel: make([]scopedComment, 3),
@@ -475,6 +523,8 @@ func TestSummarizeBuckets_AppendsReviewLevelOnlyWhenPresent(t *testing.T) {
 }
 
 func TestDetailedDryRun_ReviewLevelSection(t *testing.T) {
+	t.Parallel()
+
 	b := pushBuckets{
 		ReviewLevel: []scopedComment{{
 			Comment: Comment{ID: "r1", Body: "ship it but..."},
@@ -491,6 +541,8 @@ func TestDetailedDryRun_ReviewLevelSection(t *testing.T) {
 }
 
 func TestRenderOrphanMarkdown_IncludesReviewLevel(t *testing.T) {
+	t.Parallel()
+
 	b := pushBuckets{
 		ReviewLevel: []scopedComment{{
 			Comment: Comment{Body: "general note"},
@@ -510,6 +562,8 @@ func TestRenderOrphanMarkdown_IncludesReviewLevel(t *testing.T) {
 // stable (sorted by path) so dry-run output and export files diff cleanly
 // across runs.
 func TestBucketComments_DeterministicOrder(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ActiveDiffScope: "layer",
 		Files: map[string]CritJSONFile{
@@ -539,6 +593,8 @@ func TestBucketComments_DeterministicOrder(t *testing.T) {
 // scope and unset (working tree) do not. The gate message wording is locked
 // down by test/shell/test-diff.sh Instance 6, so verify it here too.
 func TestPushBlockedByFullStackScope(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		scope string
 		want  bool
@@ -559,6 +615,8 @@ func TestPushBlockedByFullStackScope(t *testing.T) {
 }
 
 func TestBucketComments_DOMAnchorFiltered(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"/dashboard": {Comments: []Comment{

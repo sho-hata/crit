@@ -7,6 +7,8 @@ import (
 )
 
 func TestFromScope_SplitsIndexedAndIgnored(t *testing.T) {
+	t.Parallel()
+
 	scope := session.StoryScope{
 		BaseSHA:        "base",
 		HeadSHA:        "head",

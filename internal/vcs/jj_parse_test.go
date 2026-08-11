@@ -3,6 +3,8 @@ package vcs
 import "testing"
 
 func TestParseJJDiffSummary(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -28,6 +30,8 @@ func TestParseJJDiffSummary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := parseJJDiffSummary(tt.input)
 			assertFileChangesEqual(t, got, tt.want)
 		})
@@ -35,6 +39,8 @@ func TestParseJJDiffSummary(t *testing.T) {
 }
 
 func TestParseJJDiffStat(t *testing.T) {
+	t.Parallel()
+
 	got := parseSaplingDiffStat("app.go  | 2 +-\nnew.txt | 1 +\n2 files changed, 2 insertions(+), 1 deletion(-)")
 	want := map[string]NumstatEntry{
 		"app.go":  {Additions: 1, Deletions: 1},

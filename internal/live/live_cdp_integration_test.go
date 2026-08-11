@@ -20,6 +20,8 @@ import (
 )
 
 func TestLiveCDPIntegration_FetchCookiesFromChrome(t *testing.T) {
+	t.Parallel()
+
 	chromeBin := findChromeBinary(t)
 	if chromeBin == "" {
 		t.Skip("Chrome/Chromium not found; set CHROME_BIN to run CDP integration tests")
@@ -167,6 +169,8 @@ func cdpSetCookie(ctx context.Context, cdpBaseURL, originURL, name, value string
 }
 
 func TestLiveCDPIntegration_SmokeUsesFetchedCookies(t *testing.T) {
+	t.Parallel()
+
 	chromeBin := findChromeBinary(t)
 	if chromeBin == "" {
 		t.Skip("Chrome/Chromium not found; set CHROME_BIN to run CDP integration tests")

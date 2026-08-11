@@ -10,6 +10,8 @@ import (
 )
 
 func TestParseNameStatus(t *testing.T) {
+	t.Parallel()
+
 	input := "M\tserver.go\nA\tnew.go\nD\told.go\nR100\told_name.go\tnew_name.go"
 	changes := parseNameStatus(input)
 
@@ -31,6 +33,8 @@ func TestParseNameStatus(t *testing.T) {
 }
 
 func TestParseNameStatus_Empty(t *testing.T) {
+	t.Parallel()
+
 	changes := parseNameStatus("")
 	if len(changes) != 0 {
 		t.Errorf("expected 0 changes, got %d", len(changes))
@@ -38,6 +42,8 @@ func TestParseNameStatus_Empty(t *testing.T) {
 }
 
 func TestDedup(t *testing.T) {
+	t.Parallel()
+
 	input := []FileChange{
 		{Path: "a.go", Status: "modified"},
 		{Path: "b.go", Status: "added"},
@@ -53,6 +59,8 @@ func TestDedup(t *testing.T) {
 }
 
 func TestParseUnifiedDiff_Simple(t *testing.T) {
+	t.Parallel()
+
 	diff := `diff --git a/file.go b/file.go
 index abc..def 100644
 --- a/file.go
@@ -101,6 +109,8 @@ index abc..def 100644
 }
 
 func TestParseUnifiedDiff_MultipleHunks(t *testing.T) {
+	t.Parallel()
+
 	diff := `--- a/file.go
 +++ b/file.go
 @@ -1,3 +1,3 @@
@@ -124,6 +134,8 @@ func TestParseUnifiedDiff_MultipleHunks(t *testing.T) {
 }
 
 func TestParseUnifiedDiff_Empty(t *testing.T) {
+	t.Parallel()
+
 	hunks := ParseUnifiedDiff("")
 	if len(hunks) != 0 {
 		t.Errorf("expected 0 hunks, got %d", len(hunks))
@@ -131,6 +143,8 @@ func TestParseUnifiedDiff_Empty(t *testing.T) {
 }
 
 func TestParseUnifiedDiff_LineNumbers(t *testing.T) {
+	t.Parallel()
+
 	diff := `--- a/file.go
 +++ b/file.go
 @@ -5,4 +5,5 @@
@@ -168,6 +182,8 @@ func TestParseUnifiedDiff_LineNumbers(t *testing.T) {
 }
 
 func TestFileDiffUnifiedNewFile(t *testing.T) {
+	t.Parallel()
+
 	content := "line1\nline2\nline3\n"
 	hunks := FileDiffUnifiedNewFile(content)
 	if len(hunks) != 1 {
@@ -194,6 +210,8 @@ func TestFileDiffUnifiedNewFile(t *testing.T) {
 }
 
 func TestFileDiffUnifiedNewFile_Empty(t *testing.T) {
+	t.Parallel()
+
 	hunks := FileDiffUnifiedNewFile("")
 	if len(hunks) != 0 {
 		t.Errorf("expected 0 hunks for empty content, got %d", len(hunks))
@@ -954,6 +972,8 @@ func TestFileDiffScoped_DifferentHunksPerScope(t *testing.T) {
 // without a leading space, e.g. when diff.suppressBlankEmpty is set) are
 // correctly treated as context lines and don't desync line numbers.
 func TestParseUnifiedDiff_BlankContextLines(t *testing.T) {
+	t.Parallel()
+
 	// Simulate a diff where blank context lines have no leading space.
 	// This happens when git's diff.suppressBlankEmpty config is true,
 	// or with some git versions that strip trailing whitespace from blank lines.
@@ -1086,6 +1106,8 @@ func TestFileDiff_SuppressBlankEmpty(t *testing.T) {
 // TestParseUnifiedDiff_BlankContextAtEndOfHunk verifies that a bare blank
 // context line at the very end of a hunk is correctly consumed.
 func TestParseUnifiedDiff_BlankContextAtEndOfHunk(t *testing.T) {
+	t.Parallel()
+
 	// Hunk: line1 (ctx), old (del), new (add), blank-at-end (ctx).
 	// A second hunk follows so the blank line isn't the last thing in the
 	// diff string (TrimRight would eat it otherwise).
@@ -1116,6 +1138,8 @@ func TestParseUnifiedDiff_BlankContextAtEndOfHunk(t *testing.T) {
 // TestParseUnifiedDiff_ConsecutiveBlankContextLines verifies that multiple
 // consecutive bare blank lines are each treated as context lines.
 func TestParseUnifiedDiff_ConsecutiveBlankContextLines(t *testing.T) {
+	t.Parallel()
+
 	// Hunk with two consecutive blank context lines between content.
 	// line1 (ctx), blank (ctx), blank (ctx), old (del), new (add), line5 (ctx)
 	diff := "--- a/f.txt\n+++ b/f.txt\n@@ -1,5 +1,5 @@\n line1\n\n\n-old\n+new\n line5\n"
@@ -1156,6 +1180,8 @@ func TestParseUnifiedDiff_ConsecutiveBlankContextLines(t *testing.T) {
 // TestParseUnifiedDiff_MultipleHunksWithBlankLines verifies that blank context
 // lines in multiple hunks are each handled independently.
 func TestParseUnifiedDiff_MultipleHunksWithBlankLines(t *testing.T) {
+	t.Parallel()
+
 	// Two hunks, each containing a bare blank context line.
 	diff := "--- a/f.txt\n+++ b/f.txt\n" +
 		"@@ -1,4 +1,4 @@\n line1\n\n-old1\n+new1\n line4\n" +
@@ -1200,6 +1226,8 @@ func TestParseUnifiedDiff_MultipleHunksWithBlankLines(t *testing.T) {
 }
 
 func TestCommitLog(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	// Record the main branch commit as base ref
@@ -1254,6 +1282,8 @@ func TestCommitLog(t *testing.T) {
 }
 
 func TestCommitLogEmpty(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	// Empty baseRef should return nil
@@ -1267,6 +1297,8 @@ func TestCommitLogEmpty(t *testing.T) {
 }
 
 func TestCommitLog_BetweenSHAs(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	baseRef := testutil.Git(t, dir, "rev-parse", "HEAD")
 
@@ -1320,6 +1352,8 @@ func TestCommitLog_BetweenSHAs(t *testing.T) {
 }
 
 func TestChangedFilesForCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	// Create a feature branch with two commits
@@ -1359,6 +1393,8 @@ func TestChangedFilesForCommit(t *testing.T) {
 }
 
 func TestFileDiffForCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	// Create a feature branch and commit a file
@@ -1394,6 +1430,8 @@ func TestFileDiffForCommit(t *testing.T) {
 }
 
 func TestAllTrackedFiles_RealRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.WriteFile(t, filepath.Join(dir, "src/main.go"), "package main")
 	testutil.WriteFile(t, filepath.Join(dir, "src/util.go"), "package main")
@@ -1423,6 +1461,8 @@ func TestAllTrackedFiles_RealRepo(t *testing.T) {
 }
 
 func TestAllTrackedFiles_IncludesUntracked(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.WriteFile(t, filepath.Join(dir, "new.txt"), "hello")
 
@@ -1443,6 +1483,8 @@ func TestAllTrackedFiles_IncludesUntracked(t *testing.T) {
 }
 
 func TestAllTrackedFiles_ExcludesGitignored(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.WriteFile(t, filepath.Join(dir, ".gitignore"), "*.log\nbuild/\n")
 	testutil.WriteFile(t, filepath.Join(dir, "app.log"), "log data")
@@ -1464,6 +1506,8 @@ func TestAllTrackedFiles_ExcludesGitignored(t *testing.T) {
 }
 
 func TestWalkFiles_BasicDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(dir, "file1.txt"), "hello")
 	testutil.WriteFile(t, filepath.Join(dir, "sub/file2.go"), "package sub")
@@ -1490,6 +1534,8 @@ func TestWalkFiles_BasicDirectory(t *testing.T) {
 }
 
 func TestWalkFiles_SkipsHiddenDirs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(dir, ".git/config"), "git config")
 	testutil.WriteFile(t, filepath.Join(dir, ".hidden/secret"), "shh")
@@ -1511,6 +1557,8 @@ func TestWalkFiles_SkipsHiddenDirs(t *testing.T) {
 }
 
 func TestWalkFiles_DotPrefixedRoot(t *testing.T) {
+	t.Parallel()
+
 	parent := t.TempDir()
 	dir := filepath.Join(parent, ".dotfiles")
 	testutil.WriteFile(t, filepath.Join(dir, "bashrc"), "alias ls='ls -la'")
@@ -1526,6 +1574,8 @@ func TestWalkFiles_DotPrefixedRoot(t *testing.T) {
 }
 
 func TestWalkFiles_SkipsNodeModules(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(dir, "index.js"), "console.log('hi')")
 	testutil.WriteFile(t, filepath.Join(dir, "node_modules/pkg/index.js"), "module")
@@ -1543,6 +1593,8 @@ func TestWalkFiles_SkipsNodeModules(t *testing.T) {
 }
 
 func TestDiffNumstat(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	testutil.WriteFile(t, filepath.Join(dir, "stats.go"), "package main\n\nfunc hello() {}\n")
@@ -1574,6 +1626,8 @@ func TestDiffNumstat(t *testing.T) {
 }
 
 func TestDiffNumstatBetweenSHAs(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	testutil.WriteFile(t, filepath.Join(dir, "stats.go"), "package main\n\nfunc hello() {}\n")
@@ -1612,6 +1666,8 @@ func TestDiffNumstatBetweenSHAs(t *testing.T) {
 }
 
 func TestDiffNumstatBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	testutil.WriteFile(t, filepath.Join(dir, "notes.txt"), "hello\n")
@@ -1638,6 +1694,8 @@ func TestDiffNumstatBinary(t *testing.T) {
 }
 
 func TestFileDiffForCommit_RootCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	// Get the initial (root) commit SHA.
 	sha := testutil.Git(t, dir, "rev-parse", "HEAD")
@@ -1652,6 +1710,8 @@ func TestFileDiffForCommit_RootCommit(t *testing.T) {
 }
 
 func TestFileDiffForCommit_NormalCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.WriteFile(t, filepath.Join(dir, "README.md"), "# Test\n\nUpdated content\n")
 	testutil.Git(t, dir, "add", "README.md")
@@ -1668,6 +1728,8 @@ func TestFileDiffForCommit_NormalCommit(t *testing.T) {
 }
 
 func TestFileDiffForCommit_FileNotInCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.WriteFile(t, filepath.Join(dir, "other.go"), "package main")
 	testutil.Git(t, dir, "add", "other.go")

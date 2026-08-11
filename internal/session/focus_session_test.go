@@ -13,6 +13,8 @@ import (
 )
 
 func TestPersistActiveDiffScope_RoundTrips(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{RepoRoot: dir, OutputDir: dir}
 
@@ -38,6 +40,8 @@ func TestPersistActiveDiffScope_RoundTrips(t *testing.T) {
 }
 
 func TestSetFocus_Range_RebuildsFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	commitAt(t, dir, "added.txt", "y\n", "add y")
@@ -79,6 +83,8 @@ func TestSetFocus_Range_RebuildsFiles(t *testing.T) {
 // behavior: after SetSession marks the session started, switching focus
 // must keep comments visible on the new file list.
 func TestSetFocus_PostSetSession_PreservesComments(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	commitAt(t, dir, "added.txt", "first\nsecond\n", "add file")
@@ -153,6 +159,8 @@ func TestSetFocus_PostSetSession_PreservesComments(t *testing.T) {
 }
 
 func TestSetFocus_FullStackRequiresDefaultSHA(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:  dir,
@@ -166,6 +174,8 @@ func TestSetFocus_FullStackRequiresDefaultSHA(t *testing.T) {
 }
 
 func TestSetFocus_WorkingTree_ClearsActiveDiffScope(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	commitAt(t, dir, "x.txt", "x\n", "x")
@@ -200,6 +210,8 @@ func TestSetFocus_WorkingTree_ClearsActiveDiffScope(t *testing.T) {
 // transitioning OUT of a range focus stashes the prior range Focus on the
 // session so the UI can render a "Resume PR" affordance.
 func TestSetFocus_RangeToWorkingTree_StashesLastRangeFocus(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	commitAt(t, dir, "x.txt", "x\n", "x")
@@ -232,6 +244,8 @@ func TestSetFocus_RangeToWorkingTree_StashesLastRangeFocus(t *testing.T) {
 // Range focus with many files must apply lazyFileThreshold and populate
 // sidebar +/- stats (same contract as working-tree rebuild).
 func TestSetFocus_Range_AppliesLazyThreshold(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 
@@ -280,6 +294,8 @@ func TestSetFocus_Range_AppliesLazyThreshold(t *testing.T) {
 
 // Lazy range files must load HeadSHA content, not a dirty working tree.
 func TestGetFileSnapshot_RangeLazy_UsesHeadSHANotWorkingTree(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 
@@ -338,6 +354,8 @@ func TestGetFileSnapshot_RangeLazy_UsesHeadSHANotWorkingTree(t *testing.T) {
 
 // Lazy range modified files must load between-SHA diffs, not working-tree diffs.
 func TestGetFileDiffSnapshot_RangeLazy_UsesBetweenSHADiff(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 
 	total := lazyFileThreshold + 1
@@ -417,6 +435,8 @@ func TestGetFileDiffSnapshot_RangeLazy_UsesBetweenSHADiff(t *testing.T) {
 
 // Deleted lazy range files load without reading HeadSHA content.
 func TestGetFileSnapshot_RangeLazy_Deleted(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 
 	total := lazyFileThreshold + 1
@@ -480,6 +500,8 @@ func TestGetFileSnapshot_RangeLazy_Deleted(t *testing.T) {
 }
 
 func TestEnsureFileLoaded_NilAndNonLazy(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{Focus: Focus{Kind: FocusWorkingTree}}
 	if err := s.ensureFileLoaded(nil); err != nil {
 		t.Fatalf("nil file: %v", err)
@@ -494,6 +516,8 @@ func TestEnsureFileLoaded_NilAndNonLazy(t *testing.T) {
 }
 
 func TestEnsureFileLoaded_WorkingTreeLazy(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	path := filepath.Join(dir, "lazy.md")
@@ -562,6 +586,8 @@ func TestEnsureLoadedAtRange_RemoteErrorAndNilContent(t *testing.T) {
 }
 
 func TestEnsureLoadedAtRange_ModifiedRequiresVCS(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	writeFile(t, filepath.Join(dir, "m.md"), "# base\n")
 	gitT(t, dir, "add", "m.md")
@@ -586,6 +612,8 @@ func TestEnsureLoadedAtRange_ModifiedRequiresVCS(t *testing.T) {
 }
 
 func TestEnsureLoadedAtRange_AlreadyLoadedNoop(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{Focus: Focus{Kind: FocusRange, BaseSHA: "a", HeadSHA: "b"}}
 	fe := &FileEntry{Path: "x.md", Status: "added", Lazy: false, Content: "kept"}
 	if err := fe.ensureLoadedAtRange(s, s.Focus, "", nil); err != nil {
@@ -597,6 +625,8 @@ func TestEnsureLoadedAtRange_AlreadyLoadedNoop(t *testing.T) {
 }
 
 func TestPopulateLazyFile_DiskFallbackFlag(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.md")
 	writeFile(t, path, "one\ntwo\nthree\n")

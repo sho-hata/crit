@@ -10,6 +10,8 @@ import (
 // reply-filter helper: a reply authored in R2 must be hidden when viewing R1,
 // while replies at or before R1 must be retained.
 func TestRepliesAtOrBeforeRound_HidesFutureReplies(t *testing.T) {
+	t.Parallel()
+
 	parentRound := 1
 	replies := []Reply{
 		{ID: "rp1", ReviewRound: 1},
@@ -25,6 +27,8 @@ func TestRepliesAtOrBeforeRound_HidesFutureReplies(t *testing.T) {
 // TestRepliesAtOrBeforeRound_VisibleAtOwnRound: a reply authored at R1 is
 // visible when viewing R1.
 func TestRepliesAtOrBeforeRound_VisibleAtOwnRound(t *testing.T) {
+	t.Parallel()
+
 	got := repliesAtOrBeforeRound([]Reply{{ID: "rp1", ReviewRound: 1}}, 1, 1)
 	if len(got) != 1 {
 		t.Fatalf("reply at own round must be visible, got %+v", got)
@@ -36,6 +40,8 @@ func TestRepliesAtOrBeforeRound_VisibleAtOwnRound(t *testing.T) {
 // field existed) inherits its parent's round. So a legacy reply on a
 // parent authored at R1 is visible from R1 onward.
 func TestRepliesAtOrBeforeRound_LegacyFallsBackToParent(t *testing.T) {
+	t.Parallel()
+
 	replies := []Reply{{ID: "rp_legacy"}} // ReviewRound == 0
 	if got := repliesAtOrBeforeRound(replies, 1, 1); len(got) != 1 {
 		t.Errorf("legacy reply on R1 parent must be visible at R1, got %+v", got)
@@ -55,6 +61,8 @@ func TestRepliesAtOrBeforeRound_LegacyFallsBackToParent(t *testing.T) {
 // TestRepliesAtOrBeforeRound_Chain: a multi-round reply chain on the same
 // parent should be progressively revealed as the viewer scrubs forward.
 func TestRepliesAtOrBeforeRound_Chain(t *testing.T) {
+	t.Parallel()
+
 	replies := []Reply{
 		{ID: "rp1", ReviewRound: 1},
 		{ID: "rp2", ReviewRound: 2},
@@ -75,6 +83,8 @@ func TestRepliesAtOrBeforeRound_Chain(t *testing.T) {
 // TestCommentsAtOrBeforeRound_FiltersFutureReplies: the top-level filter
 // keeps R1 parents but drops their R2 replies when scoping to round=1.
 func TestCommentsAtOrBeforeRound_FiltersFutureReplies(t *testing.T) {
+	t.Parallel()
+
 	cs := []Comment{
 		{
 			ID:          "c1",
@@ -101,6 +111,8 @@ func TestCommentsAtOrBeforeRound_FiltersFutureReplies(t *testing.T) {
 // TestReply_RoundTripJSON guards that the new ReviewRound field round-trips
 // cleanly through encoding/json with the expected wire name and omitempty.
 func TestReply_RoundTripJSON(t *testing.T) {
+	t.Parallel()
+
 	in := Reply{ID: "rp1", Body: "hi", CreatedAt: "now", ReviewRound: 2}
 	data, err := json.Marshal(in)
 	if err != nil {
@@ -127,6 +139,8 @@ func TestReply_RoundTripJSON(t *testing.T) {
 // TestSession_AddReply_StampsReviewRound: the in-memory reply-add path must
 // stamp the current Session.ReviewRound onto the reply.
 func TestSession_AddReply_StampsReviewRound(t *testing.T) {
+	t.Parallel()
+
 	sess := NewTestSession(t)
 	sess.Files[0].Comments = []Comment{{ID: "c1", ReviewRound: 1}}
 	sess.ReviewRound = 3
@@ -146,6 +160,8 @@ func TestSession_AddReply_StampsReviewRound(t *testing.T) {
 // TestSession_AddReviewCommentReply_StampsReviewRound mirrors the file-comment
 // test for review-level comments.
 func TestSession_AddReviewCommentReply_StampsReviewRound(t *testing.T) {
+	t.Parallel()
+
 	sess := NewTestSession(t)
 	sess.ReviewRound = 5
 	parent := sess.AddReviewComment("parent body", "alice", "")

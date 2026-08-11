@@ -6,6 +6,8 @@ import (
 )
 
 func TestCommentScopeOverrideFromFlag(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in      string
 		want    CommentFocusOverride
@@ -24,6 +26,8 @@ func TestCommentScopeOverrideFromFlag(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := CommentScopeOverrideFromFlag(c.in)
 			if c.wantErr {
 				if err == nil {

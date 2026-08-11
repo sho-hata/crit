@@ -6,6 +6,8 @@ import (
 )
 
 func TestIsLoopbackHost(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		host string
 		want bool
@@ -26,6 +28,8 @@ func TestIsLoopbackHost(t *testing.T) {
 }
 
 func TestNeedsUnauthenticatedNetworkAck(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		host, publicURL string
 		want            bool
@@ -66,6 +70,8 @@ func TestEnvAllowsUnauthenticatedNetwork(t *testing.T) {
 }
 
 func TestErrUnauthenticatedNetwork(t *testing.T) {
+	t.Parallel()
+
 	err := ErrUnauthenticatedNetwork("0.0.0.0", "")
 	msg := err.Error()
 	for _, want := range []string{

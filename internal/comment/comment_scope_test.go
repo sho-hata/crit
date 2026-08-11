@@ -41,6 +41,8 @@ func writeReviewFileWithScope(t *testing.T, dir, scope string) {
 }
 
 func TestLoadCritJSONForOutputDir(t *testing.T) {
+	t.Parallel()
+
 	outputDir := t.TempDir()
 	writeReviewFileWithScope(t, outputDir, "layer")
 

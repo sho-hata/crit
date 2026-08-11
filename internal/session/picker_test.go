@@ -7,6 +7,8 @@ import (
 )
 
 func TestResolveDefaultBranchSHA_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	want := vcs.GitRun(t, dir, "rev-parse", "HEAD")
 	got, err := vcs.ResolveDefaultBranchSHA(&vcs.GitVCS{}, dir, "main")
@@ -19,12 +21,16 @@ func TestResolveDefaultBranchSHA_Git(t *testing.T) {
 }
 
 func TestResolveDefaultBranchSHA_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	if _, err := vcs.ResolveDefaultBranchSHA(nil, "", "main"); err == nil {
 		t.Fatal("expected error for nil vcs")
 	}
 }
 
 func TestWalkAncestors_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	vcs.CommitAtForTest(t, dir, "a.txt", "1", "a")
 	vcs.CommitAtForTest(t, dir, "b.txt", "2", "b")
@@ -39,6 +45,8 @@ func TestWalkAncestors_Git(t *testing.T) {
 }
 
 func TestLocalBranchTips_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	vcs.CommitAtForTest(t, dir, "a.txt", "x", "a")
 	headBeforeBranch := vcs.GitRun(t, dir, "rev-parse", "HEAD")
@@ -61,6 +69,8 @@ func TestLocalBranchTips_Git(t *testing.T) {
 }
 
 func TestRemoteBranchTips_Git_ExcludesDefault(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	headSHA := vcs.GitRun(t, dir, "rev-parse", "HEAD")
 	vcs.GitRun(t, dir, "update-ref", "refs/remotes/origin/feat-x", headSHA)

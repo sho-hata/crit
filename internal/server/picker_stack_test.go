@@ -8,6 +8,8 @@ import (
 )
 
 func TestDetectStack_ExcludesStaleBranchesBeforeMergeBase(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	m1 := vcs.CommitAtForTest(t, dir, "m1.txt", "1", "m1")
 	vcs.GitRun(t, dir, "branch", "old", m1)
@@ -43,6 +45,8 @@ func TestDetectStack_ExcludesStaleBranchesBeforeMergeBase(t *testing.T) {
 }
 
 func TestDetectStack_IncludesPostMergeBaseBranchTips(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	vcs.CommitAtForTest(t, dir, "m.txt", "m", "m")
 	vcs.GitRun(t, dir, "checkout", "-b", "feat")
@@ -69,6 +73,8 @@ func TestDetectStack_IncludesPostMergeBaseBranchTips(t *testing.T) {
 }
 
 func TestDetectStack_DropsNakedCommitsBehindBranch(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	vcs.GitRun(t, dir, "checkout", "-b", "staging")
 	vcs.CommitAtForTest(t, dir, "n1.txt", "n1", "[ABC-100] noise one")
@@ -108,6 +114,8 @@ func TestDetectStack_DropsNakedCommitsBehindBranch(t *testing.T) {
 }
 
 func TestDetectStack_KeepsNakedCommitsAheadOfNearestBranch(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	vcs.CommitAtForTest(t, dir, "m.txt", "m", "main")
 	vcs.GitRun(t, dir, "checkout", "-b", "feat")
@@ -139,6 +147,8 @@ func TestDetectStack_KeepsNakedCommitsAheadOfNearestBranch(t *testing.T) {
 }
 
 func TestDetectStack_DefaultBranchAsRoot(t *testing.T) {
+	t.Parallel()
+
 	dir := vcs.InitTestRepo(t)
 	vcs.CommitAtForTest(t, dir, "m1.txt", "1", "m1")
 	mergeBase := vcs.GitRun(t, dir, "rev-parse", "HEAD")

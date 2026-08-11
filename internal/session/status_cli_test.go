@@ -365,6 +365,8 @@ func TestRunStatusFindsRepoRootSessionFromNestedDirectory(t *testing.T) {
 }
 
 func TestSelectStatusSession(t *testing.T) {
+	t.Parallel()
+
 	if got := selectStatusSession(nil); got != nil {
 		t.Fatalf("empty = %#v, want nil", got)
 	}
@@ -506,6 +508,8 @@ func TestPrintStatusJSONAmbiguousAndSole(t *testing.T) {
 }
 
 func TestStatusSessionsJSONTruncatesWhenKeysShort(t *testing.T) {
+	t.Parallel()
+
 	got := statusSessionsJSON(
 		[]daemon.SessionEntry{{Args: []string{"one"}}, {Args: []string{"two"}}},
 		[]string{"aaaaaaaaaaaa"},

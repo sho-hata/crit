@@ -11,6 +11,8 @@ import (
 var _ VCS = &JJVCS{}
 
 func TestJJVCS_Name(t *testing.T) {
+	t.Parallel()
+
 	j := &JJVCS{}
 	if got := j.Name(); got != "jj" {
 		t.Errorf("Name() = %q, want %q", got, "jj")
@@ -18,6 +20,8 @@ func TestJJVCS_Name(t *testing.T) {
 }
 
 func TestJJVCS_HasStagingArea(t *testing.T) {
+	t.Parallel()
+
 	j := &JJVCS{}
 	if j.HasStagingArea() {
 		t.Error("HasStagingArea() = true, want false")
@@ -25,6 +29,8 @@ func TestJJVCS_HasStagingArea(t *testing.T) {
 }
 
 func TestJJVCS_SkipDirNames(t *testing.T) {
+	t.Parallel()
+
 	j := &JJVCS{}
 	dirs := j.SkipDirNames()
 	want := map[string]bool{".jj": true, ".git": true}
@@ -39,6 +45,8 @@ func TestJJVCS_SkipDirNames(t *testing.T) {
 }
 
 func TestJJVCS_DefaultBranchOverride(t *testing.T) {
+	t.Parallel()
+
 	j := &JJVCS{}
 	j.SetDefaultBranchOverride("develop")
 	if got := j.GetDefaultBranchOverride(); got != "develop" {
@@ -50,6 +58,8 @@ func TestJJVCS_DefaultBranchOverride(t *testing.T) {
 }
 
 func TestHasJJDirFrom_DetectsDotJJ(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	child := filepath.Join(root, "nested", "repo")
 	if err := os.MkdirAll(filepath.Join(root, ".jj"), 0o755); err != nil {
@@ -64,6 +74,8 @@ func TestHasJJDirFrom_DetectsDotJJ(t *testing.T) {
 }
 
 func TestDetectVCS_JJOverride(t *testing.T) {
+	t.Parallel()
+
 	v := DetectVCS("jj")
 	if _, hasJJ := exec.LookPath("jj"); hasJJ == nil {
 		if _, ok := v.(*JJVCS); !ok {
@@ -108,6 +120,8 @@ func TestJJVCS_DefaultBaseRefFallsBackToLocalMainWhenTrunkIsRoot(t *testing.T) {
 }
 
 func TestJJVCS_ChangedFilesAndDiffFromBase(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	base := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
@@ -137,6 +151,8 @@ func TestJJVCS_ChangedFilesAndDiffFromBase(t *testing.T) {
 }
 
 func TestJJVCS_ReadFileAtSHA(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	sha := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")

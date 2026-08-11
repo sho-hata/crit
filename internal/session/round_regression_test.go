@@ -14,6 +14,8 @@ import (
 // must live exclusively in <folder>/snapshots.json so that AI agents reading
 // review.json never load megabytes of historical file content.
 func TestReviewFile_DoesNotContainRoundSnapshots(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.RoundSnapshots = map[string]map[int]RoundSnapshot{
 		"plan.md": {
@@ -49,6 +51,8 @@ func TestReviewFile_DoesNotContainRoundSnapshots(t *testing.T) {
 // a user clearing all comments mid-session would silently lose every
 // captured round.
 func TestWriteFiles_EmptyDoesNotDeleteSidecar(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(planPath, []byte("hello\n"), 0o644); err != nil {

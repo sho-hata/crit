@@ -8,6 +8,8 @@ import (
 )
 
 func TestProcessBulkLineComment(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name      string
 		entry     BulkCommentEntry
@@ -63,6 +65,8 @@ func TestProcessBulkLineComment(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			cj := &session.CritJSON{Files: map[string]session.CritJSONFile{}}
 			err := processBulkLineComment(cj, 0, c.entry, "f.go", "alice", "u1", session.InheritedScope{})
 			if c.wantErr != "" {
@@ -92,6 +96,8 @@ func TestProcessBulkLineComment(t *testing.T) {
 // character, so without the explicit replacement a key like "subdir\file.go"
 // would survive into the review file as a single path component.
 func TestProcessBulkFileOrLineEntryNormalizesBackslashes(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		input   string
@@ -104,6 +110,8 @@ func TestProcessBulkFileOrLineEntryNormalizesBackslashes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			cj := &session.CritJSON{Files: map[string]session.CritJSONFile{}}
 			entry := BulkCommentEntry{File: c.input, Body: "x", Line: 1}
 			if err := processBulkFileOrLineEntry(cj, 0, entry, "alice", "u1", session.InheritedScope{}); err != nil {
@@ -121,6 +129,8 @@ func TestProcessBulkFileOrLineEntryNormalizesBackslashes(t *testing.T) {
 // even when the check runs on Unix, where filepath.Clean treats backslash
 // as a literal and would pass the raw input through isAbsoluteOrTraversal.
 func TestProcessBulkFileOrLineEntryRejectsBackslashTraversal(t *testing.T) {
+	t.Parallel()
+
 	cases := []string{
 		`subdir\..\..\etc\passwd`,
 		`..\etc\passwd`,

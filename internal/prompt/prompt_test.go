@@ -11,6 +11,8 @@ import (
 )
 
 func TestLookupPrompt_ModeFallback(t *testing.T) {
+	t.Parallel()
+
 	prompts := map[string]string{
 		"on_finish_unresolved":      "inline:generic",
 		"on_finish_unresolved:diff": "inline:diff-specific",
@@ -24,6 +26,8 @@ func TestLookupPrompt_ModeFallback(t *testing.T) {
 }
 
 func TestPromptMode(t *testing.T) {
+	t.Parallel()
+
 	if got := prompt.PromptMode("live", "git"); got != "live" {
 		t.Fatalf("live = %q", got)
 	}
@@ -36,6 +40,8 @@ func TestPromptMode(t *testing.T) {
 }
 
 func TestDiscoverPromptFile_ModeSpecific(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	promptsDir := filepath.Join(dir, ".crit", "prompts")
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
@@ -54,6 +60,8 @@ func TestDiscoverPromptFile_ModeSpecific(t *testing.T) {
 }
 
 func TestRenderFinish_DiscoveredProjectFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	promptsDir := filepath.Join(dir, ".crit", "prompts")
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
@@ -78,6 +86,8 @@ func TestRenderFinish_DiscoveredProjectFile(t *testing.T) {
 }
 
 func TestRenderFinish_DefaultUnchanged(t *testing.T) {
+	t.Parallel()
+
 	ctx := prompt.Context{
 		ReviewPath:             "/tmp/review.json",
 		CommentsCmd:            "crit comments --json '/tmp/review.json'",
@@ -105,6 +115,8 @@ func TestRenderFinish_DefaultUnchanged(t *testing.T) {
 }
 
 func TestRenderFinish_StoryUsesUserStoryPromptFirst(t *testing.T) {
+	t.Parallel()
+
 	project := map[string]string{
 		"on_finish_unresolved":       "inline:GENERIC",
 		"on_finish_unresolved:diff":  "inline:DIFF",
@@ -126,6 +138,8 @@ func TestRenderFinish_StoryUsesUserStoryPromptFirst(t *testing.T) {
 }
 
 func TestRenderFinish_StoryUsesStockBeforeGenericUserPrompt(t *testing.T) {
+	t.Parallel()
+
 	project := map[string]string{
 		"on_finish_unresolved":      "inline:GENERIC",
 		"on_finish_unresolved:diff": "inline:DIFF",
@@ -150,6 +164,8 @@ func TestRenderFinish_StoryUsesStockBeforeGenericUserPrompt(t *testing.T) {
 }
 
 func TestRenderFinish_CustomTemplate(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "custom.md")
 	if err := os.WriteFile(path, []byte("CUSTOM {{.unresolved_count}}"), 0644); err != nil {
@@ -329,6 +345,8 @@ func TestEvaluateTrust_HookUntilChangeInvalidatedByFileHookEdit(t *testing.T) {
 }
 
 func TestEvaluateTrust_DiscoveredHookSourcesFilterNonFinishScripts(t *testing.T) {
+	t.Parallel()
+
 	projectDir := t.TempDir()
 	hooksDir := filepath.Join(projectDir, ".crit", "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
@@ -367,6 +385,8 @@ func TestEvaluateTrust_DiscoveredHookSourcesFilterNonFinishScripts(t *testing.T)
 }
 
 func TestEvaluateTrust_HookFileSourcesInConfig(t *testing.T) {
+	t.Parallel()
+
 	projectDir := t.TempDir()
 	script := filepath.Join(projectDir, ".crit", "hooks", "notify.sh")
 	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {

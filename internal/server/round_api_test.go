@@ -29,6 +29,8 @@ func newRoundsTestServer(t *testing.T) (*Server, *Session) {
 }
 
 func TestHandleFileDiff_Round_FilesMode(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newRoundsTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/diff?path=test.md&round=2", nil)
 	w := httptest.NewRecorder()
@@ -54,6 +56,8 @@ func TestHandleFileDiff_Round_FilesMode(t *testing.T) {
 }
 
 func TestHandleFileDiff_Round_InvalidParam(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newRoundsTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/diff?path=test.md&round=abc", nil)
 	w := httptest.NewRecorder()
@@ -64,6 +68,8 @@ func TestHandleFileDiff_Round_InvalidParam(t *testing.T) {
 }
 
 func TestHandleFileDiff_Round_OutOfRange(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newRoundsTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/diff?path=test.md&round=99", nil)
 	w := httptest.NewRecorder()
@@ -74,6 +80,8 @@ func TestHandleFileDiff_Round_OutOfRange(t *testing.T) {
 }
 
 func TestHandleFileDiff_Round_R1NoPrevious(t *testing.T) {
+	t.Parallel()
+
 	// R1 is the baseline — no previous content; diff should be empty hunks.
 	s, _ := newRoundsTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/diff?path=test.md&round=1", nil)
@@ -93,6 +101,8 @@ func TestHandleFileDiff_Round_R1NoPrevious(t *testing.T) {
 }
 
 func TestHandleSession_Round_FilesMode(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newRoundsTestServer(t)
 	// Add an extra file that exists only in R2 (not in R1).
 	sess.Files = append(sess.Files, &FileEntry{
@@ -124,6 +134,8 @@ func TestHandleSession_Round_FilesMode(t *testing.T) {
 }
 
 func TestHandleRounds_LineStats(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newRoundsTestServer(t)
 	req := httptest.NewRequest("GET", "/api/rounds", nil)
 	w := httptest.NewRecorder()
@@ -170,6 +182,8 @@ func TestHandleRounds_LineStats(t *testing.T) {
 // requested round, this test will fail and force us to update the docs in
 // commentsAtOrBeforeRound and the corresponding Stage 2 frontend code.
 func TestCommentsAtOrBeforeRound_ResolutionStateIsCurrent(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newRoundsTestServer(t)
 	// Add a comment at R1 (the seeded session ReviewRound is 2 from the
 	// helper, so set it to 1 first to author).
@@ -218,6 +232,8 @@ func TestCommentsAtOrBeforeRound_ResolutionStateIsCurrent(t *testing.T) {
 // /api/file/comments and /api/comments silently ignored it, leaving
 // callers with two contradictory contracts.
 func TestRoundParam_RejectInvalidConsistently(t *testing.T) {
+	t.Parallel()
+
 	endpoints := []string{
 		"/api/session",
 		"/api/file?path=test.md",
@@ -247,6 +263,8 @@ func TestRoundParam_RejectInvalidConsistently(t *testing.T) {
 		for _, tc := range cases {
 			tc := tc
 			t.Run(ep+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+
 				srv, _ := newRoundsTestServer(t)
 				url := ep
 				if !tc.omit {
@@ -278,6 +296,8 @@ func TestRoundParam_RejectInvalidConsistently(t *testing.T) {
 }
 
 func TestHandleFileComments_RoundFiltersReplies(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newRoundsTestServer(t)
 	sess.Files[0].Comments = []Comment{
 		{
@@ -319,6 +339,8 @@ func TestHandleFileComments_RoundFiltersReplies(t *testing.T) {
 }
 
 func TestHandleRounds_GitMode(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newTestServer(t)
 	sess.Mode = "git"
 	req := httptest.NewRequest("GET", "/api/rounds", nil)

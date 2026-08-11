@@ -8,6 +8,8 @@ import (
 )
 
 func TestParseLineSpecExport(t *testing.T) {
+	t.Parallel()
+
 	start, end, err := ParseLineSpec("10-20")
 	if err != nil || start != 10 || end != 20 {
 		t.Fatalf("ParseLineSpec = %d-%d, %v", start, end, err)
@@ -15,6 +17,8 @@ func TestParseLineSpecExport(t *testing.T) {
 }
 
 func TestAppendCommentScoped_ReviewLevel(t *testing.T) {
+	t.Parallel()
+
 	cj := &session.CritJSON{Files: map[string]session.CritJSONFile{}}
 	AppendReviewCommentScoped(cj, "review note", "author", "", session.InheritedScope{})
 	if len(cj.ReviewComments) != 1 {
@@ -23,6 +27,8 @@ func TestAppendCommentScoped_ReviewLevel(t *testing.T) {
 }
 
 func TestAppendFileCommentScoped(t *testing.T) {
+	t.Parallel()
+
 	cj := &session.CritJSON{Files: map[string]session.CritJSONFile{}}
 	AppendFileCommentScoped(cj, "a.go", "file note", "author", "", session.InheritedScope{})
 	if len(cj.Files["a.go"].Comments) != 1 {
@@ -31,6 +37,8 @@ func TestAppendFileCommentScoped(t *testing.T) {
 }
 
 func TestProcessBulkReviewEntry_Scoped(t *testing.T) {
+	t.Parallel()
+
 	cj := &session.CritJSON{Files: map[string]session.CritJSONFile{}}
 	entry := BulkCommentEntry{Body: "overall", Scope: "review"}
 	if err := ProcessBulkReviewEntry(cj, 0, entry, "bot", "", session.InheritedScope{}); err != nil {
@@ -42,6 +50,8 @@ func TestProcessBulkReviewEntry_Scoped(t *testing.T) {
 }
 
 func TestExportWrappers_PersistComments(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	scope := session.InheritedScope{DiffScope: "layer"}
 	if err := AddReviewCommentToCritJSONScoped("review body", "bot", "", dir, scope); err != nil {

@@ -3,6 +3,8 @@ package daemon
 import "testing"
 
 func TestResolvedCWD(t *testing.T) {
+	t.Parallel()
+
 	want, err := ResolvedCWD()
 	if err != nil {
 		t.Fatal(err)

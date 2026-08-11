@@ -9,6 +9,8 @@ import (
 // is leading-whitespace/indentation produces hunks with the flag off and
 // collapses to no hunks with the flag on (GitHub's ?w=1 / git diff -w parity).
 func TestFileDiffUnified_IgnoreWhitespace(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name             string
 		original         string
@@ -34,6 +36,8 @@ func TestFileDiffUnified_IgnoreWhitespace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			dir := initTestRepo(t)
 			writeFile(t, filepath.Join(dir, "code.go"), tt.original)
 			gitT(t, dir, "add", "code.go")

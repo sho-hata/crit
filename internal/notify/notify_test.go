@@ -10,6 +10,8 @@ import (
 )
 
 func TestDesktopCommandSpecs(t *testing.T) {
+	t.Parallel()
+
 	title := "Crit"
 	body := "Round 2 is ready for review"
 	url := "http://127.0.0.1:3456"
@@ -72,6 +74,8 @@ func TestDesktopCommandSpecs(t *testing.T) {
 }
 
 func TestTryDesktopStopsOnFirstSuccess(t *testing.T) {
+	t.Parallel()
+
 	calls := 0
 	ok := tryDesktop([]commandSpec{
 		{name: "first", args: []string{"a"}},
@@ -93,6 +97,8 @@ func TestTryDesktopStopsOnFirstSuccess(t *testing.T) {
 }
 
 func TestRoundReadyMessage(t *testing.T) {
+	t.Parallel()
+
 	got := roundReadyBody(2, "http://127.0.0.1:9")
 	if !strings.Contains(got, "Round 2") {
 		t.Fatalf("body missing round: %q", got)
@@ -103,6 +109,8 @@ func TestRoundReadyMessage(t *testing.T) {
 }
 
 func TestCommandExists(t *testing.T) {
+	t.Parallel()
+
 	if !commandExists("go") {
 		t.Fatal("expected go on PATH")
 	}
@@ -137,6 +145,8 @@ func TestRoundReadyRunsDesktopCommand(t *testing.T) {
 }
 
 func TestRunCommandMissingBinary(t *testing.T) {
+	t.Parallel()
+
 	err := runCommand(commandSpec{name: "crit-notify-missing-binary-xyz", args: nil})
 	if err == nil {
 		t.Fatal("expected error for missing binary")

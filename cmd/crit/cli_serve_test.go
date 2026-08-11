@@ -216,6 +216,8 @@ func TestResolveServeReviewPathPlanBeatsConfiguredOutput(t *testing.T) {
 }
 
 func TestServeSessionKey_Override(t *testing.T) {
+	t.Parallel()
+
 	sc := &server.DaemonCLIConfig{SessionKeyOverride: "839f3b4cd5d6"}
 	if got := serveSessionKey(sc); got != "839f3b4cd5d6" {
 		t.Errorf("serveSessionKey() = %q", got)

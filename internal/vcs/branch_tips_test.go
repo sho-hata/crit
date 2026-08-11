@@ -5,6 +5,8 @@ import (
 )
 
 func TestAddLabelLines_OverwriteAndSkip(t *testing.T) {
+	t.Parallel()
+
 	result := make(map[string]string)
 	addLabelLinesForTest(result, "abc123 feat-x\ndef456 feat-y", true)
 	if result["abc123"] != "feat-x" {
@@ -26,6 +28,8 @@ func TestAddLabelLines_OverwriteAndSkip(t *testing.T) {
 }
 
 func TestAddLabelLines_SkipsMalformedLines(t *testing.T) {
+	t.Parallel()
+
 	result := make(map[string]string)
 	addLabelLinesForTest(result, "nospaces\nonlyonetoken\n  \n", true)
 	if len(result) != 0 {
@@ -34,6 +38,8 @@ func TestAddLabelLines_SkipsMalformedLines(t *testing.T) {
 }
 
 func TestRemoteBranchTips_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	got, err := RemoteBranchTips(nil, "", "main")
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +50,8 @@ func TestRemoteBranchTips_NilVCS(t *testing.T) {
 }
 
 func TestRemoteBranchTips_Git_ExcludesDefaultAndHEAD(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	headSHA := GitRun(t, dir, "rev-parse", "HEAD")
 	GitRun(t, dir, "update-ref", "refs/remotes/origin/feat-x", headSHA)
@@ -74,6 +82,8 @@ func TestRemoteBranchTips_Git_ExcludesDefaultAndHEAD(t *testing.T) {
 }
 
 func TestLocalBranchTips_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	got, err := LocalBranchTips(nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +94,8 @@ func TestLocalBranchTips_NilVCS(t *testing.T) {
 }
 
 func TestWalkAncestors_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	got, err := WalkAncestors(nil, "", 5)
 	if err != nil {
 		t.Fatal(err)

@@ -44,6 +44,8 @@ func sampleBuckets() PushBuckets {
 // exported surface used by callers outside the package — closing the 0%
 // coverage on export.go without re-testing the underlying behavior in depth.
 func TestExportedPushWrappers(t *testing.T) {
+	t.Parallel()
+
 	b := sampleBuckets()
 
 	if got := SummarizeBuckets(295, b); !strings.Contains(got, "PR #295") {
@@ -63,6 +65,8 @@ func TestExportedPushWrappers(t *testing.T) {
 }
 
 func TestWriteOrphanExport_Exported(t *testing.T) {
+	t.Parallel()
+
 	dir := filepath.Join(t.TempDir(), "exports")
 	path, err := WriteOrphanExport(42, sampleBuckets(), dir)
 	if err != nil {

@@ -140,6 +140,8 @@ func TestJJVCS_FileDiffScoped(t *testing.T) {
 }
 
 func TestJJVCS_FileDiffForCommit_AndChangedFilesForCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	// Make a new commit on top of main with another change.
@@ -174,6 +176,8 @@ func TestJJVCS_FileDiffForCommit_AndChangedFilesForCommit(t *testing.T) {
 }
 
 func TestJJVCS_FileDiffUnifiedCtx_Cancellation(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	base := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
@@ -194,6 +198,8 @@ func TestJJVCS_FileDiffUnifiedCtx_Cancellation(t *testing.T) {
 }
 
 func TestJJVCS_FileDiffUnifiedCtx_DeadlineExceeded(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	base := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
@@ -210,6 +216,8 @@ func TestJJVCS_FileDiffUnifiedCtx_DeadlineExceeded(t *testing.T) {
 }
 
 func TestJJVCS_FileDiffUnifiedNewFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "new.txt")
 	content := "line one\nline two\n"
@@ -232,6 +240,8 @@ func TestJJVCS_FileDiffUnifiedNewFile(t *testing.T) {
 }
 
 func TestJJVCS_CommitLog(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 
@@ -294,6 +304,8 @@ func TestJJVCS_WorkingTreeFingerprint_ChangesWithEdits(t *testing.T) {
 }
 
 func TestJJVCS_UntrackedFiles_AlwaysNil(t *testing.T) {
+	t.Parallel()
+
 	j := &JJVCS{}
 	got, err := j.UntrackedFiles("anywhere")
 	if err != nil || got != nil {
@@ -302,6 +314,8 @@ func TestJJVCS_UntrackedFiles_AlwaysNil(t *testing.T) {
 }
 
 func TestJJVCS_AllTrackedFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	files, err := j.AllTrackedFiles(dir)
@@ -320,6 +334,8 @@ func TestJJVCS_AllTrackedFiles(t *testing.T) {
 }
 
 func TestJJVCS_RemoteBranches_FromOriginClone(t *testing.T) {
+	t.Parallel()
+
 	work := initTestJJCloneWithOriginMain(t)
 	j := &JJVCS{}
 	branches, err := j.RemoteBranches(work)
@@ -334,6 +350,8 @@ func TestJJVCS_RemoteBranches_FromOriginClone(t *testing.T) {
 }
 
 func TestJJVCS_RemoteBranches_LocalOnlyReturnsNil(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	branches, err := j.RemoteBranches(dir)
@@ -346,6 +364,8 @@ func TestJJVCS_RemoteBranches_LocalOnlyReturnsNil(t *testing.T) {
 }
 
 func TestJJVCS_FileStatusInRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	base := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
@@ -362,6 +382,8 @@ func TestJJVCS_FileStatusInRepo(t *testing.T) {
 }
 
 func TestJJVCS_ChangedFilesAndDiffBetweenSHAs(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	mainSHA := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
@@ -389,6 +411,8 @@ func TestJJVCS_ChangedFilesAndDiffBetweenSHAs(t *testing.T) {
 }
 
 func TestJJVCS_HasObject(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	mainSHA := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
@@ -401,6 +425,8 @@ func TestJJVCS_HasObject(t *testing.T) {
 }
 
 func TestJJVCS_DiffNumstat(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	if got, err := j.DiffNumstat("", dir); err != nil || got != nil {
@@ -421,6 +447,8 @@ func TestJJVCS_DiffNumstat(t *testing.T) {
 }
 
 func TestJJVCS_DiffNumstatBetweenSHAsRequiresBoth(t *testing.T) {
+	t.Parallel()
+
 	j := &JJVCS{}
 	if _, err := j.DiffNumstatBetweenSHAs("", "abc", t.TempDir()); err == nil {
 		t.Fatal("expected error for empty base")
@@ -484,6 +512,8 @@ func TestJJVCS_DiffNumstatBetweenSHAsResolveError(t *testing.T) {
 }
 
 func TestJJVCS_FileContentAtRef(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 	base := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
@@ -504,6 +534,8 @@ func TestJJVCS_FileContentAtRef(t *testing.T) {
 }
 
 func TestIsJJRootCommitID(t *testing.T) {
+	t.Parallel()
+
 	if !isJJRootCommitID("0000000000000000000000000000000000000000") {
 		t.Error("expected true for canonical root commit id")
 	}
@@ -519,6 +551,8 @@ func TestIsJJRootCommitID(t *testing.T) {
 }
 
 func TestLooksLikeHexPrefix(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in   string
 		want bool
@@ -539,6 +573,8 @@ func TestLooksLikeHexPrefix(t *testing.T) {
 }
 
 func TestIsSimpleJJBookmarkName(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in   string
 		want bool

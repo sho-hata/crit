@@ -6,13 +6,19 @@ import (
 )
 
 func TestLooksLikeWSL(t *testing.T) {
+	t.Parallel()
+
 	t.Run("non-linux is false", func(t *testing.T) {
+		t.Parallel()
+
 		if looksLikeWSL("darwin", "", "", "microsoft") {
 			t.Fatal("expected false for non-linux runtime")
 		}
 	})
 
 	t.Run("environment markers enable detection", func(t *testing.T) {
+		t.Parallel()
+
 		if !looksLikeWSL("linux", "Ubuntu", "", "") {
 			t.Fatal("expected WSL when WSL_DISTRO_NAME is set")
 		}
@@ -22,12 +28,16 @@ func TestLooksLikeWSL(t *testing.T) {
 	})
 
 	t.Run("proc version marker enables detection", func(t *testing.T) {
+		t.Parallel()
+
 		if !looksLikeWSL("linux", "", "", "Linux version 6.6.87.2-microsoft-standard-WSL2") {
 			t.Fatal("expected WSL when /proc/version mentions microsoft")
 		}
 	})
 
 	t.Run("plain linux is false", func(t *testing.T) {
+		t.Parallel()
+
 		if looksLikeWSL("linux", "", "", "Linux version 6.8.0-generic") {
 			t.Fatal("expected false for non-WSL linux")
 		}
@@ -35,6 +45,8 @@ func TestLooksLikeWSL(t *testing.T) {
 }
 
 func TestBrowserCommandSpecs(t *testing.T) {
+	t.Parallel()
+
 	url := "http://localhost:1234?a=1&b=2"
 
 	t.Run("wsl prefers windows-aware launchers before xdg-open", func(t *testing.T) {
@@ -122,7 +134,11 @@ func TestBrowserCommandSpecs(t *testing.T) {
 }
 
 func TestCommandQuoting(t *testing.T) {
+	t.Parallel()
+
 	t.Run("powershell quotes literal strings", func(t *testing.T) {
+		t.Parallel()
+
 		got := powershellSingleQuote("https://example.com?a=1&b=2'3")
 		want := "'https://example.com?a=1&b=2''3'"
 		if got != want {
@@ -131,6 +147,8 @@ func TestCommandQuoting(t *testing.T) {
 	})
 
 	t.Run("cmd double-quotes strings", func(t *testing.T) {
+		t.Parallel()
+
 		got := cmdDoubleQuote(`https://example.com?a=1&b=2"3`)
 		want := `"https://example.com?a=1&b=2""3"`
 		if got != want {
@@ -140,7 +158,11 @@ func TestCommandQuoting(t *testing.T) {
 }
 
 func TestTryOpenBrowser(t *testing.T) {
+	t.Parallel()
+
 	t.Run("falls back until a launcher succeeds", func(t *testing.T) {
+		t.Parallel()
+
 		specs := []browserCommandSpec{
 			{name: "wslview", args: []string{"http://localhost:1234"}},
 			{name: "powershell.exe", args: []string{"-Command", "Start-Process", "http://localhost:1234"}},
@@ -164,6 +186,8 @@ func TestTryOpenBrowser(t *testing.T) {
 	})
 
 	t.Run("returns false when all launchers fail", func(t *testing.T) {
+		t.Parallel()
+
 		specs := []browserCommandSpec{
 			{name: "wslview"},
 			{name: "powershell.exe"},

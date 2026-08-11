@@ -520,6 +520,8 @@ func TestResolveCommandReviewPathPrecedence(t *testing.T) {
 }
 
 func TestClearReviewPath(t *testing.T) {
+	t.Parallel()
+
 	reviewPath := filepath.Join(t.TempDir(), ".crit")
 	if err := os.MkdirAll(reviewPath, 0o755); err != nil {
 		t.Fatal(err)
@@ -696,6 +698,8 @@ func TestResolveCommandReviewPathAmbiguousSessions(t *testing.T) {
 }
 
 func TestResolveSessionReviewPathInvalidID(t *testing.T) {
+	t.Parallel()
+
 	_, err := ResolveSessionReviewPath("not-valid")
 	if err == nil || !strings.Contains(err.Error(), "expected 12-character hex") {
 		t.Fatalf("error = %v, want shared invalid session message", err)
@@ -808,6 +812,8 @@ func TestMatchingLiveSessionsSoleSessionIgnoresBranch(t *testing.T) {
 }
 
 func TestResolveCommandReviewPathWithSessionRejectsOutput(t *testing.T) {
+	t.Parallel()
+
 	_, err := ResolveCommandReviewPathWithSession("aaaaaaaaaaaa", "/tmp/out", "")
 	if err == nil || !strings.Contains(err.Error(), "--session cannot be used with --output") {
 		t.Fatalf("error = %v, want session/output conflict", err)
@@ -875,6 +881,8 @@ func TestResolveSessionReviewPathEmptyReviewPath(t *testing.T) {
 }
 
 func TestAmbiguousSessionsError(t *testing.T) {
+	t.Parallel()
+
 	err := AmbiguousSessionsError([]string{"aaaaaaaaaaaa", "bbbbbbbbbbbb"})
 	if err == nil {
 		t.Fatal("expected error")
@@ -888,13 +896,19 @@ func TestAmbiguousSessionsError(t *testing.T) {
 }
 
 func TestResolveReviewPathFromSessions(t *testing.T) {
+	t.Parallel()
+
 	t.Run("empty", func(t *testing.T) {
+		t.Parallel()
+
 		got, err := ResolveReviewPathFromSessions(nil, nil)
 		if err != nil || got != "" {
 			t.Fatalf("got %q err=%v, want empty", got, err)
 		}
 	})
 	t.Run("single with path", func(t *testing.T) {
+		t.Parallel()
+
 		got, err := ResolveReviewPathFromSessions(
 			[]daemon.SessionEntry{{ReviewPath: "/tmp/review"}},
 			[]string{"aaaaaaaaaaaa"},
@@ -907,6 +921,8 @@ func TestResolveReviewPathFromSessions(t *testing.T) {
 		}
 	})
 	t.Run("single without path", func(t *testing.T) {
+		t.Parallel()
+
 		got, err := ResolveReviewPathFromSessions(
 			[]daemon.SessionEntry{{ReviewPath: ""}},
 			[]string{"aaaaaaaaaaaa"},
@@ -916,6 +932,8 @@ func TestResolveReviewPathFromSessions(t *testing.T) {
 		}
 	})
 	t.Run("ambiguous", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := ResolveReviewPathFromSessions(
 			[]daemon.SessionEntry{{ReviewPath: "/a"}, {ReviewPath: "/b"}},
 			[]string{"aaaaaaaaaaaa", "bbbbbbbbbbbb"},
@@ -927,6 +945,8 @@ func TestResolveReviewPathFromSessions(t *testing.T) {
 }
 
 func TestNarrowMatchingSessions(t *testing.T) {
+	t.Parallel()
+
 	a := daemon.SessionEntry{Branch: "main", ReviewPath: "/a"}
 	b := daemon.SessionEntry{Branch: "feature", ReviewPath: "/b"}
 	c := daemon.SessionEntry{Branch: "main", ReviewPath: "/c"}

@@ -3,6 +3,8 @@ package vcs
 import "testing"
 
 func TestDetectVCS_ExplicitGitOverride(t *testing.T) {
+	t.Parallel()
+
 	v := DetectVCS("git")
 	if v == nil || v.Name() != "git" {
 		t.Fatalf("DetectVCS(git) = %v", v)

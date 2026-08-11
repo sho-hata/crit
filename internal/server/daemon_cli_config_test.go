@@ -585,6 +585,8 @@ func TestResolveServerConfig_FileArgs(t *testing.T) {
 }
 
 func TestParseDaemonFlags_PRAndRange(t *testing.T) {
+	t.Parallel()
+
 	sf := parseDaemonFlagsForTest([]string{"--pr", "1", "--range", "a..b"})
 	if sf.prSpec != "1" || sf.rangeSpec != "a..b" {
 		t.Fatalf("expected both flags captured, got %+v", sf)
@@ -592,6 +594,8 @@ func TestParseDaemonFlags_PRAndRange(t *testing.T) {
 }
 
 func TestParseDaemonFlags_RangeAndScope(t *testing.T) {
+	t.Parallel()
+
 	sf := parseDaemonFlagsForTest([]string{"--range", "a..b", "--scope", "layer"})
 	if sf.rangeSpec != "a..b" || sf.scopeSpec != "layer" {
 		t.Errorf("got %+v", sf)
@@ -599,6 +603,8 @@ func TestParseDaemonFlags_RangeAndScope(t *testing.T) {
 }
 
 func TestParseDaemonFlags_Remote(t *testing.T) {
+	t.Parallel()
+
 	sf := parseDaemonFlagsForTest([]string{"--pr", "1", "--remote"})
 	if !sf.remoteFiles {
 		t.Errorf("remoteFiles = false, want true")
@@ -606,6 +612,8 @@ func TestParseDaemonFlags_Remote(t *testing.T) {
 }
 
 func TestParseDaemonFlags_RemoteDefaultsFalse(t *testing.T) {
+	t.Parallel()
+
 	sf := parseDaemonFlagsForTest([]string{"plan.md"})
 	if sf.remoteFiles {
 		t.Errorf("remoteFiles = true, want false")
@@ -613,6 +621,8 @@ func TestParseDaemonFlags_RemoteDefaultsFalse(t *testing.T) {
 }
 
 func TestParseDaemonFlags_Session(t *testing.T) {
+	t.Parallel()
+
 	sf := parseDaemonFlagsForTest([]string{"--session", "839f3b4cd5d6"})
 	if sf.sessionID != "839f3b4cd5d6" {
 		t.Errorf("sessionID = %q", sf.sessionID)
@@ -620,6 +630,8 @@ func TestParseDaemonFlags_Session(t *testing.T) {
 }
 
 func TestParseDaemonFlags_FlagsAfterFile(t *testing.T) {
+	t.Parallel()
+
 	sf := parseDaemonFlagsForTest([]string{"plan.md", "-p", "51573", "--no-open", "--quiet"})
 	if sf.port != 51573 || !sf.noOpen || !sf.quiet {
 		t.Fatalf("flags after file not applied: %+v", sf)

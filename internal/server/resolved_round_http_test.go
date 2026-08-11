@@ -8,6 +8,8 @@ import (
 )
 
 func TestResolveStampsResolvedRound_HTTP(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 
@@ -51,6 +53,8 @@ func TestResolveStampsResolvedRound_HTTP(t *testing.T) {
 }
 
 func TestResolveReviewCommentStampsResolvedRound_HTTP(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("review note", "alice", "")
 
@@ -88,6 +92,8 @@ func TestResolveReviewCommentStampsResolvedRound_HTTP(t *testing.T) {
 }
 
 func TestAddReplyClearsResolvedRound(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 

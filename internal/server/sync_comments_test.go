@@ -25,6 +25,8 @@ func writeExternalCommentForTest(t *testing.T, critPath, filePath string, commen
 }
 
 func TestSyncCommentsFromDisk_ClearsPendingWrite(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(filePath, []byte("# Plan\n"), 0o644); err != nil {
@@ -67,6 +69,8 @@ func TestSyncCommentsFromDisk_ClearsPendingWrite(t *testing.T) {
 }
 
 func TestSyncCommentsFromDisk_AfterMergeWebComments_WithNewServer(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(filePath, []byte("# Plan\n"), 0o644); err != nil {
@@ -109,6 +113,8 @@ func TestSyncCommentsFromDisk_AfterMergeWebComments_WithNewServer(t *testing.T) 
 }
 
 func TestSyncCommentsFromDisk_AfterMergeWebComments(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(filePath, []byte("# Plan\n"), 0o644); err != nil {

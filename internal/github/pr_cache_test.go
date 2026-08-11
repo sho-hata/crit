@@ -19,6 +19,8 @@ func newTestCache(fn func(int) (*PRInfo, error)) *prMetadataCache {
 }
 
 func TestPRMetadataCache_FirstGetIsMiss(t *testing.T) {
+	t.Parallel()
+
 	var calls int32
 	c := newTestCache(func(num int) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
@@ -38,6 +40,8 @@ func TestPRMetadataCache_FirstGetIsMiss(t *testing.T) {
 }
 
 func TestPRMetadataCache_SecondGetIsHit(t *testing.T) {
+	t.Parallel()
+
 	var calls int32
 	c := newTestCache(func(num int) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
@@ -56,6 +60,8 @@ func TestPRMetadataCache_SecondGetIsHit(t *testing.T) {
 }
 
 func TestPRMetadataCache_DistinctPRsAreIndependent(t *testing.T) {
+	t.Parallel()
+
 	var calls int32
 	c := newTestCache(func(num int) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
@@ -74,6 +80,8 @@ func TestPRMetadataCache_DistinctPRsAreIndependent(t *testing.T) {
 }
 
 func TestPRMetadataCache_InvalidateRemovesEntry(t *testing.T) {
+	t.Parallel()
+
 	var calls int32
 	c := newTestCache(func(num int) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
@@ -93,11 +101,15 @@ func TestPRMetadataCache_InvalidateRemovesEntry(t *testing.T) {
 }
 
 func TestPRMetadataCache_InvalidateMissingNumberIsNoOp(t *testing.T) {
+	t.Parallel()
+
 	c := newTestCache(func(int) (*PRInfo, error) { return &PRInfo{}, nil })
 	c.invalidate(99) // must not panic
 }
 
 func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
+	t.Parallel()
+
 	var calls int32
 	wantErr := errors.New("boom")
 	c := newTestCache(func(num int) (*PRInfo, error) {
@@ -130,6 +142,8 @@ func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
 // fetchFn invocations (no full singleflight), but post-fetch deduping must
 // hand back the same pointer to every caller.
 func TestPRMetadataCache_ConcurrentGetSinglePopulation(t *testing.T) {
+	t.Parallel()
+
 	var calls int32
 	c := newTestCache(func(num int) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)

@@ -9,6 +9,8 @@ import (
 )
 
 func TestInstallOpencodePluginEntry(t *testing.T) {
+	t.Parallel()
+
 	projectEntry := opencodePluginEntry(false)
 	cases := []struct {
 		name         string
@@ -137,6 +139,8 @@ func TestInstallOpencodePluginEntry(t *testing.T) {
 }
 
 func TestStripTrailingCommas(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		in   string
@@ -153,6 +157,8 @@ func TestStripTrailingCommas(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := string(stripTrailingCommas([]byte(tc.in)))
 			if got != tc.want {
 				t.Errorf("stripTrailingCommas(%q) = %q want %q", tc.in, got, tc.want)
@@ -162,6 +168,8 @@ func TestStripTrailingCommas(t *testing.T) {
 }
 
 func TestLooksLikeJSONC(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		in   string
@@ -175,6 +183,8 @@ func TestLooksLikeJSONC(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := looksLikeJSONC([]byte(tc.in)); got != tc.want {
 				t.Errorf("looksLikeJSONC(%q) = %v want %v", tc.in, got, tc.want)
 			}
@@ -183,6 +193,8 @@ func TestLooksLikeJSONC(t *testing.T) {
 }
 
 func TestOpencodePluginEntryPath(t *testing.T) {
+	t.Parallel()
+
 	if got := opencodePluginEntry(false); got != "./.opencode/plugins/crit.ts" {
 		t.Errorf("project entry = %q", got)
 	}
@@ -192,6 +204,8 @@ func TestOpencodePluginEntryPath(t *testing.T) {
 }
 
 func TestOpencodeConfigPathPrefersJSON(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	dir := filepath.Join(home, ".config", "opencode")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -208,6 +222,8 @@ func TestOpencodeConfigPathPrefersJSON(t *testing.T) {
 }
 
 func TestOpencodeConfigPathDefaultsToJSONC(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	got := opencodeConfigPath(true, home)
 	if !strings.HasSuffix(got, "opencode.jsonc") {
@@ -216,6 +232,8 @@ func TestOpencodeConfigPathDefaultsToJSONC(t *testing.T) {
 }
 
 func TestInstallOpencodeIncludesPluginFile(t *testing.T) {
+	t.Parallel()
+
 	// Sanity: the integration map advertises the new plugin source, and the
 	// embed FS resolves it.
 	files, ok := integrationMap["opencode"]

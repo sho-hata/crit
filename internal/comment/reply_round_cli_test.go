@@ -7,6 +7,8 @@ import (
 )
 
 func TestAppendReply_StampsCritJSONReviewRound(t *testing.T) {
+	t.Parallel()
+
 	cj := &session.CritJSON{
 		ReviewRound: 4,
 		Files: map[string]session.CritJSONFile{

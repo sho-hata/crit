@@ -7,6 +7,8 @@ import (
 )
 
 func TestBuildPreviewStartArgs_PublicURL(t *testing.T) {
+	t.Parallel()
+
 	cfg := config.Config{PublicURL: "https://config.ts.net"}
 	args := buildPreviewStartArgsForTest("/tmp/page.html", 0, "", "https://cli.ts.net", false, true, false, cfg)
 	want := []string{

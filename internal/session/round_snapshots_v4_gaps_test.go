@@ -17,6 +17,8 @@ import (
 // wipe it and complete successfully rather than failing because MkdirAll
 // preserves the stale tmp contents.
 func TestMigrate_LeftoverTmpDir(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	tmp := identity + ".crit-migrate.tmp"
@@ -52,6 +54,8 @@ func TestMigrate_LeftoverTmpDir(t *testing.T) {
 // is still moved into the folder layout. Subsequent loadCritJSON will surface
 // the parse error to the user.
 func TestMigrate_MalformedFlatFile_StillMigrates(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.WriteFile(identity, []byte("{not valid json"), 0o644); err != nil {
@@ -79,6 +83,8 @@ func TestMigrate_MalformedFlatFile_StillMigrates(t *testing.T) {
 // The v4 identity drops the extension; ensureReviewFolder must detect the
 // sibling flat file and migrate it into <key>/review.json.
 func TestMigrate_LegacyDotJSONFlatFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	legacy := identity + ".json"
@@ -116,6 +122,8 @@ func TestMigrate_LegacyDotJSONFlatFile(t *testing.T) {
 // review folder was created with a stray .json extension on its name. The
 // next ensureReviewFolder call must rename <key>.json/ to <key>/.
 func TestMigrate_LegacyDotJSONFolder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	legacy := identity + ".json"
@@ -145,6 +153,8 @@ func TestMigrate_LegacyDotJSONFolder(t *testing.T) {
 // (the OutputDir-based identity) to the v4 folder layout. Mirrors the
 // real-world path where a user has --output set to a project subdirectory.
 func TestMigrate_InRepoCritJSON(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, ".crit")
 	if err := os.WriteFile(identity, []byte(`{"branch":"feat","files":{}}`), 0o644); err != nil {
@@ -174,6 +184,8 @@ func TestMigrate_InRepoCritJSON(t *testing.T) {
 // not delete or overwrite siblings — the folder is the per-review namespace
 // for future features (recordings, large diffs, etc).
 func TestSaveCritJSON_PreservesUnknownAttachments(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.MkdirAll(identity, 0o755); err != nil {
@@ -196,6 +208,8 @@ func TestSaveCritJSON_PreservesUnknownAttachments(t *testing.T) {
 // the existing sidecar regression test: when WriteFiles takes the empty branch
 // and removes review.json, future-attachment siblings must also survive.
 func TestWriteFiles_EmptyPreservesAttachments(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(planPath, []byte("hello\n"), 0o644); err != nil {
@@ -238,6 +252,8 @@ func TestWriteFiles_EmptyPreservesAttachments(t *testing.T) {
 // cutoff) is NOT collected. Boundary: orphan with mtime exactly equal to
 // cutoff is also not stale (the code uses Before, not !After).
 func TestFindStaleReviews_OrphanFolder_BoundaryNotStale(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	orphan := filepath.Join(dir, "orphan")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
@@ -264,6 +280,8 @@ func TestFindStaleReviews_OrphanFolder_BoundaryNotStale(t *testing.T) {
 // neither review.json NOR snapshots.json (e.g. a partial mkdir from a crashed
 // constructor) must be ignored. checkStaleReviewFolder returns false.
 func TestFindStaleReviews_EmptyFolder_Skipped(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	empty := filepath.Join(dir, "emptyfolder")
 	if err := os.MkdirAll(empty, 0o755); err != nil {
@@ -285,6 +303,8 @@ func TestFindStaleReviews_EmptyFolder_Skipped(t *testing.T) {
 // branch: a v3 flat .json next to a v4 folder, both stale, are both
 // collected. After the shim is deleted the flat half goes away.
 func TestFindStaleReviews_MixedFolderAndFlat(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	oldTime := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
 
@@ -359,6 +379,8 @@ func TestDeleteStaleReviews_PartialFailureContinues(t *testing.T) {
 // branch in removeStaleReviewPath: an unmigrated flat .json review with a
 // sibling .snapshots.json file. Both must be cleaned.
 func TestCleanupOnApproval_FlatFileFallback(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "legacy.json")
 	if err := os.WriteFile(identity, []byte(`{"branch":"main"}`), 0o644); err != nil {
@@ -380,6 +402,8 @@ func TestCleanupOnApproval_FlatFileFallback(t *testing.T) {
 }
 
 func TestCommentsAtOrBeforeRound_NegativeAndZero(t *testing.T) {
+	t.Parallel()
+
 	cs := []Comment{{ID: "a", ReviewRound: 1}}
 	if got := commentsAtOrBeforeRound(cs, 0); got != nil {
 		t.Errorf("round=0 must return nil, got %v", got)
@@ -390,6 +414,8 @@ func TestCommentsAtOrBeforeRound_NegativeAndZero(t *testing.T) {
 }
 
 func TestCommentsAtOrBeforeRound_DoesNotMutateInput(t *testing.T) {
+	t.Parallel()
+
 	// commentsAtOrBeforeRound uses comments[:0:0] which forces append to
 	// allocate a new backing array. Verify the input slice is not clobbered.
 	cs := []Comment{
@@ -407,6 +433,8 @@ func TestCommentsAtOrBeforeRound_DoesNotMutateInput(t *testing.T) {
 // TestLineStatsForRound_FileAddedAtRoundN: a file with no R(N-1) snapshot
 // but a snapshot at R(N) counts every line as an addition.
 func TestLineStatsForRound_FileAddedAtRoundN(t *testing.T) {
+	t.Parallel()
+
 	sess := &Session{
 		Mode: "files",
 		RoundSnapshots: map[string]map[int]RoundSnapshot{
@@ -427,6 +455,8 @@ func TestLineStatsForRound_FileAddedAtRoundN(t *testing.T) {
 // TestLineStatsForRound_R1IsBaseline: R1 always returns 0/0 even when
 // snapshots exist.
 func TestLineStatsForRound_R1IsBaseline(t *testing.T) {
+	t.Parallel()
+
 	sess := &Session{
 		Mode: "files",
 		RoundSnapshots: map[string]map[int]RoundSnapshot{
@@ -494,6 +524,8 @@ func TestSession_LoadCritJSON_PostSetSessionIsNoOp(t *testing.T) {
 // race detector is the assertion. Capture takes the role of the writer
 // (under s.mu.Lock); availableRounds/roundSnapshotForFile take RLock.
 func TestRoundSnapshots_ConcurrentReadWrite(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("skipping race exercise in short mode")
 	}
@@ -541,6 +573,8 @@ func TestRoundSnapshots_ConcurrentReadWrite(t *testing.T) {
 // they're the only record of past content — even though no live FileEntry
 // references them. lineStatsForRound and /api/rounds gracefully ignore them.
 func TestLoadSnapshotsFromSidecar_OrphanedPathsKept(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.MkdirAll(identity, 0o755); err != nil {
@@ -565,6 +599,8 @@ func TestLoadSnapshotsFromSidecar_OrphanedPathsKept(t *testing.T) {
 // future versions may add fields to RoundSnapshot. Unknown fields must be
 // ignored (encoding/json default), never error the load.
 func TestLoadSnapshotsFromSidecar_UnknownFieldsTolerated(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.MkdirAll(identity, 0o755); err != nil {

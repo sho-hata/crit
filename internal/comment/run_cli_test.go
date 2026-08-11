@@ -26,6 +26,8 @@ func loadOutputReview(t *testing.T, dataRoot string) CritJSON {
 }
 
 func TestRunComment_MissingArgs(t *testing.T) {
+	t.Parallel()
+
 	err := RunComment([]string{})
 	if err == nil {
 		t.Fatal("expected usage error")
@@ -37,6 +39,8 @@ func TestRunComment_MissingArgs(t *testing.T) {
 }
 
 func TestRunComment_InvalidLocation(t *testing.T) {
+	t.Parallel()
+
 	err := RunComment([]string{"noColonHere", "some body"})
 	if err == nil {
 		t.Fatal("expected error for invalid location")
@@ -47,6 +51,8 @@ func TestRunComment_InvalidLocation(t *testing.T) {
 }
 
 func TestRunComment_InvalidLineNumber(t *testing.T) {
+	t.Parallel()
+
 	err := RunComment([]string{"file.go:abc", "some body"})
 	if err == nil {
 		t.Fatal("expected error for invalid line number")
@@ -54,6 +60,8 @@ func TestRunComment_InvalidLineNumber(t *testing.T) {
 }
 
 func TestRunComment_ReviewLevel(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	if err := RunComment([]string{"--output", tmp, "--author", "TestBot", "overall looks good"}); err != nil {
 		t.Fatalf("RunComment: %v", err)
@@ -81,6 +89,8 @@ func TestRunComment_FileLevel(t *testing.T) {
 }
 
 func TestRunComment_LineLevel(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	if err := RunComment([]string{"--output", tmp, "--author", "Bot", "main.go:42", "line comment"}); err != nil {
 		t.Fatalf("RunComment: %v", err)
@@ -93,6 +103,8 @@ func TestRunComment_LineLevel(t *testing.T) {
 }
 
 func TestRunComment_RangeLine(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	if err := RunComment([]string{"--output", tmp, "--author", "Bot", "test.go:10-25", "range body"}); err != nil {
 		t.Fatalf("RunComment: %v", err)
@@ -105,6 +117,8 @@ func TestRunComment_RangeLine(t *testing.T) {
 }
 
 func TestRunComment_InvalidRange(t *testing.T) {
+	t.Parallel()
+
 	err := RunComment([]string{"file.go:10-abc", "some body"})
 	if err == nil {
 		t.Fatal("expected error for invalid range")
@@ -207,6 +221,8 @@ func TestRunComment_InvalidReviewReturnsErrors(t *testing.T) {
 }
 
 func TestRunCommentLineLevelRejectsLiveReview(t *testing.T) {
+	t.Parallel()
+
 	reviewPath := filepath.Join(t.TempDir(), ".crit")
 	if err := saveCritJSON(reviewPath, CritJSON{
 		ReviewType: "live",
@@ -229,6 +245,8 @@ func TestRunCommentLineLevelRejectsLiveReview(t *testing.T) {
 }
 
 func TestRunComment_ReplyMissingBody(t *testing.T) {
+	t.Parallel()
+
 	err := RunComment([]string{"--reply-to", "c_abc"})
 	if err == nil {
 		t.Fatal("expected usage error")
@@ -240,6 +258,8 @@ func TestRunComment_ReplyMissingBody(t *testing.T) {
 }
 
 func TestRunComment_PlanAndOutputConflict(t *testing.T) {
+	t.Parallel()
+
 	err := RunComment([]string{"--plan", "my-plan", "--output", "/tmp/x", "body"})
 	if err == nil {
 		t.Fatal("expected error")
@@ -250,6 +270,8 @@ func TestRunComment_PlanAndOutputConflict(t *testing.T) {
 }
 
 func TestRunComment_JSONAndReplyToConflict(t *testing.T) {
+	t.Parallel()
+
 	err := RunComment([]string{"--json", "--reply-to", "c_6ab5c4", "--author", "Cursor", "Added crit install prompts"})
 	if err == nil {
 		t.Fatal("expected error")
@@ -263,6 +285,8 @@ func TestRunComment_JSONAndReplyToConflict(t *testing.T) {
 }
 
 func TestRunCommentJSONScoped_CountsCommentsAndReplies(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	// Seed a comment to reply to.
 	cj := CritJSON{

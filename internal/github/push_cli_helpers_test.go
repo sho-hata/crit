@@ -31,6 +31,8 @@ func TestPrintPushSummary_WithExport(t *testing.T) {
 }
 
 func TestCountNewReplies(t *testing.T) {
+	t.Parallel()
+
 	cj := session.CritJSON{
 		Files: map[string]session.CritJSONFile{
 			"a.go": {
@@ -47,6 +49,8 @@ func TestCountNewReplies(t *testing.T) {
 }
 
 func TestWritePushOrphanExport_EmptyBuckets(t *testing.T) {
+	t.Parallel()
+
 	path := writePushOrphanExport(pushContext{prNumber: 1}, PushBuckets{})
 	if path != "" {
 		t.Errorf("expected empty path, got %q", path)
@@ -54,6 +58,8 @@ func TestWritePushOrphanExport_EmptyBuckets(t *testing.T) {
 }
 
 func TestRunPushPostReview_EmptyPostable(t *testing.T) {
+	t.Parallel()
+
 	posted, failed, authFailed, ids := runPushPostReview(pushContext{prNumber: 1}, PushBuckets{}, nil)
 	if posted != 0 || failed || authFailed || ids != nil {
 		t.Errorf("got posted=%d failed=%v auth=%v ids=%v", posted, failed, authFailed, ids)
@@ -61,6 +67,8 @@ func TestRunPushPostReview_EmptyPostable(t *testing.T) {
 }
 
 func TestPushEditedBodies_NoEdits(t *testing.T) {
+	t.Parallel()
+
 	n, auth := pushEditedBodies(pushContext{cj: session.CritJSON{Files: map[string]session.CritJSONFile{}}})
 	if n != 0 || auth {
 		t.Errorf("got n=%d auth=%v", n, auth)

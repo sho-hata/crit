@@ -10,6 +10,8 @@ import (
 )
 
 func TestReviewPathsFor(t *testing.T) {
+	t.Parallel()
+
 	// Build expected paths via filepath.Join so the test runs on both POSIX
 	// (forward slashes) and Windows (backslashes). reviewPathsFor uses
 	// filepath.Join internally; the test must mirror that, not hardcode `/`.
@@ -33,6 +35,8 @@ func TestReviewPathsFor(t *testing.T) {
 }
 
 func TestSnapshotsFile_RoundTrip(t *testing.T) {
+	t.Parallel()
+
 	ts := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	original := SnapshotsFile{
 		RoundSnapshots: map[string]map[int]RoundSnapshot{
@@ -59,6 +63,8 @@ func TestSnapshotsFile_RoundTrip(t *testing.T) {
 }
 
 func TestSnapshotsFile_AbsentReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "abc")
 	if err := os.MkdirAll(folder, 0o755); err != nil {
@@ -74,6 +80,8 @@ func TestSnapshotsFile_AbsentReturnsEmpty(t *testing.T) {
 }
 
 func TestSaveAndLoadSnapshotsFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "abc")
 	if err := os.MkdirAll(folder, 0o755); err != nil {
@@ -101,6 +109,8 @@ func TestSaveAndLoadSnapshotsFile(t *testing.T) {
 // --- Task 2: ensureReviewFolder migration tests ---
 
 func TestMigrate_FlatFileToFolder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	flatSidecar := identity + ".snapshots.json"
@@ -131,6 +141,8 @@ func TestMigrate_FlatFileToFolder(t *testing.T) {
 }
 
 func TestMigrate_Idempotent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.MkdirAll(identity, 0o755); err != nil {
@@ -154,6 +166,8 @@ func TestMigrate_Idempotent(t *testing.T) {
 }
 
 func TestMigrate_NoFlatNoFolder_NoOp(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := ensureReviewFolder(identity); err != nil {
@@ -165,6 +179,8 @@ func TestMigrate_NoFlatNoFolder_NoOp(t *testing.T) {
 }
 
 func TestMigrate_OrphanFlatSidecarOnly(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.WriteFile(identity+".snapshots.json", []byte(`{"round_snapshots":{}}`), 0o644); err != nil {
@@ -179,6 +195,8 @@ func TestMigrate_OrphanFlatSidecarOnly(t *testing.T) {
 }
 
 func TestMigrate_BothFolderAndOrphanSidecar_FolderWins(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.MkdirAll(identity, 0o755); err != nil {
@@ -204,6 +222,8 @@ func TestMigrate_BothFolderAndOrphanSidecar_FolderWins(t *testing.T) {
 // --- Task 3: loadCritJSON / saveCritJSON / clearCritJSON folder layout ---
 
 func TestSaveAndLoadCritJSON_FolderLayout(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 
@@ -224,6 +244,8 @@ func TestSaveAndLoadCritJSON_FolderLayout(t *testing.T) {
 }
 
 func TestClearReviewFolder_RemovesFolder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, ".crit")
 	if err := saveCritJSON(identity, CritJSON{Branch: "main", Files: map[string]CritJSONFile{}}); err != nil {
@@ -245,6 +267,8 @@ func TestClearReviewFolder_RemovesFolder(t *testing.T) {
 // --- Tasks 4-7: in-memory snapshots, capture, R1 baseline, sidecar restore ---
 
 func TestSession_CaptureRoundSnapshot_FilesMode(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode: "files",
 		Files: []*FileEntry{
@@ -262,6 +286,8 @@ func TestSession_CaptureRoundSnapshot_FilesMode(t *testing.T) {
 }
 
 func TestSession_CaptureRoundSnapshot_GitModeNoOp(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode:  "git",
 		Files: []*FileEntry{{Path: "a.go", Content: "x"}},
@@ -273,6 +299,8 @@ func TestSession_CaptureRoundSnapshot_GitModeNoOp(t *testing.T) {
 }
 
 func TestSession_CaptureRoundSnapshot_SkipsLazyAndDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode: "files",
 		Files: []*FileEntry{
@@ -294,6 +322,8 @@ func TestSession_CaptureRoundSnapshot_SkipsLazyAndDeleted(t *testing.T) {
 }
 
 func TestSession_CaptureRoundSnapshot_Idempotent(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode: "files",
 		Files: []*FileEntry{
@@ -310,6 +340,8 @@ func TestSession_CaptureRoundSnapshot_Idempotent(t *testing.T) {
 }
 
 func TestCloneRoundSnapshots_DeepCopy(t *testing.T) {
+	t.Parallel()
+
 	src := map[string]map[int]RoundSnapshot{
 		"a.md": {1: {Content: "x"}},
 	}
@@ -321,6 +353,8 @@ func TestCloneRoundSnapshots_DeepCopy(t *testing.T) {
 }
 
 func TestLoadCritJSON_TriggersMigration(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "abc")
 	if err := os.WriteFile(identity, []byte(`{"branch":"main","review_round":1,"files":{}}`), 0o644); err != nil {

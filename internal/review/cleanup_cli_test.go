@@ -12,6 +12,8 @@ import (
 )
 
 func TestFindStaleReviews_FlatFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	oldTime := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	cj := session.CritJSON{
@@ -48,6 +50,8 @@ func TestFindStaleReviews_FlatFile(t *testing.T) {
 }
 
 func TestFindStaleReviews_FolderForm(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	oldTime := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	staleFolder := filepath.Join(dir, "stalekey1")
@@ -77,6 +81,8 @@ func TestFindStaleReviews_FolderForm(t *testing.T) {
 }
 
 func TestDeleteStaleReviews_FolderForm(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "key1")
 	if err := os.MkdirAll(folder, 0o755); err != nil {
@@ -108,6 +114,8 @@ func TestRunCleanup_NoStale(t *testing.T) {
 }
 
 func TestRemoveStaleReviewPath_FlatFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
@@ -122,6 +130,8 @@ func TestRemoveStaleReviewPath_FlatFile(t *testing.T) {
 }
 
 func TestExportedReviewAPIs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, ".crit")
 	cj := CritJSON{Branch: "main", Files: map[string]CritJSONFile{}}

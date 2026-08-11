@@ -12,6 +12,8 @@ import (
 )
 
 func TestPreviewSessionKey(t *testing.T) {
+	t.Parallel()
+
 	k1 := previewSessionKey("/app", "/app/index.html")
 	k2 := previewSessionKey("/app", "/app/index.html")
 	if k1 != k2 {
@@ -31,6 +33,8 @@ func TestPreviewSessionKey(t *testing.T) {
 }
 
 func TestPreviewSessionKey_NoCollisionWithLive(t *testing.T) {
+	t.Parallel()
+
 	cwd := "/app"
 	pk := previewSessionKey(cwd, "http://localhost:3000")
 	dk := liveSessionKey(cwd, "http://localhost:3000")
@@ -40,6 +44,8 @@ func TestPreviewSessionKey_NoCollisionWithLive(t *testing.T) {
 }
 
 func TestLooksLikePreviewArgs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	htmlFile := filepath.Join(dir, "test.html")
 	htmFile := filepath.Join(dir, "test.htm")
@@ -71,6 +77,8 @@ func TestLooksLikePreviewArgs(t *testing.T) {
 }
 
 func TestCreatePreviewSession(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	htmlFile := filepath.Join(dir, "index.html")
 	os.WriteFile(htmlFile, []byte("<html><body>hello</body></html>"), 0644)
@@ -98,6 +106,8 @@ func TestCreatePreviewSession(t *testing.T) {
 }
 
 func TestCreatePreviewSession_MissingFile(t *testing.T) {
+	t.Parallel()
+
 	sc := &serverConfig{previewFile: "/nonexistent/test.html"}
 	_, err := createPreviewSession(sc)
 	if err == nil {
@@ -106,6 +116,8 @@ func TestCreatePreviewSession_MissingFile(t *testing.T) {
 }
 
 func TestCreatePreviewSession_EmptyPath(t *testing.T) {
+	t.Parallel()
+
 	sc := &serverConfig{}
 	_, err := createPreviewSession(sc)
 	if err == nil {
@@ -140,6 +152,8 @@ func newPreviewTestServer(t *testing.T, dir string) (*Server, *Session) {
 }
 
 func TestHandlePreviewPage(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644)
 	s, _ := newPreviewTestServer(t, dir)
@@ -157,6 +171,8 @@ func TestHandlePreviewPage(t *testing.T) {
 }
 
 func TestHandlePreviewPage_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644)
 	s, _ := newPreviewTestServer(t, dir)
@@ -171,6 +187,8 @@ func TestHandlePreviewPage_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandlePreviewContent_ServesHTML(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html><body>hello</body></html>"), 0644)
 	s, _ := newPreviewTestServer(t, dir)
@@ -189,6 +207,8 @@ func TestHandlePreviewContent_ServesHTML(t *testing.T) {
 }
 
 func TestHandlePreviewContent_InjectsAgent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html><body>content</body></html>"), 0644)
 	s, _ := newPreviewTestServer(t, dir)
@@ -218,6 +238,8 @@ func TestHandlePreviewContent_InjectsAgent(t *testing.T) {
 // Fragment HTML (no </body>) must still get the agent bundle appended, otherwise
 // Pin stays stuck on "Loading…" forever — matching crit-web's raw_controller.
 func TestHandlePreviewContent_AppendsAgentWhenNoBodyTag(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<div>fragment with no body tag</div>"), 0644)
 	s, _ := newPreviewTestServer(t, dir)
@@ -247,6 +269,8 @@ func TestHandlePreviewContent_AppendsAgentWhenNoBodyTag(t *testing.T) {
 }
 
 func TestHandlePreviewContent_InjectsAgentOnSiblingHTML(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html><body>home</body></html>"), 0644)
 	chDir := filepath.Join(dir, "chapters")
@@ -271,6 +295,8 @@ func TestHandlePreviewContent_InjectsAgentOnSiblingHTML(t *testing.T) {
 }
 
 func TestHandlePreviewContent_ServesSiblingAssets(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644)
 	os.WriteFile(filepath.Join(dir, "style.css"), []byte("body { color: red; }"), 0644)
@@ -291,6 +317,8 @@ func TestHandlePreviewContent_ServesSiblingAssets(t *testing.T) {
 }
 
 func TestHandlePreviewContent_PathTraversal(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644)
 	// Create a file outside the preview dir
@@ -314,6 +342,8 @@ func TestHandlePreviewContent_PathTraversal(t *testing.T) {
 }
 
 func TestHandlePreviewContent_DirectoryListing(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644)
 	subdir := filepath.Join(dir, "subdir")
@@ -332,6 +362,8 @@ func TestHandlePreviewContent_DirectoryListing(t *testing.T) {
 }
 
 func TestHandlePreviewContent_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644)
 	s, _ := newPreviewTestServer(t, dir)
@@ -346,6 +378,8 @@ func TestHandlePreviewContent_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandlePreviewContent_NoSession(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -361,6 +395,8 @@ func TestHandlePreviewContent_NoSession(t *testing.T) {
 }
 
 func TestHandlePreviewContent_NotFound(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0644)
 	s, _ := newPreviewTestServer(t, dir)
@@ -375,6 +411,8 @@ func TestHandlePreviewContent_NotFound(t *testing.T) {
 }
 
 func TestServePreviewHTML_NoBody(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	htmlFile := filepath.Join(dir, "index.html")
 	os.WriteFile(htmlFile, []byte("<html><head></head></html>"), 0644)
@@ -398,6 +436,8 @@ func TestServePreviewHTML_NoBody(t *testing.T) {
 
 // Verify newTestServer from embed.FS compiles with preview routes registered.
 func TestPreviewRouteRegistered(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -415,5 +455,7 @@ func TestPreviewRouteRegistered(t *testing.T) {
 
 // Compile guard: ensure the frontendFS embed includes preview-related files.
 func TestFrontendFS_IncludesPreviewAssets(t *testing.T) {
+	t.Parallel()
+
 	var _ embed.FS = frontendFS
 }

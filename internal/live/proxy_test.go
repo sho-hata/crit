@@ -13,6 +13,8 @@ import (
 )
 
 func TestProxyDirector_StripsAcceptEncoding(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Accept-Encoding") != "" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -40,6 +42,8 @@ func TestProxyDirector_StripsAcceptEncoding(t *testing.T) {
 }
 
 func TestProxyDirector_InjectsConfiguredCookies(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Cookie") != "session=abc" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -65,6 +69,8 @@ func TestProxyDirector_InjectsConfiguredCookies(t *testing.T) {
 }
 
 func TestProxyDirector_PreservesCookieAndAuth(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Cookie") != "session=abc" || r.Header.Get("Authorization") != "Bearer tok" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -93,6 +99,8 @@ func TestProxyDirector_PreservesCookieAndAuth(t *testing.T) {
 }
 
 func TestProxyDirector_SetsUpstreamHost(t *testing.T) {
+	t.Parallel()
+
 	var gotHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHost = r.Host
@@ -116,6 +124,8 @@ func TestProxyDirector_SetsUpstreamHost(t *testing.T) {
 }
 
 func TestProxyModifyResponse_StripsSecurityHeaders(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'")
@@ -143,6 +153,8 @@ func TestProxyModifyResponse_StripsSecurityHeaders(t *testing.T) {
 }
 
 func TestProxyModifyResponse_InjectsAgentBeforeBodyTag(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintln(w, "<html><body><p>Hello</p></body></html>")
@@ -186,6 +198,8 @@ func TestProxyModifyResponse_InjectsAgentBeforeBodyTag(t *testing.T) {
 }
 
 func TestProxyModifyResponse_InjectsAtLastBodyTag(t *testing.T) {
+	t.Parallel()
+
 	// Simulates a page where </body> appears inside a string literal in a
 	// <script>. The agent bundle must inject before the LAST </body> (the
 	// real document terminator), not the first one (inside the script).
@@ -220,6 +234,8 @@ func TestProxyModifyResponse_InjectsAtLastBodyTag(t *testing.T) {
 }
 
 func TestProxyModifyResponse_OversizedBodyPassesThrough(t *testing.T) {
+	t.Parallel()
+
 	// Oversized text/html bodies are passed through untouched and the
 	// X-Crit-Agent-Injection: skipped-oversized header is set so the chrome
 	// can warn.
@@ -243,6 +259,8 @@ func TestProxyModifyResponse_OversizedBodyPassesThrough(t *testing.T) {
 }
 
 func TestProxyModifyResponse_SkipsInjectionWhenNoBodyTag(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintln(w, "<html><!-- no body tag -->")
@@ -265,6 +283,8 @@ func TestProxyModifyResponse_SkipsInjectionWhenNoBodyTag(t *testing.T) {
 }
 
 func TestProxyModifyResponse_SameOriginRedirectRewritten(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			http.Redirect(w, r, "/dashboard", http.StatusFound)
@@ -293,6 +313,8 @@ func TestProxyModifyResponse_SameOriginRedirectRewritten(t *testing.T) {
 }
 
 func TestProxyModifyResponse_CrossOriginRedirect200Stub(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://accounts.google.com/oauth", http.StatusFound)
 	}))
@@ -318,6 +340,8 @@ func TestProxyModifyResponse_CrossOriginRedirect200Stub(t *testing.T) {
 }
 
 func TestProxyModifyResponse_CrossOriginRedirectStubEscaping(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name        string
 		location    string
@@ -352,6 +376,8 @@ func TestProxyModifyResponse_CrossOriginRedirectStubEscaping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Location", tc.location)
 				w.WriteHeader(http.StatusFound)
@@ -385,6 +411,8 @@ func TestProxyModifyResponse_CrossOriginRedirectStubEscaping(t *testing.T) {
 }
 
 func TestProxyModifyResponse_StripsCookieDomain(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Set-Cookie", "foo=bar; Domain=upstream.test; Path=/; HttpOnly")
@@ -408,6 +436,8 @@ func TestProxyModifyResponse_StripsCookieDomain(t *testing.T) {
 }
 
 func TestProxyModifyResponse_RewritesCookieAttributes(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		setCookie string
@@ -457,6 +487,8 @@ func TestProxyModifyResponse_RewritesCookieAttributes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/html")
 				w.Header().Set("Set-Cookie", tt.setCookie)
@@ -484,6 +516,8 @@ func TestProxyModifyResponse_RewritesCookieAttributes(t *testing.T) {
 // would leave an unparseable shim — a real parser would be better but pulling
 // in a JS engine for one constant isn't worth it.
 func TestSWShim_StructureAndBalance(t *testing.T) {
+	t.Parallel()
+
 	s := swShim
 	if !strings.HasPrefix(s, "<script>") || !strings.HasSuffix(s, "</script>") {
 		t.Fatalf("swShim not wrapped in <script> tags: %q", s)
@@ -522,6 +556,8 @@ func TestSWShim_StructureAndBalance(t *testing.T) {
 }
 
 func TestProxyModifyResponse_SWShimInjectedInHTMLHead(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintln(w, `<html><head><title>app</title></head><body><script>navigator.serviceWorker.register('/sw.js');</script></body></html>`)
@@ -552,6 +588,8 @@ func TestProxyModifyResponse_SWShimInjectedInHTMLHead(t *testing.T) {
 }
 
 func TestProxyModifyResponse_JSResponsesPassThrough(t *testing.T) {
+	t.Parallel()
+
 	js := "navigator.serviceWorker.register('/sw.js');"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
@@ -573,6 +611,8 @@ func TestProxyModifyResponse_JSResponsesPassThrough(t *testing.T) {
 }
 
 func TestProxyModifyResponse_NonHTMLPassedThrough(t *testing.T) {
+	t.Parallel()
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Custom", "preserved")
@@ -597,6 +637,8 @@ func TestProxyModifyResponse_NonHTMLPassedThrough(t *testing.T) {
 }
 
 func TestProxyErrorHandler_Returns502JSON(t *testing.T) {
+	t.Parallel()
+
 	proxy, _ := newLiveProxy("http://127.0.0.1:19998", 9001, "")
 	ps := httptest.NewServer(proxy)
 	defer ps.Close()
@@ -623,6 +665,8 @@ func TestProxyErrorHandler_Returns502JSON(t *testing.T) {
 }
 
 func TestBindProxyServer_PortIsAPIPlusOne(t *testing.T) {
+	t.Parallel()
+
 	const maxAttempts = 20
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		apiLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -651,6 +695,8 @@ func TestBindProxyServer_PortIsAPIPlusOne(t *testing.T) {
 }
 
 func TestProxyModifyResponse_MidBodyReadFailureReturns502(t *testing.T) {
+	t.Parallel()
+
 	// Upstream sends Content-Length but hijacks the connection and closes it
 	// before writing any bytes. io.ReadAll returns ErrUnexpectedEOF with an
 	// empty body — must surface as a 502 (matching upstream-failure UX),
@@ -689,6 +735,8 @@ func TestProxyModifyResponse_MidBodyReadFailureReturns502(t *testing.T) {
 }
 
 func TestProxyModifyResponse_HeadInsideHTMLComment(t *testing.T) {
+	t.Parallel()
+
 	// A literal <head> inside an HTML comment must not misroute the SW shim
 	// — it must inject at the real <head>.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -723,6 +771,8 @@ func TestProxyModifyResponse_HeadInsideHTMLComment(t *testing.T) {
 }
 
 func TestProxyModifyResponse_BodyCloseInsideHTMLComment(t *testing.T) {
+	t.Parallel()
+
 	// </body> inside an HTML comment must not be picked up — agent bundle
 	// belongs before the LAST real </body>.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -757,6 +807,8 @@ func TestProxyModifyResponse_BodyCloseInsideHTMLComment(t *testing.T) {
 }
 
 func TestProxyModifyResponse_InjectsRouteAnnouncer(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		body string
@@ -768,6 +820,8 @@ func TestProxyModifyResponse_InjectsRouteAnnouncer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				_, _ = w.Write([]byte(tc.body))

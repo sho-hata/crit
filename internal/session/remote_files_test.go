@@ -12,6 +12,8 @@ import (
 )
 
 func TestParseRepoFromPRURL(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in        string
 		wantOwner string
@@ -32,6 +34,8 @@ func TestParseRepoFromPRURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
+			t.Parallel()
+
 			gotOwner, gotName, gotOK := parseRepoFromPRURL(c.in)
 			if gotOwner != c.wantOwner || gotName != c.wantName || gotOK != c.wantOK {
 				t.Errorf("parseRepoFromPRURL(%q) = (%q, %q, %v), want (%q, %q, %v)",
@@ -42,6 +46,8 @@ func TestParseRepoFromPRURL(t *testing.T) {
 }
 
 func TestDecodePRFileContent_HappyPath(t *testing.T) {
+	t.Parallel()
+
 	body := []byte("hello world\n")
 	encoded := base64.StdEncoding.EncodeToString(body)
 	raw := []byte(fmt.Sprintf(`{"content":%q,"encoding":"base64","sha":"abc"}`, encoded))
@@ -55,6 +61,8 @@ func TestDecodePRFileContent_HappyPath(t *testing.T) {
 }
 
 func TestDecodePRFileContent_StripsNewlinesInPayload(t *testing.T) {
+	t.Parallel()
+
 	// GitHub wraps base64 at 60-char lines.
 	body := strings.Repeat("abcdefghij", 20) // 200 bytes
 	encoded := base64.StdEncoding.EncodeToString([]byte(body))
@@ -77,6 +85,8 @@ func TestDecodePRFileContent_StripsNewlinesInPayload(t *testing.T) {
 }
 
 func TestDecodePRFileContent_BadEncoding(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte(`{"content":"aGk=","encoding":"utf-8"}`)
 	_, err := decodePRFileContent(raw)
 	if err == nil {
@@ -88,6 +98,8 @@ func TestDecodePRFileContent_BadEncoding(t *testing.T) {
 }
 
 func TestDecodePRFileContent_MalformedJSON(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte(`not json`)
 	_, err := decodePRFileContent(raw)
 	if err == nil {
@@ -238,6 +250,8 @@ func TestSession_ReadFileAtSHA_LocalModeUsesVCS(t *testing.T) {
 // TestRemoteFiles_FlagThreading verifies ApplySessionOverrides threads
 // DaemonCLIConfig.RemoteFiles into Session.RemoteFiles before SetFocus.
 func TestRemoteFiles_FlagThreading(t *testing.T) {
+	t.Parallel()
+
 	sess := &Session{}
 	sess.RemoteFiles = true
 	if !sess.RemoteFiles {

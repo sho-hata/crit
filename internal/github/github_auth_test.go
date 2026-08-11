@@ -8,6 +8,8 @@ import "testing"
 // "HTTP 401" / "Bad credentials" substrings to avoid false positives
 // from echoed request bodies.
 func TestIsGHAuthFailure(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		in   string
@@ -76,6 +78,8 @@ func TestIsGHAuthFailure(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := isGHAuthFailure([]byte(tt.in))
 			if got != tt.want {
 				t.Errorf("isGHAuthFailure(%q) = %v, want %v", tt.in, got, tt.want)

@@ -22,6 +22,8 @@ func storyData() map[string]any {
 
 // Level 1: project config `prompts` entry.
 func TestRenderHook_StoryGenerate_ProjectConfig(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	project := map[string]string{
 		prompt.HookStoryGenerate: "inline:PROJECT CONFIG {{.prep_path}}",
@@ -41,6 +43,8 @@ func TestRenderHook_StoryGenerate_ProjectConfig(t *testing.T) {
 // Level 2: global config `prompts` entry (wins when project has none, or when
 // project prompts are untrusted).
 func TestRenderHook_StoryGenerate_GlobalConfig(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	global := map[string]string{
 		prompt.HookStoryGenerate: "inline:GLOBAL CONFIG",
@@ -59,6 +63,8 @@ func TestRenderHook_StoryGenerate_GlobalConfig(t *testing.T) {
 
 // Level 3: project conventional file under .crit/prompts/on_story_generate.md.
 func TestRenderHook_StoryGenerate_ProjectFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	promptsDir := filepath.Join(dir, ".crit", "prompts")
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
@@ -81,6 +87,8 @@ func TestRenderHook_StoryGenerate_ProjectFile(t *testing.T) {
 
 // Level 4: global conventional file under ~/.crit/prompts/on_story_generate.md.
 func TestRenderHook_StoryGenerate_GlobalFile(t *testing.T) {
+	t.Parallel()
+
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 	promptsDir := filepath.Join(homeDir, ".crit", "prompts")
@@ -104,6 +112,8 @@ func TestRenderHook_StoryGenerate_GlobalFile(t *testing.T) {
 
 // Level 5: stock fallback when nothing above matches.
 func TestRenderHook_StoryGenerate_Stock(t *testing.T) {
+	t.Parallel()
+
 	res, err := prompt.RenderHook(nil, nil, "", "", false, prompt.HookStoryGenerate, storyData())
 	if err != nil {
 		t.Fatal(err)
@@ -123,6 +133,8 @@ func TestRenderHook_StoryGenerate_Stock(t *testing.T) {
 // fall through to global/file/stock, mirroring the existing finish-hook trust
 // gating (render.go's useProject param, driven by EvaluateTrust).
 func TestRenderHook_StoryGenerate_UntrustedProjectFallsThrough(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	project := map[string]string{
 		prompt.HookStoryGenerate: "inline:SHOULD NOT BE USED",
@@ -142,6 +154,8 @@ func TestRenderHook_StoryGenerate_UntrustedProjectFallsThrough(t *testing.T) {
 // Project-level on_story_generate.md must feed the trust content hash so
 // changing it re-blocks trust, exactly like on_finish_*.md files today.
 func TestContentHash_IncludesStoryGenerateFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	promptsDir := filepath.Join(dir, ".crit", "prompts")
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {

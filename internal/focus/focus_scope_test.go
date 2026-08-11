@@ -48,6 +48,8 @@ func writeReviewFileWithScope(t *testing.T, dir, scope string) {
 }
 
 func TestFetchSessionFocus(t *testing.T) {
+	t.Parallel()
+
 	rangeFocus := &Focus{Kind: FocusRange, BaseSHA: "abc", HeadSHA: "def"}
 
 	t.Run("returns focus from daemon", func(t *testing.T) {
@@ -63,6 +65,8 @@ func TestFetchSessionFocus(t *testing.T) {
 	})
 
 	t.Run("returns nil on error", func(t *testing.T) {
+		t.Parallel()
+
 		got := fetchSessionFocusHTTP(&http.Client{}, "", 1)
 		if got != nil {
 			t.Fatalf("got %+v want nil", got)
@@ -70,6 +74,8 @@ func TestFetchSessionFocus(t *testing.T) {
 	})
 
 	t.Run("returns nil on non-200", func(t *testing.T) {
+		t.Parallel()
+
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}))
@@ -144,6 +150,8 @@ func TestResolveCommentScope(t *testing.T) {
 }
 
 func TestCommentScopeOverrideFromFlag(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in   string
 		want CommentFocusOverride

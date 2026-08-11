@@ -11,6 +11,8 @@ import (
 var _ VCS = &GitVCS{}
 
 func TestGitVCS_Name(t *testing.T) {
+	t.Parallel()
+
 	g := &GitVCS{}
 	if got := g.Name(); got != "git" {
 		t.Errorf("Name() = %q, want %q", got, "git")
@@ -18,6 +20,8 @@ func TestGitVCS_Name(t *testing.T) {
 }
 
 func TestGitVCS_HasStagingArea(t *testing.T) {
+	t.Parallel()
+
 	g := &GitVCS{}
 	if !g.HasStagingArea() {
 		t.Error("HasStagingArea() = false, want true")
@@ -25,6 +29,8 @@ func TestGitVCS_HasStagingArea(t *testing.T) {
 }
 
 func TestGitVCS_SkipDirNames(t *testing.T) {
+	t.Parallel()
+
 	g := &GitVCS{}
 	dirs := g.SkipDirNames()
 	if len(dirs) != 1 || dirs[0] != ".git" {
@@ -33,6 +39,8 @@ func TestGitVCS_SkipDirNames(t *testing.T) {
 }
 
 func TestDetectVCS_GitOverride(t *testing.T) {
+	t.Parallel()
+
 	vcs := DetectVCS("git")
 	if vcs == nil || vcs.Name() != "git" {
 		t.Errorf("DetectVCS(\"git\") should return GitVCS, got %v", vcs)
@@ -55,6 +63,8 @@ func sortChanges(in []FileChange) []FileChange {
 }
 
 func TestChangedFilesBetweenSHAs_AddOneFile(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	head := commitAt(t, dir, "a.txt", "hi", "add a")
@@ -70,6 +80,8 @@ func TestChangedFilesBetweenSHAs_AddOneFile(t *testing.T) {
 }
 
 func TestChangedFilesBetweenSHAs_AddAndModify(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	commitAt(t, dir, "b.txt", "v1", "add b")
 	base := gitT(t, dir, "rev-parse", "HEAD")
@@ -93,6 +105,8 @@ func TestChangedFilesBetweenSHAs_AddAndModify(t *testing.T) {
 }
 
 func TestChangedFilesBetweenSHAs_Rename(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	commitAt(t, dir, "old.go", "package x\n", "add old")
 	base := gitT(t, dir, "rev-parse", "HEAD")
@@ -118,6 +132,8 @@ func TestChangedFilesBetweenSHAs_Rename(t *testing.T) {
 }
 
 func TestChangedFilesBetweenSHAs_Deletion(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	commitAt(t, dir, "c.txt", "x", "add c")
 	base := gitT(t, dir, "rev-parse", "HEAD")
@@ -136,6 +152,8 @@ func TestChangedFilesBetweenSHAs_Deletion(t *testing.T) {
 }
 
 func TestChangedFilesBetweenSHAs_UntrackedNotIncluded(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	head := commitAt(t, dir, "a.txt", "hi", "add a")
@@ -154,6 +172,8 @@ func TestChangedFilesBetweenSHAs_UntrackedNotIncluded(t *testing.T) {
 }
 
 func TestFileDiffBetweenSHAs_HappyPath(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	commitAt(t, dir, "a.txt", "line1\nline2\n", "add a")
 	base := gitT(t, dir, "rev-parse", "HEAD")
@@ -170,6 +190,8 @@ func TestFileDiffBetweenSHAs_HappyPath(t *testing.T) {
 }
 
 func TestFileDiffBetweenSHAs_IdenticalSHAs(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	commitAt(t, dir, "a.txt", "line1\n", "add a")
 	sha := gitT(t, dir, "rev-parse", "HEAD")
@@ -183,6 +205,8 @@ func TestFileDiffBetweenSHAs_IdenticalSHAs(t *testing.T) {
 }
 
 func TestFileDiffBetweenSHAs_MissingPath(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	head := commitAt(t, dir, "a.txt", "x", "add a")
@@ -196,6 +220,8 @@ func TestFileDiffBetweenSHAs_MissingPath(t *testing.T) {
 }
 
 func TestReadFileAtSHA_HappyPath(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	want := "hello world\n"
 	commitAt(t, dir, "a.txt", want, "add a")
@@ -211,6 +237,8 @@ func TestReadFileAtSHA_HappyPath(t *testing.T) {
 }
 
 func TestReadFileAtSHA_MissingPath(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	commitAt(t, dir, "a.txt", "x", "add a")
 	sha := gitT(t, dir, "rev-parse", "HEAD")
@@ -225,6 +253,8 @@ func TestReadFileAtSHA_MissingPath(t *testing.T) {
 }
 
 func TestReadFileAtSHA_InvalidRef(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	// "xyz" is not a valid object name (vs a 40-hex string git silently
 	// resolves to "missing commit but valid syntax").
@@ -235,6 +265,8 @@ func TestReadFileAtSHA_InvalidRef(t *testing.T) {
 }
 
 func TestHasObject_Existing(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	sha := gitT(t, dir, "rev-parse", "HEAD")
 	if !HasObject(sha, dir) {
@@ -243,6 +275,8 @@ func TestHasObject_Existing(t *testing.T) {
 }
 
 func TestHasObject_Bogus(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	if HasObject("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", dir) {
 		t.Error("HasObject(bogus) = true, want false")
@@ -250,6 +284,8 @@ func TestHasObject_Bogus(t *testing.T) {
 }
 
 func TestHasObject_NonCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	// Tree SHA of HEAD — not a commit.
 	treeSHA := gitT(t, dir, "rev-parse", "HEAD^{tree}")

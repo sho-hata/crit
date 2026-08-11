@@ -12,6 +12,8 @@ import (
 // recompute can't change the result (flag off, all-added/untracked/deleted
 // files, or no VCS), and only recomputes for a normal modified file.
 func TestWhitespaceIgnoredHunks_ShortCircuits(t *testing.T) {
+	t.Parallel()
+
 	sentinel := []vcs.DiffHunk{{Header: "@@ sentinel @@"}}
 
 	tests := []struct {

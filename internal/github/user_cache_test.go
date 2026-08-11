@@ -3,6 +3,8 @@ package github
 import "testing"
 
 func TestUserNameCache_LookupEmpty(t *testing.T) {
+	t.Parallel()
+
 	c := userNameCache{}
 	if got := c.lookup(""); got != "" {
 		t.Errorf("lookup(\"\") = %q, want empty", got)
@@ -10,6 +12,8 @@ func TestUserNameCache_LookupEmpty(t *testing.T) {
 }
 
 func TestUserNameCache_CacheHit(t *testing.T) {
+	t.Parallel()
+
 	c := userNameCache{"alice": "Alice Liddell"}
 	if got := c.lookup("alice"); got != "Alice Liddell" {
 		t.Errorf("lookup = %q, want cached name", got)
@@ -17,6 +21,8 @@ func TestUserNameCache_CacheHit(t *testing.T) {
 }
 
 func TestVersionAtLeast(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		version string
 		major   int

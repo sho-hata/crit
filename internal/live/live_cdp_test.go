@@ -12,6 +12,8 @@ import (
 )
 
 func TestNormalizeCDPBaseURL(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		in, want string
 	}{
@@ -30,6 +32,8 @@ func TestNormalizeCDPBaseURL(t *testing.T) {
 }
 
 func TestResolveCDPURL(t *testing.T) {
+	t.Parallel()
+
 	if got := resolveCDPURL("http://127.0.0.1:9333", "http://ignored"); got != "http://127.0.0.1:9333" {
 		t.Fatalf("flag = %q", got)
 	}
@@ -42,6 +46,8 @@ func TestResolveCDPURL(t *testing.T) {
 }
 
 func TestFormatCDPCookies(t *testing.T) {
+	t.Parallel()
+
 	got := formatCDPCookies([]cdpCookie{
 		{Name: "session", Value: "abc"},
 		{Name: "", Value: "skip"},
@@ -53,6 +59,8 @@ func TestFormatCDPCookies(t *testing.T) {
 }
 
 func TestMergeCookieHeaders_LaterOverrides(t *testing.T) {
+	t.Parallel()
+
 	got := mergeCookieHeaders("session=from_cdp; theme=dark", "session=manual")
 	if got != "session=manual; theme=dark" {
 		t.Fatalf("got %q", got)
@@ -60,6 +68,8 @@ func TestMergeCookieHeaders_LaterOverrides(t *testing.T) {
 }
 
 func TestMergeCookieHeaders_EmptyParts(t *testing.T) {
+	t.Parallel()
+
 	got := mergeCookieHeaders("", "a=1", "", "b=2")
 	if got != "a=1; b=2" {
 		t.Fatalf("got %q", got)
@@ -67,6 +77,8 @@ func TestMergeCookieHeaders_EmptyParts(t *testing.T) {
 }
 
 func TestFetchCDPCookies_FakeServer(t *testing.T) {
+	t.Parallel()
+
 	var upgrader websocket.Upgrader
 	mux := http.NewServeMux()
 
@@ -127,6 +139,8 @@ func TestFetchCDPCookies_FakeServer(t *testing.T) {
 }
 
 func TestFetchCDPCookies_FakeServer_NewPageFallback(t *testing.T) {
+	t.Parallel()
+
 	var upgrader websocket.Upgrader
 	mux := http.NewServeMux()
 
@@ -190,6 +204,8 @@ func TestFetchCDPCookies_FakeServer_NewPageFallback(t *testing.T) {
 }
 
 func TestFetchCDPCookies_Unreachable(t *testing.T) {
+	t.Parallel()
+
 	_, err := defaultFetchCDPCookies(context.Background(), "http://127.0.0.1:1", "http://127.0.0.1:1/")
 	if err == nil {
 		t.Fatal("expected error for unreachable CDP endpoint")
@@ -200,6 +216,8 @@ func TestFetchCDPCookies_Unreachable(t *testing.T) {
 }
 
 func TestMergeCookieHeaders_InvalidPairSkipped(t *testing.T) {
+	t.Parallel()
+
 	got := mergeCookieHeaders("valid=1", "invalid-no-equals", "b=2")
 	if got != "valid=1; b=2" {
 		t.Fatalf("got %q", got)
@@ -207,6 +225,8 @@ func TestMergeCookieHeaders_InvalidPairSkipped(t *testing.T) {
 }
 
 func TestCdpListTargets_BadStatus(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusInternalServerError)
 	}))
@@ -219,6 +239,8 @@ func TestCdpListTargets_BadStatus(t *testing.T) {
 }
 
 func TestCdpNewPageWebSocketURL_BadStatus(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusInternalServerError)
 	}))
@@ -231,6 +253,8 @@ func TestCdpNewPageWebSocketURL_BadStatus(t *testing.T) {
 }
 
 func TestCdpNetworkGetCookies_CDPServerError(t *testing.T) {
+	t.Parallel()
+
 	var upgrader websocket.Upgrader
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

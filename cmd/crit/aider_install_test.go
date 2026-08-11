@@ -39,6 +39,8 @@ func toStringSlice(t *testing.T, v any) []string {
 }
 
 func TestMergeAiderConfYAML_EmptyDocument(t *testing.T) {
+	t.Parallel()
+
 	out, err := mergeAiderConfYAML(nil, ".crit/aider-conventions.md")
 	if err != nil {
 		t.Fatal(err)
@@ -54,6 +56,8 @@ func TestMergeAiderConfYAML_EmptyDocument(t *testing.T) {
 }
 
 func TestMergeAiderConfYAML_PreservesExistingKeys(t *testing.T) {
+	t.Parallel()
+
 	input := []byte(`model: gpt-4
 auto-commits: false
 read:
@@ -80,6 +84,8 @@ read:
 }
 
 func TestMergeAiderConfYAML_Idempotent(t *testing.T) {
+	t.Parallel()
+
 	input := []byte(`model: gpt-4
 read:
   - foo.md
@@ -109,6 +115,8 @@ read:
 }
 
 func TestMergeAiderConfYAML_AlreadyPresent(t *testing.T) {
+	t.Parallel()
+
 	input := []byte(`read:
   - .crit/aider-conventions.md
 `)
@@ -124,6 +132,8 @@ func TestMergeAiderConfYAML_AlreadyPresent(t *testing.T) {
 }
 
 func TestMergeAiderConfYAML_ScalarReadPromotedToSequence(t *testing.T) {
+	t.Parallel()
+
 	input := []byte(`read: foo.md
 model: gpt-4
 `)
@@ -143,6 +153,8 @@ model: gpt-4
 }
 
 func TestMergeAiderConfYAML_NoReadKey(t *testing.T) {
+	t.Parallel()
+
 	input := []byte(`model: gpt-4
 `)
 	out, err := mergeAiderConfYAML(input, ".crit/aider-conventions.md")
@@ -160,6 +172,8 @@ func TestMergeAiderConfYAML_NoReadKey(t *testing.T) {
 }
 
 func TestMergeAiderConfFile_CreatesMissingFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".aider.conf.yml")
 
@@ -178,6 +192,8 @@ func TestMergeAiderConfFile_CreatesMissingFile(t *testing.T) {
 }
 
 func TestMergeAiderConfFile_PreservesAndDedupes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".aider.conf.yml")
 	original := []byte(`model: gpt-4
@@ -224,6 +240,8 @@ read:
 }
 
 func TestAiderPaths_ProjectVsGlobal(t *testing.T) {
+	t.Parallel()
+
 	cwd := "/tmp/proj"
 	home := "/home/me"
 
@@ -251,6 +269,8 @@ func TestAiderPaths_ProjectVsGlobal(t *testing.T) {
 }
 
 func TestIsGlobalInstall(t *testing.T) {
+	t.Parallel()
+
 	if !isGlobalInstall("/home/me", "/home/me") {
 		t.Error("equal paths should be global")
 	}
@@ -380,6 +400,8 @@ func TestInstallAider_ProjectMode(t *testing.T) {
 }
 
 func TestInstallAiderAt_GlobalMode(t *testing.T) {
+	t.Parallel()
+
 	// In global mode (cwd == home), conventions land at $HOME/.crit-conventions.md
 	// and the conf is $HOME/.aider.conf.yml. Use a temp dir as both cwd and
 	// home so we don't touch the real home dir.
@@ -407,6 +429,8 @@ func TestInstallAiderAt_GlobalMode(t *testing.T) {
 }
 
 func TestMergeAiderConfYAML_MultiDocRejected(t *testing.T) {
+	t.Parallel()
+
 	input := []byte(`model: gpt-4
 read:
   - foo.md
@@ -423,6 +447,8 @@ model: gpt-3
 }
 
 func TestMergeAiderConfFile_MultiDocLeavesFileUntouched(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".aider.conf.yml")
 	original := []byte("model: gpt-4\nread:\n  - foo.md\n---\nmodel: gpt-3\n")
@@ -443,6 +469,8 @@ func TestMergeAiderConfFile_MultiDocLeavesFileUntouched(t *testing.T) {
 }
 
 func TestMergeAiderConfYAML_StripsBOM(t *testing.T) {
+	t.Parallel()
+
 	input := append([]byte{0xEF, 0xBB, 0xBF}, []byte("model: gpt-4\nread:\n  - foo.md\n")...)
 	out, err := mergeAiderConfYAML(input, ".crit/aider-conventions.md")
 	if err != nil {
@@ -460,6 +488,8 @@ func TestMergeAiderConfYAML_StripsBOM(t *testing.T) {
 }
 
 func TestMergeAiderConfYAML_MalformedReturnsError(t *testing.T) {
+	t.Parallel()
+
 	// Tab indentation under a key is invalid in YAML.
 	input := []byte("model: gpt-4\nread:\n\t- foo.md\n")
 	_, err := mergeAiderConfYAML(input, ".crit/aider-conventions.md")
@@ -469,6 +499,8 @@ func TestMergeAiderConfYAML_MalformedReturnsError(t *testing.T) {
 }
 
 func TestMergeAiderConfFile_MalformedLeavesFileUntouched(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".aider.conf.yml")
 	original := []byte("model: gpt-4\nread:\n\t- foo.md\n")
@@ -487,6 +519,8 @@ func TestMergeAiderConfFile_MalformedLeavesFileUntouched(t *testing.T) {
 }
 
 func TestAiderInstallAtomicWrite_CleansUpTempfile(t *testing.T) {
+	t.Parallel()
+
 	// Atomic write: after a successful rename, no tempfile siblings should
 	// remain. This indirectly proves rename happened (and didn't leave a
 	// half-written file behind). Covers the aider install code path which
@@ -517,6 +551,8 @@ func TestAiderInstallAtomicWrite_CleansUpTempfile(t *testing.T) {
 }
 
 func TestIsMultiDocYAML(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		in   string
@@ -531,6 +567,8 @@ func TestIsMultiDocYAML(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := isMultiDocYAML([]byte(tc.in)); got != tc.want {
 				t.Errorf("isMultiDocYAML(%q) = %v, want %v", tc.in, got, tc.want)
 			}

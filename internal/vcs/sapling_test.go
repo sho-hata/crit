@@ -12,6 +12,8 @@ import (
 var _ VCS = &SaplingVCS{}
 
 func TestSaplingVCS_Name(t *testing.T) {
+	t.Parallel()
+
 	s := &SaplingVCS{}
 	if got := s.Name(); got != "sl" {
 		t.Errorf("Name() = %q, want %q", got, "sl")
@@ -19,6 +21,8 @@ func TestSaplingVCS_Name(t *testing.T) {
 }
 
 func TestSaplingVCS_HasStagingArea(t *testing.T) {
+	t.Parallel()
+
 	s := &SaplingVCS{}
 	if s.HasStagingArea() {
 		t.Error("HasStagingArea() = true, want false")
@@ -26,6 +30,8 @@ func TestSaplingVCS_HasStagingArea(t *testing.T) {
 }
 
 func TestSaplingVCS_SkipDirNames(t *testing.T) {
+	t.Parallel()
+
 	s := &SaplingVCS{}
 	dirs := s.SkipDirNames()
 	want := map[string]bool{".sl": true, ".git": true}
@@ -40,6 +46,8 @@ func TestSaplingVCS_SkipDirNames(t *testing.T) {
 }
 
 func TestSaplingVCS_ChangedFilesScoped_Staged(t *testing.T) {
+	t.Parallel()
+
 	s := &SaplingVCS{}
 	got, err := s.ChangedFilesScoped("staged", "")
 	if err != nil {
@@ -51,6 +59,8 @@ func TestSaplingVCS_ChangedFilesScoped_Staged(t *testing.T) {
 }
 
 func TestSaplingVCS_ChangedFilesScoped_Unstaged(t *testing.T) {
+	t.Parallel()
+
 	s := &SaplingVCS{}
 	got, err := s.ChangedFilesScoped("unstaged", "")
 	if err != nil {
@@ -62,6 +72,8 @@ func TestSaplingVCS_ChangedFilesScoped_Unstaged(t *testing.T) {
 }
 
 func TestSaplingVCS_DefaultBranchOverride(t *testing.T) {
+	t.Parallel()
+
 	s := &SaplingVCS{}
 	s.SetDefaultBranchOverride("develop")
 	if got := s.GetDefaultBranchOverride(); got != "develop" {
@@ -73,6 +85,8 @@ func TestSaplingVCS_DefaultBranchOverride(t *testing.T) {
 }
 
 func TestParseSaplingCommitLog(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -119,6 +133,8 @@ func TestParseSaplingCommitLog(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := parseSaplingCommitLog(tt.input)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d commits, want %d\ngot:  %+v\nwant: %+v", len(got), len(tt.want), got, tt.want)
@@ -133,6 +149,8 @@ func TestParseSaplingCommitLog(t *testing.T) {
 }
 
 func TestParseRemoteBookmarks(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -167,6 +185,8 @@ func TestParseRemoteBookmarks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := parseRemoteBookmarks(tt.input)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d bookmarks, want %d\ngot:  %v\nwant: %v", len(got), len(tt.want), got, tt.want)
@@ -181,6 +201,8 @@ func TestParseRemoteBookmarks(t *testing.T) {
 }
 
 func TestDetectVCS_SaplingOverride(t *testing.T) {
+	t.Parallel()
+
 	for _, override := range []string{"sl", "sapling"} {
 		v := DetectVCS(override)
 		if v == nil {
@@ -197,6 +219,8 @@ func TestDetectVCS_SaplingOverride(t *testing.T) {
 }
 
 func TestHasSLDirFrom_DetectsDotSL(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	child := filepath.Join(root, "nested", "repo")
 	if err := os.MkdirAll(filepath.Join(root, ".sl"), 0o755); err != nil {
@@ -211,6 +235,8 @@ func TestHasSLDirFrom_DetectsDotSL(t *testing.T) {
 }
 
 func TestHasSLDirFrom_DoesNotDetectDotGitSL(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	child := filepath.Join(root, "nested", "repo")
 	if err := os.MkdirAll(filepath.Join(root, ".git", "sl"), 0o755); err != nil {
@@ -262,6 +288,8 @@ func initTestSaplingRepo(t *testing.T) string {
 }
 
 func TestSaplingVCS_ChangedFilesBetweenSHAs(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestSaplingRepo(t)
 	s := &SaplingVCS{}
 	base := runSL(t, dir, "log", "-r", ".", "-T", "{node}")
@@ -287,6 +315,8 @@ func TestSaplingVCS_ChangedFilesBetweenSHAs(t *testing.T) {
 }
 
 func TestSaplingVCS_ReadFileAtSHA(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestSaplingRepo(t)
 	s := &SaplingVCS{}
 	sha := runSL(t, dir, "log", "-r", ".", "-T", "{node}")
@@ -307,6 +337,8 @@ func TestSaplingVCS_ReadFileAtSHA(t *testing.T) {
 }
 
 func TestSaplingVCS_HasObject(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestSaplingRepo(t)
 	s := &SaplingVCS{}
 	sha := runSL(t, dir, "log", "-r", ".", "-T", "{node}")
@@ -319,6 +351,8 @@ func TestSaplingVCS_HasObject(t *testing.T) {
 }
 
 func TestSaplingVCS_DiffNumstatBetweenSHAsRequiresBoth(t *testing.T) {
+	t.Parallel()
+
 	s := &SaplingVCS{}
 	if _, err := s.DiffNumstatBetweenSHAs("", "abc", t.TempDir()); err == nil {
 		t.Fatal("expected error for empty base")

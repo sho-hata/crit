@@ -10,6 +10,8 @@ import (
 )
 
 func TestJoinParts(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in   []string
 		want string
@@ -59,6 +61,8 @@ func TestPrintSessionSummary_FormatsParts(t *testing.T) {
 }
 
 func TestReadReviewCycleResponse_OK(t *testing.T) {
+	t.Parallel()
+
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(strings.NewReader(`{"approved":true}`)),
@@ -73,6 +77,8 @@ func TestReadReviewCycleResponse_OK(t *testing.T) {
 }
 
 func TestReadReviewCycleResponse_GatewayTimeout(t *testing.T) {
+	t.Parallel()
+
 	resp := &http.Response{
 		StatusCode: http.StatusGatewayTimeout,
 		Body:       io.NopCloser(strings.NewReader("")),

@@ -14,6 +14,8 @@ import (
 )
 
 func TestHandleFinish_BlockedWithoutPromptTrust(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	dir := session.RepoRoot
 	os.WriteFile(filepath.Join(dir, ".crit.config.json"), []byte(`{
@@ -64,6 +66,8 @@ func TestHandleFinish_CustomProjectPrompt(t *testing.T) {
 }
 
 func TestBuildPromptContext_StoryModeWhenSessionHasStory(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newTestServer(t)
 	sess.Mode = "git"
 	sess.SetStory(&session.Story{Version: 1})
@@ -75,6 +79,8 @@ func TestBuildPromptContext_StoryModeWhenSessionHasStory(t *testing.T) {
 }
 
 func TestHandleConfig_ProjectPromptUntrusted(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	dir := session.RepoRoot
 	os.WriteFile(filepath.Join(dir, ".crit.config.json"), []byte(`{
@@ -94,6 +100,8 @@ func TestHandleConfig_ProjectPromptUntrusted(t *testing.T) {
 }
 
 func TestRenderProjectPromptPreview_DiscoveredOnly(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	dir := session.RepoRoot
 	promptDir := filepath.Join(dir, ".crit", "prompts")
@@ -111,6 +119,8 @@ func TestRenderProjectPromptPreview_DiscoveredOnly(t *testing.T) {
 }
 
 func TestRenderProjectPromptPreview_SkipsStockFallback(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	dir := session.RepoRoot
 	promptDir := filepath.Join(dir, ".crit", "prompts")
@@ -131,6 +141,8 @@ func TestRenderProjectPromptPreview_SkipsStockFallback(t *testing.T) {
 }
 
 func TestRenderProjectPromptPreview_ConfigPrompts(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	dir := session.RepoRoot
 	os.WriteFile(filepath.Join(dir, ".crit.config.json"), []byte(`{
@@ -150,6 +162,8 @@ func TestRenderProjectPromptPreview_ConfigPrompts(t *testing.T) {
 }
 
 func TestRenderProjectPromptPreview_DiscoveredUnresolved(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	dir := session.RepoRoot
 	promptDir := filepath.Join(dir, ".crit", "prompts")

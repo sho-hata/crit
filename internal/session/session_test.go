@@ -53,6 +53,8 @@ func newTestSession(t *testing.T) *Session {
 }
 
 func TestSession_FileByPath(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	f := s.FileByPath("plan.md")
 	if f == nil {
@@ -67,6 +69,8 @@ func TestSession_FileByPath(t *testing.T) {
 }
 
 func TestSession_AddComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, ok := s.AddComment("plan.md", 1, 3, "", "Rethink this", "", "", "")
 	if !ok {
@@ -86,6 +90,8 @@ func TestSession_AddComment(t *testing.T) {
 }
 
 func TestSession_AddComment_NonexistentFile(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	_, ok := s.AddComment("nonexistent.go", 1, 1, "", "test", "", "", "")
 	if ok {
@@ -94,6 +100,8 @@ func TestSession_AddComment_NonexistentFile(t *testing.T) {
 }
 
 func TestSession_UpdateComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, _ := s.AddComment("plan.md", 1, 1, "", "original", "", "", "")
 	updated, ok := s.UpdateComment("plan.md", c.ID, "updated body")
@@ -106,6 +114,8 @@ func TestSession_UpdateComment(t *testing.T) {
 }
 
 func TestSession_UpdateComment_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	_, ok := s.UpdateComment("plan.md", "c999", "body")
 	if ok {
@@ -114,6 +124,8 @@ func TestSession_UpdateComment_NotFound(t *testing.T) {
 }
 
 func TestSession_DeleteComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, _ := s.AddComment("plan.md", 1, 1, "", "to delete", "", "", "")
 	if !s.DeleteComment("plan.md", c.ID) {
@@ -125,6 +137,8 @@ func TestSession_DeleteComment(t *testing.T) {
 }
 
 func TestSession_DeleteComment_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	if s.DeleteComment("plan.md", "c999") {
 		t.Error("expected delete to fail for nonexistent comment")
@@ -135,6 +149,8 @@ func TestSession_DeleteComment_NotFound(t *testing.T) {
 // deleting a pushed comment splices it out AND records its GitHub ID so the
 // next `crit push` can issue DELETE upstream.
 func TestSession_DeleteComment_WithGitHubID_QueuesPendingDelete(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, _ := s.AddComment("plan.md", 1, 1, "", "pushed", "", "", "")
 	// Stamp a GitHubID directly to simulate a previously-pushed comment.
@@ -164,6 +180,8 @@ func TestSession_DeleteComment_WithGitHubID_QueuesPendingDelete(t *testing.T) {
 // TestSession_DeleteComment_WithoutGitHubID_NoPending verifies that deleting
 // a comment that was never pushed does not pollute the pending-deletes list.
 func TestSession_DeleteComment_WithoutGitHubID_NoPending(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, _ := s.AddComment("plan.md", 1, 1, "", "local-only", "", "", "")
 	if !s.DeleteComment("plan.md", c.ID) {
@@ -180,6 +198,8 @@ func TestSession_DeleteComment_WithoutGitHubID_NoPending(t *testing.T) {
 // DELETE intents are not appended (a no-op double-delete from a flaky client
 // must not balloon the list).
 func TestSession_DeleteComment_PendingDeleteIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.mu.Lock()
 	s.appendPendingGHDelete(99)
@@ -196,6 +216,8 @@ func TestSession_DeleteComment_PendingDeleteIsIdempotent(t *testing.T) {
 // deleting a pushed reply queues its GitHub ID (replies share the same
 // /pulls/comments/{id} endpoint as root comments).
 func TestSession_DeleteReply_WithGitHubID_QueuesPendingDelete(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, _ := s.AddComment("plan.md", 1, 1, "", "parent", "", "", "")
 	r, _ := s.AddReply("plan.md", c.ID, "reply body", "", "")
@@ -229,6 +251,8 @@ func TestSession_DeleteReply_WithGitHubID_QueuesPendingDelete(t *testing.T) {
 // PendingGitHubDeletes. A subsequent in-memory write from the daemon must NOT
 // resurrect those IDs.
 func TestSession_PendingGHDeletes_NotResurrectedAfterPushDrain(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Pre-existing comment so the file (and review.json) stays non-empty
@@ -311,6 +335,8 @@ func TestSession_PendingGHDeletes_NotResurrectedAfterPushDrain(t *testing.T) {
 // disk, even if a concurrent push wrote an empty queue. Only previously-seen
 // IDs (in lastLoaded) may be dropped.
 func TestSession_PendingGHDeletes_FreshlyAddedSurvivesConcurrentDrain(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Push (simulated) wrote review.json with empty PendingGitHubDeletes and
@@ -350,6 +376,8 @@ func TestSession_PendingGHDeletes_FreshlyAddedSurvivesConcurrentDrain(t *testing
 }
 
 func TestSession_GetComments_ReturnsCopy(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "test", "", "", "")
 	comments := s.GetComments("plan.md")
@@ -360,6 +388,8 @@ func TestSession_GetComments_ReturnsCopy(t *testing.T) {
 }
 
 func TestSession_GetAllComments(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "md comment", "", "", "")
 	s.AddComment("main.go", 1, 1, "", "go comment", "", "", "")
@@ -374,6 +404,8 @@ func TestSession_GetAllComments(t *testing.T) {
 }
 
 func TestSession_TotalCommentCount(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "one", "", "", "")
 	s.AddComment("plan.md", 2, 2, "", "two", "", "", "")
@@ -385,6 +417,8 @@ func TestSession_TotalCommentCount(t *testing.T) {
 }
 
 func TestSession_NewCommentCount(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "new one", "", "", "")
 	s.AddComment("plan.md", 2, 2, "", "new two", "", "", "")
@@ -410,6 +444,8 @@ func TestSession_NewCommentCount(t *testing.T) {
 }
 
 func TestSession_NewCommentCount_AllCarriedForward(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.mu.Lock()
 	f := s.fileByPathLocked("plan.md")
@@ -428,6 +464,8 @@ func TestSession_NewCommentCount_AllCarriedForward(t *testing.T) {
 }
 
 func TestSession_UnresolvedCommentCount(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.mu.Lock()
 	f := s.fileByPathLocked("plan.md")
@@ -451,6 +489,8 @@ func TestSession_UnresolvedCommentCount(t *testing.T) {
 }
 
 func TestSession_WriteFiles(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "fix", "", "", "")
 
@@ -478,6 +518,8 @@ func TestSession_WriteFiles(t *testing.T) {
 }
 
 func TestSession_WriteFiles_NoCommentsSkips(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.WriteFiles()
 
@@ -487,6 +529,8 @@ func TestSession_WriteFiles_NoCommentsSkips(t *testing.T) {
 }
 
 func TestSession_LoadCritJSON(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "persisted comment", "", "", "")
 
@@ -509,6 +553,8 @@ func TestSession_LoadCritJSON(t *testing.T) {
 }
 
 func TestSession_LoadCritJSON_NoHash(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Write a .crit.json without file_hash fields (simulating agent-generated review)
@@ -549,6 +595,8 @@ func TestSession_LoadCritJSON_NoHash(t *testing.T) {
 }
 
 func TestSession_WriteFiles_PreservesNonSessionFiles(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Simulate `crit comment` having written a comment on a file not in the session
@@ -589,6 +637,8 @@ func TestSession_WriteFiles_PreservesNonSessionFiles(t *testing.T) {
 }
 
 func TestSession_LoadCritJSON_MismatchedHash(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Write a .crit.json with a stale/wrong file_hash
@@ -630,6 +680,8 @@ func TestSession_LoadCritJSON_MismatchedHash(t *testing.T) {
 }
 
 func TestSession_SignalRoundComplete(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "fix this", "", "", "")
 	s.AddComment("main.go", 1, 1, "", "and this", "", "", "")
@@ -659,6 +711,8 @@ func TestSession_SignalRoundComplete(t *testing.T) {
 }
 
 func TestSession_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
@@ -675,6 +729,8 @@ func TestSession_ConcurrentAccess(t *testing.T) {
 }
 
 func TestSession_Subscribe(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	ch := s.Subscribe()
 	defer s.Unsubscribe(ch)
@@ -689,6 +745,8 @@ func TestSession_Subscribe(t *testing.T) {
 }
 
 func TestSession_GetSessionInfo(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "note", "", "", "")
 	s.Files[1].DiffHunks = []DiffHunk{
@@ -722,6 +780,8 @@ func TestSession_GetSessionInfo(t *testing.T) {
 }
 
 func TestDetectFileType(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		path     string
 		expected string
@@ -743,6 +803,8 @@ func TestDetectFileType(t *testing.T) {
 }
 
 func TestFilterBinary(t *testing.T) {
+	t.Parallel()
+
 	changes := []vcs.FileChange{
 		{Path: "main.go", Status: "modified"},
 		{Path: "lib.dylib", Status: "untracked"},
@@ -765,6 +827,8 @@ func TestFilterBinary(t *testing.T) {
 }
 
 func TestFilterBinaryEmpty(t *testing.T) {
+	t.Parallel()
+
 	got := filterBinary(nil)
 	if len(got) != 0 {
 		t.Errorf("filterBinary(nil) returned %d files, want 0", len(got))
@@ -772,6 +836,8 @@ func TestFilterBinaryEmpty(t *testing.T) {
 }
 
 func TestSession_CritJSONPath_Default(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	want := filepath.Join(s.RepoRoot, ".crit")
 	if got := s.critJSONPath(); got != want {
@@ -780,6 +846,8 @@ func TestSession_CritJSONPath_Default(t *testing.T) {
 }
 
 func TestSession_CritJSONPath_OutputDir(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	outDir := t.TempDir()
 	s.OutputDir = outDir
@@ -791,6 +859,8 @@ func TestSession_CritJSONPath_OutputDir(t *testing.T) {
 }
 
 func TestSession_WriteFiles_OutputDir(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	outDir := t.TempDir()
 	s.OutputDir = outDir
@@ -821,6 +891,8 @@ func TestSession_WriteFiles_OutputDir(t *testing.T) {
 }
 
 func TestSession_LoadCritJSON_OutputDir(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	outDir := t.TempDir()
 	s.OutputDir = outDir
@@ -845,6 +917,8 @@ func TestSession_LoadCritJSON_OutputDir(t *testing.T) {
 }
 
 func TestGetFileDiffSnapshotScoped_AddedFileUnstagedScope(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	gitT(t, dir, "checkout", "-b", "feature")
 	path := filepath.Join(dir, "main.go")
@@ -889,6 +963,8 @@ func TestGetFileDiffSnapshotScoped_AddedFileUnstagedScope(t *testing.T) {
 }
 
 func TestGetFileDiffSnapshotScoped_AddedFileStagedScope(t *testing.T) {
+	t.Parallel()
+
 	// Twin of the unstaged case: a file committed on the branch (status "added"
 	// vs merge-base) that is modified AND staged must show the real index-vs-HEAD
 	// delta in "staged" scope, not the entire file as newly added.
@@ -937,6 +1013,8 @@ func TestGetFileDiffSnapshotScoped_AddedFileStagedScope(t *testing.T) {
 }
 
 func TestGetFileDiffSnapshotScoped_UntrackedFileUnstagedScope(t *testing.T) {
+	t.Parallel()
+
 	// Truly untracked files should still show the full file as added in unstaged scope
 	s := newTestSession(t)
 	s.Files[1].Status = "untracked"
@@ -964,6 +1042,8 @@ func TestGetFileDiffSnapshotScoped_UntrackedFileUnstagedScope(t *testing.T) {
 }
 
 func TestSession_GlobalCommentIDs(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c1, _ := s.AddComment("plan.md", 1, 1, "", "md comment", "", "", "")
 	c2, _ := s.AddComment("main.go", 1, 1, "", "go comment", "", "", "")
@@ -1388,6 +1468,8 @@ func TestNewSessionFromFiles_UsesRepoRelativePaths(t *testing.T) {
 // TestParseUnifiedDiff_WithANSIColors verifies that ANSI color codes in git diff
 // output break ParseUnifiedDiff. This motivates the --no-color flag on git commands.
 func TestParseUnifiedDiff_WithANSIColors(t *testing.T) {
+	t.Parallel()
+
 	// Simulate git diff output with color.diff=always — ANSI codes wrap the @@ header and +/- lines
 	coloredDiff := "" +
 		"\033[1mdiff --git a/file.go b/file.go\033[m\n" +
@@ -1429,6 +1511,8 @@ func TestParseUnifiedDiff_WithANSIColors(t *testing.T) {
 // TestSession_CarryForward_PreservesAuthor verifies that when comments are carried
 // forward from a previous round, the Author field is preserved.
 func TestSession_CarryForward_PreservesAuthor(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Write a .crit.json with a comment that has an author set (e.g. from crit pull)
@@ -1476,6 +1560,8 @@ func TestSession_CarryForward_PreservesAuthor(t *testing.T) {
 }
 
 func TestCarryForward_FileScopeComments_NoDuplicates(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	fileComment := Comment{
@@ -1511,6 +1597,8 @@ func TestCarryForward_FileScopeComments_NoDuplicates(t *testing.T) {
 }
 
 func TestCarryForward_FileScopeComments_NoDuplicatesAcrossRounds(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	fileComment := Comment{
@@ -1584,6 +1672,8 @@ func TestCarryForward_FileScopeComments_NoDuplicatesAcrossRounds(t *testing.T) {
 }
 
 func TestCarryForward_MixedScopeComments(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	fileComment := Comment{
@@ -1631,6 +1721,8 @@ func TestCarryForward_MixedScopeComments(t *testing.T) {
 }
 
 func TestAddCommentSetsReviewRound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.ReviewRound = 2
 
@@ -1644,6 +1736,8 @@ func TestAddCommentSetsReviewRound(t *testing.T) {
 }
 
 func TestCarryForwardPreservesReviewRound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Write a .crit.json with a comment that has ReviewRound set
@@ -1712,6 +1806,8 @@ func TestFileDiffUnified_ColorConfigDoesNotBreakParsing(t *testing.T) {
 }
 
 func TestSession_WriteFiles_MergesExternalComments(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -1822,6 +1918,8 @@ func TestSession_MergeExternalCritJSON_NewComment(t *testing.T) {
 }
 
 func TestSession_MergeExternalCritJSON_NoChange(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -1838,6 +1936,8 @@ func TestSession_MergeExternalCritJSON_NoChange(t *testing.T) {
 }
 
 func TestSession_MergeExternalCritJSON_IgnoresOwnWrites(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -1864,6 +1964,8 @@ func TestSession_MergeExternalCritJSON_IgnoresOwnWrites(t *testing.T) {
 }
 
 func TestSession_MergeExternalCritJSON_ClearDetected(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -1895,6 +1997,8 @@ func TestSession_MergeExternalCritJSON_ClearDetected(t *testing.T) {
 }
 
 func TestComment_RepliesJSON(t *testing.T) {
+	t.Parallel()
+
 	c := Comment{
 		ID:        "c1",
 		StartLine: 10,
@@ -1934,6 +2038,8 @@ func TestComment_RepliesJSON(t *testing.T) {
 }
 
 func TestComment_NoRepliesBackwardCompat(t *testing.T) {
+	t.Parallel()
+
 	// Old .crit.json format with deprecated resolution_note — silently ignored by Go JSON decoder
 	data := `{"id":"c1","start_line":5,"end_line":5,"body":"Fix","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","resolution_note":"Done"}`
 
@@ -1948,6 +2054,8 @@ func TestComment_NoRepliesBackwardCompat(t *testing.T) {
 }
 
 func TestSession_AddReply(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		ReviewRound: 1,
 
@@ -1980,6 +2088,8 @@ func TestSession_AddReply(t *testing.T) {
 }
 
 func TestSession_AddReply_UnresolvesComment(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		ReviewRound: 1,
 
@@ -2010,6 +2120,8 @@ func TestSession_AddReply_UnresolvesComment(t *testing.T) {
 }
 
 func TestSession_UpdateReply(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		ReviewRound: 1,
 		Files: []*FileEntry{
@@ -2033,6 +2145,8 @@ func TestSession_UpdateReply(t *testing.T) {
 }
 
 func TestSession_DeleteReply(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		ReviewRound: 1,
 		Files: []*FileEntry{
@@ -2063,6 +2177,8 @@ func TestSession_DeleteReply(t *testing.T) {
 }
 
 func TestSession_AddReply_SequentialIDs(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		ReviewRound: 1,
 		Files: []*FileEntry{
@@ -2089,6 +2205,8 @@ func TestSession_AddReply_SequentialIDs(t *testing.T) {
 }
 
 func TestSession_LoadCritJSON_RestoresReviewRound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Simulate a .crit.json left over from a previous session at round 3
@@ -2155,6 +2273,8 @@ func TestSession_LoadCritJSON_RestoresReviewRound(t *testing.T) {
 }
 
 func TestCarryForwardComment(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:             "original-id",
 		StartLine:      5,
@@ -2215,6 +2335,8 @@ func TestCarryForwardComment(t *testing.T) {
 }
 
 func TestSession_CarryForward_PreservesReplies(t *testing.T) {
+	t.Parallel()
+
 	c := Comment{
 		ID: "c1", StartLine: 5, EndLine: 5, Body: "Fix this",
 		CreatedAt: "2025-01-01T00:00:00Z", UpdatedAt: "2025-01-01T00:00:00Z",
@@ -2340,6 +2462,8 @@ func TestSession_MergeExternalCritJSON_SyncsResolvedState(t *testing.T) {
 }
 
 func TestSession_EnsureFileEntry_NewFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Create a file on disk that is NOT in the session
 	newFilePath := filepath.Join(dir, "newfile.py")
@@ -2396,6 +2520,8 @@ func TestSession_EnsureFileEntry_NewFile(t *testing.T) {
 }
 
 func TestSession_EnsureFileEntry_AlreadyExists(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// plan.md is already in the session
@@ -2414,6 +2540,8 @@ func TestSession_EnsureFileEntry_AlreadyExists(t *testing.T) {
 }
 
 func TestSession_EnsureFileEntry_NonexistentFile(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	ok := s.EnsureFileEntry("does-not-exist.txt")
@@ -2423,6 +2551,8 @@ func TestSession_EnsureFileEntry_NonexistentFile(t *testing.T) {
 }
 
 func TestSession_EnsureFileEntry_ThenAddComment(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	newFilePath := filepath.Join(dir, "runtime.py")
 	writeFile(t, newFilePath, "# Runtime file\ndef greet():\n    pass\n")
@@ -2463,6 +2593,8 @@ func TestSession_EnsureFileEntry_ThenAddComment(t *testing.T) {
 }
 
 func TestGetFileDiffSnapshotScoped_RuntimeFile(t *testing.T) {
+	t.Parallel()
+
 	// A file that exists on disk but is NOT in s.Files should still get
 	// a proper all-addition diff when it's untracked.
 	dir := t.TempDir()
@@ -2533,6 +2665,8 @@ func TestSession_MergeExternalCritJSON_SyncsUnresolve(t *testing.T) {
 }
 
 func TestCommentScopeDefault(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, ok := s.AddComment("plan.md", 1, 1, "", "test body", "", "", "")
 	if !ok {
@@ -2544,6 +2678,8 @@ func TestCommentScopeDefault(t *testing.T) {
 }
 
 func TestAddFileComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, ok := s.AddFileComment("plan.md", "this file needs work", "", "")
 	if !ok {
@@ -2562,6 +2698,8 @@ func TestAddFileComment(t *testing.T) {
 }
 
 func TestAddReviewComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("please address all issues", "", "")
 	if c.Scope != "review" {
@@ -2577,6 +2715,8 @@ func TestAddReviewComment(t *testing.T) {
 }
 
 func TestGetReviewComments_DedupesByID(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1", Body: "first"},
@@ -2596,6 +2736,8 @@ func TestGetReviewComments_DedupesByID(t *testing.T) {
 }
 
 func TestDeleteReviewComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("temp", "", "")
 	if !s.DeleteReviewComment(c.ID) {
@@ -2607,6 +2749,8 @@ func TestDeleteReviewComment(t *testing.T) {
 }
 
 func TestUpdateReviewComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("original", "", "")
 	updated, ok := s.UpdateReviewComment(c.ID, "revised")
@@ -2619,6 +2763,8 @@ func TestUpdateReviewComment(t *testing.T) {
 }
 
 func TestCritJSONIncludesReviewComments(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddReviewComment("general feedback", "", "")
 	s.AddComment("plan.md", 1, 1, "", "line comment", "", "", "")
@@ -2645,6 +2791,8 @@ func TestCritJSONIncludesReviewComments(t *testing.T) {
 }
 
 func TestLoadCritJSONRestoresReviewComments(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddReviewComment("restored comment", "", "")
 	s.WriteFiles()
@@ -2661,6 +2809,8 @@ func TestLoadCritJSONRestoresReviewComments(t *testing.T) {
 }
 
 func TestCommentCountsIncludeReviewComments(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "line", "", "", "")
 	s.AddFileComment("plan.md", "file", "", "")
@@ -2674,6 +2824,8 @@ func TestCommentCountsIncludeReviewComments(t *testing.T) {
 }
 
 func TestClearAllCommentsIncludesReview(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "line", "", "", "")
 	s.AddReviewComment("review", "", "")
@@ -2687,6 +2839,8 @@ func TestClearAllCommentsIncludesReview(t *testing.T) {
 }
 
 func TestReviewCommentsSurviveRound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddReviewComment("carry me forward", "", "")
 	s.WriteFiles()
@@ -2706,6 +2860,8 @@ func TestReviewCommentsSurviveRound(t *testing.T) {
 }
 
 func TestFileCommentsSurviveRoundWithoutLineMutation(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddFileComment("plan.md", "restructure this", "", "")
 	s.AddComment("plan.md", 1, 1, "", "line comment", "", "", "")
@@ -2738,6 +2894,8 @@ func TestFileCommentsSurviveRoundWithoutLineMutation(t *testing.T) {
 }
 
 func TestLoadCritJSONDefaultsScope(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	// Write a .crit.json with comments that have no scope field
 	cj := CritJSON{
@@ -2764,6 +2922,8 @@ func TestLoadCritJSONDefaultsScope(t *testing.T) {
 }
 
 func TestResolveReviewComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("needs work", "", "")
 	if c.Resolved {
@@ -2796,6 +2956,8 @@ func TestResolveReviewComment(t *testing.T) {
 }
 
 func TestResolveReviewCommentAffectsUnresolvedCount(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("review", "", "")
 	if got := s.UnresolvedCommentCount(); got != 1 {
@@ -2808,6 +2970,8 @@ func TestResolveReviewCommentAffectsUnresolvedCount(t *testing.T) {
 }
 
 func TestFileCommentHasReviewRound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.ReviewRound = 3
 	c, ok := s.AddFileComment("plan.md", "file-level feedback", "", "")
@@ -2820,6 +2984,8 @@ func TestFileCommentHasReviewRound(t *testing.T) {
 }
 
 func TestReviewCommentHasReviewRound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.ReviewRound = 2
 	c := s.AddReviewComment("general feedback", "", "")
@@ -2829,6 +2995,8 @@ func TestReviewCommentHasReviewRound(t *testing.T) {
 }
 
 func TestAddReviewCommentReply(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("needs work", "reviewer", "")
 	reply, ok := s.AddReviewCommentReply(c.ID, "fixed it", "author", "")
@@ -2856,6 +3024,8 @@ func TestAddReviewCommentReply(t *testing.T) {
 }
 
 func TestAddReviewCommentReply_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	_, ok := s.AddReviewCommentReply("nonexistent", "body", "author", "")
 	if ok {
@@ -2864,6 +3034,8 @@ func TestAddReviewCommentReply_NotFound(t *testing.T) {
 }
 
 func TestUpdateReviewCommentReply(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("needs work", "reviewer", "")
 	reply, _ := s.AddReviewCommentReply(c.ID, "initial reply", "author", "")
@@ -2877,6 +3049,8 @@ func TestUpdateReviewCommentReply(t *testing.T) {
 }
 
 func TestUpdateReviewCommentReply_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("needs work", "reviewer", "")
 	_, ok := s.UpdateReviewCommentReply(c.ID, "nonexistent", "body")
@@ -2886,6 +3060,8 @@ func TestUpdateReviewCommentReply_NotFound(t *testing.T) {
 }
 
 func TestDeleteReviewCommentReply(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("needs work", "reviewer", "")
 	reply, _ := s.AddReviewCommentReply(c.ID, "to delete", "author", "")
@@ -2899,6 +3075,8 @@ func TestDeleteReviewCommentReply(t *testing.T) {
 }
 
 func TestDeleteReviewCommentReply_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("needs work", "reviewer", "")
 	if s.DeleteReviewCommentReply(c.ID, "nonexistent") {
@@ -2907,6 +3085,8 @@ func TestDeleteReviewCommentReply_NotFound(t *testing.T) {
 }
 
 func TestEnsureLoaded(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 
 	writeFile(t, filepath.Join(dir, "lazy.go"), "package main\n\nfunc lazy() {}\n")
@@ -2959,6 +3139,8 @@ func TestEnsureLoaded(t *testing.T) {
 }
 
 func TestEnsureLoadedNotLazy(t *testing.T) {
+	t.Parallel()
+
 	fe := &FileEntry{
 		Path:    "eager.go",
 		Content: "already loaded",
@@ -3054,6 +3236,8 @@ func TestNewSessionFromGitUnderThreshold(t *testing.T) {
 }
 
 func TestGetFileSnapshotLazy(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 
 	gitT(t, dir, "checkout", "-b", "feature-snap")
@@ -3117,6 +3301,8 @@ func TestGetFileSnapshotLazy(t *testing.T) {
 // deleted in-memory and WriteFiles is called, the deleted comment does not
 // reappear in .crit.json due to the merge-from-disk logic.
 func TestDeleteComment_NotReAddedFromDisk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -3174,6 +3360,8 @@ func TestDeleteComment_NotReAddedFromDisk(t *testing.T) {
 // TestDeleteReviewComment_NotReAddedFromDisk verifies that when a review-level
 // comment is deleted and WriteFiles is called, it does not reappear from disk.
 func TestDeleteReviewComment_NotReAddedFromDisk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -3225,6 +3413,8 @@ func TestDeleteReviewComment_NotReAddedFromDisk(t *testing.T) {
 // TestDeleteReply_NotReAddedFromDisk verifies that when a reply on a file
 // comment is deleted, it does not reappear from disk after WriteFiles.
 func TestDeleteReply_NotReAddedFromDisk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -3278,6 +3468,8 @@ func TestDeleteReply_NotReAddedFromDisk(t *testing.T) {
 // TestDeleteReviewCommentReply_NotReAddedFromDisk verifies that when a reply
 // on a review comment is deleted, it does not reappear from disk after WriteFiles.
 func TestDeleteReviewCommentReply_NotReAddedFromDisk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -3330,6 +3522,8 @@ func TestDeleteReviewCommentReply_NotReAddedFromDisk(t *testing.T) {
 // .crit.json (not deleted by user) are still properly merged in — this is
 // a regression test for the existing merge behavior.
 func TestExternalCommentStillMerged(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	s := &Session{
 		RepoRoot:    dir,
@@ -3385,6 +3579,8 @@ func TestExternalCommentStillMerged(t *testing.T) {
 }
 
 func TestSession_SetCommentResolved(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, _ := s.AddComment("plan.md", 1, 1, "", "needs fix", "", "", "")
 
@@ -3419,6 +3615,8 @@ func TestSession_SetCommentResolved(t *testing.T) {
 }
 
 func TestSession_SetCommentResolved_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	_, ok := s.SetCommentResolved("plan.md", "c999", true)
 	if ok {
@@ -3431,6 +3629,8 @@ func TestSession_SetCommentResolved_NotFound(t *testing.T) {
 }
 
 func TestSession_SetCommentResolved_WrongPathHint(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.Files = append(s.Files, &FileEntry{
 		Path: "index.html",
@@ -3450,6 +3650,8 @@ func TestSession_SetCommentResolved_WrongPathHint(t *testing.T) {
 }
 
 func TestSession_FindCommentByID(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c1, _ := s.AddComment("plan.md", 1, 1, "", "md comment", "", "", "")
 	c2, _ := s.AddComment("main.go", 5, 5, "", "go comment", "", "", "")
@@ -3486,6 +3688,8 @@ func TestSession_FindCommentByID(t *testing.T) {
 }
 
 func TestSession_ClearAllComments_RemovesCritJSONFromFileList(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	// Add a .crit.json entry to the file list (as would happen when git detects it)
@@ -3530,6 +3734,8 @@ func TestSession_ClearAllComments_RemovesCritJSONFromFileList(t *testing.T) {
 }
 
 func TestSession_ClearAllComments_DeletesCritJSONFromDisk(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "test", "", "", "")
 	flushWrites(s)
@@ -3549,6 +3755,8 @@ func TestSession_ClearAllComments_DeletesCritJSONFromDisk(t *testing.T) {
 }
 
 func TestSession_HandleExternalDeletion(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "test", "", "", "")
 	flushWrites(s)
@@ -3574,6 +3782,8 @@ func TestSession_HandleExternalDeletion(t *testing.T) {
 }
 
 func TestSession_HandleExternalDeletion_NoMtime(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	// Without ever writing, lastCritJSONMtime is zero — should not detect deletion
 	deleted := s.handleExternalDeletion(s.critJSONPath())
@@ -3583,6 +3793,8 @@ func TestSession_HandleExternalDeletion_NoMtime(t *testing.T) {
 }
 
 func TestSession_WriteFiles_RoundTrip(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 3, "", "fix formatting", "", "reviewer", "")
 	s.AddComment("main.go", 2, 2, "RIGHT", "handle error", "func main() {}", "agent", "")
@@ -3629,6 +3841,8 @@ func TestSession_WriteFiles_RoundTrip(t *testing.T) {
 }
 
 func TestSession_AddComment_PreservesSideAndQuote(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, ok := s.AddComment("main.go", 5, 10, "RIGHT", "fix this", "func main() {}", "reviewer", "")
 	if !ok {
@@ -3665,6 +3879,8 @@ func TestSession_AddComment_PreservesSideAndQuote(t *testing.T) {
 }
 
 func TestSession_WriteFiles_ReviewCommentsPersisted(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddReviewComment("general note", "reviewer", "")
 
@@ -3690,6 +3906,8 @@ func TestSession_WriteFiles_ReviewCommentsPersisted(t *testing.T) {
 }
 
 func TestSession_RandomCommentID_Format(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	c, ok := s.AddComment("plan.md", 1, 1, "", "test", "", "", "")
@@ -3711,6 +3929,8 @@ func TestSession_RandomCommentID_Format(t *testing.T) {
 }
 
 func TestSession_ClearAllComments(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "md comment", "", "", "")
 	s.AddComment("main.go", 1, 1, "", "go comment", "", "", "")
@@ -3737,6 +3957,8 @@ func TestSession_ClearAllComments(t *testing.T) {
 }
 
 func TestSession_AddComment_WithSide(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, ok := s.AddComment("main.go", 5, 10, "RIGHT", "check this", "", "", "")
 	if !ok {
@@ -3751,6 +3973,8 @@ func TestSession_AddComment_WithSide(t *testing.T) {
 }
 
 func TestSession_WriteFiles_IncludesResolvedComments(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, _ := s.AddComment("plan.md", 1, 1, "", "fix", "", "", "")
 	s.SetCommentResolved("plan.md", c.ID, true)
@@ -3777,6 +4001,8 @@ func TestSession_WriteFiles_IncludesResolvedComments(t *testing.T) {
 }
 
 func TestLoadCritJSON_OrphanedComments(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	branch := "main"
 
@@ -3870,6 +4096,8 @@ func TestLoadCritJSON_OrphanedComments(t *testing.T) {
 }
 
 func TestLoadCritJSON_OrphanedNoComments(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 
 	s := &Session{
@@ -3904,6 +4132,8 @@ func TestLoadCritJSON_OrphanedNoComments(t *testing.T) {
 }
 
 func TestGetSessionInfo_OrphanedField(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode:   "git",
 		Branch: "main",
@@ -3943,6 +4173,8 @@ func TestGetSessionInfo_OrphanedField(t *testing.T) {
 }
 
 func TestAddComment_PopulatesAnchor(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	// plan.md content: "# Plan\n\n## Step 1\n\nDo the thing\n"
 	// Lines: 1="# Plan", 2="", 3="## Step 1", 4="", 5="Do the thing"
@@ -3957,6 +4189,8 @@ func TestAddComment_PopulatesAnchor(t *testing.T) {
 }
 
 func TestAddComment_AnchorSingleLine(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, ok := s.AddComment("plan.md", 1, 1, "", "Fix title", "", "", "")
 	if !ok {
@@ -3968,6 +4202,8 @@ func TestAddComment_AnchorSingleLine(t *testing.T) {
 }
 
 func TestAddComment_NoAnchorForFileComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c, ok := s.AddFileComment("plan.md", "Overall feedback", "reviewer", "")
 	if !ok {
@@ -3979,6 +4215,8 @@ func TestAddComment_NoAnchorForFileComment(t *testing.T) {
 }
 
 func TestAddComment_NoAnchorForReviewComment(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	c := s.AddReviewComment("General feedback", "reviewer", "")
 	if c.Anchor != "" {
@@ -4038,6 +4276,8 @@ func TestAddComment_OldSideAnchorFromBase(t *testing.T) {
 }
 
 func TestExtractAnchor(t *testing.T) {
+	t.Parallel()
+
 	content := "line1\nline2\nline3\nline4\nline5"
 
 	tests := []struct {
@@ -4070,6 +4310,8 @@ func TestExtractAnchor(t *testing.T) {
 }
 
 func TestFilterDeletedComments(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name         string
 		memComments  []Comment
@@ -4116,6 +4358,8 @@ func TestFilterDeletedComments(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			f := &FileEntry{
 				Comments: make([]Comment, len(tt.memComments)),
 			}
@@ -4132,7 +4376,11 @@ func TestFilterDeletedComments(t *testing.T) {
 }
 
 func TestMergeReviewCommentRepliesAndState(t *testing.T) {
+	t.Parallel()
+
 	t.Run("new reply added", func(t *testing.T) {
+		t.Parallel()
+
 		s := &Session{
 			reviewComments: []Comment{
 				{ID: "r1", Body: "original", Replies: []Reply{
@@ -4162,6 +4410,8 @@ func TestMergeReviewCommentRepliesAndState(t *testing.T) {
 	})
 
 	t.Run("duplicate reply skipped", func(t *testing.T) {
+		t.Parallel()
+
 		s := &Session{
 			reviewComments: []Comment{
 				{ID: "r1", Body: "original", Replies: []Reply{
@@ -4187,6 +4437,8 @@ func TestMergeReviewCommentRepliesAndState(t *testing.T) {
 	})
 
 	t.Run("resolved state propagated", func(t *testing.T) {
+		t.Parallel()
+
 		s := &Session{
 			reviewComments: []Comment{
 				{ID: "r1", Body: "original", Resolved: false},
@@ -4204,6 +4456,8 @@ func TestMergeReviewCommentRepliesAndState(t *testing.T) {
 	})
 
 	t.Run("no matching comment returns false", func(t *testing.T) {
+		t.Parallel()
+
 		s := &Session{
 			reviewComments: []Comment{
 				{ID: "r1", Body: "original"},
@@ -4219,6 +4473,8 @@ func TestMergeReviewCommentRepliesAndState(t *testing.T) {
 }
 
 func TestCountHunkStats(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name          string
 		hunks         []vcs.DiffHunk
@@ -4274,6 +4530,8 @@ func TestCountHunkStats(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			add, del := countHunkStats(tt.hunks)
 			if add != tt.wantAdditions {
 				t.Errorf("additions = %d, want %d", add, tt.wantAdditions)
@@ -4286,6 +4544,8 @@ func TestCountHunkStats(t *testing.T) {
 }
 
 func TestHandleCritJSONDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Files: []*FileEntry{
 			{
@@ -4329,6 +4589,8 @@ func TestHandleCritJSONDeleted(t *testing.T) {
 // unpublish), the next pin authored against a fresh review must land on round
 // 1 — not on whatever round the daemon's in-memory state still remembered.
 func TestHandleCritJSONDeleted_ResetsReviewRound(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Files:         []*FileEntry{{Path: "/", Comments: []Comment{{ID: "c1"}}}},
 		ReviewRound:   3,
@@ -4346,6 +4608,8 @@ func TestHandleCritJSONDeleted_ResetsReviewRound(t *testing.T) {
 // --- availableScopes tests ---
 
 func TestAvailableScopes_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	scopes := availableScopes("main", nil)
 	if len(scopes) != 1 || scopes[0] != "all" {
 		t.Errorf("expected [all] for nil vcs.VCS, got %v", scopes)
@@ -4381,6 +4645,8 @@ func TestAvailableScopes_EmptyBaseRef(t *testing.T) {
 // --- GetSessionInfoScoped tests ---
 
 func TestGetSessionInfoScoped_EmptyScope(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.Mode = "files"
 
@@ -4395,6 +4661,8 @@ func TestGetSessionInfoScoped_EmptyScope(t *testing.T) {
 }
 
 func TestGetSessionInfoScoped_AllScope(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.Mode = "files"
 
@@ -4405,6 +4673,8 @@ func TestGetSessionInfoScoped_AllScope(t *testing.T) {
 }
 
 func TestGetSessionInfoScoped_PlanMode(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode:        "plan",
 		PlanDir:     "/tmp/test-plan",
@@ -4423,6 +4693,8 @@ func TestGetSessionInfoScoped_PlanMode(t *testing.T) {
 }
 
 func TestGetSessionInfoScoped_GitScopeNoVCS(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode:        "git",
 		RepoRoot:    t.TempDir(),
@@ -4446,6 +4718,8 @@ func TestGetSessionInfoScoped_GitScopeNoVCS(t *testing.T) {
 // --- emitRoundStatus tests ---
 
 func TestEmitRoundStatus_NilStatus(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		status:      nil,
 		subscribers: make(map[chan SSEEvent]struct{}),
@@ -4456,6 +4730,8 @@ func TestEmitRoundStatus_NilStatus(t *testing.T) {
 }
 
 func TestEmitRoundStatus_WithStatus(t *testing.T) {
+	t.Parallel()
+
 	var buf strings.Builder
 	s := &Session{
 		status:      &Status{w: &buf, color: false},
@@ -4505,6 +4781,8 @@ func TestShutdown(t *testing.T) {
 // --- BrowserDisconnect tests ---
 
 func TestBrowserConnectDisconnect(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		subscribers: make(map[chan SSEEvent]struct{}),
 	}
@@ -4533,6 +4811,8 @@ func TestBrowserConnectDisconnect(t *testing.T) {
 // --- mergeReviewCommentsFromDisk tests ---
 
 func TestMergeReviewCommentsFromDisk_AddNew(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1", Body: "existing"},
@@ -4555,6 +4835,8 @@ func TestMergeReviewCommentsFromDisk_AddNew(t *testing.T) {
 }
 
 func TestMergeReviewCommentsFromDisk_RemoveDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1", Body: "keep"},
@@ -4581,6 +4863,8 @@ func TestMergeReviewCommentsFromDisk_RemoveDeleted(t *testing.T) {
 }
 
 func TestMergeReviewCommentsFromDisk_NoChange(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1", Body: "same"},
@@ -4599,6 +4883,8 @@ func TestMergeReviewCommentsFromDisk_NoChange(t *testing.T) {
 }
 
 func TestMergeReviewCommentsFromDisk_ResolvedStateSync(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1", Body: "note", Resolved: false},
@@ -4620,6 +4906,8 @@ func TestMergeReviewCommentsFromDisk_ResolvedStateSync(t *testing.T) {
 }
 
 func TestMergeReviewCommentsFromDisk_NewReplies(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1", Body: "note", Replies: []Reply{{ID: "rp1", Body: "existing reply"}}},
@@ -4644,6 +4932,8 @@ func TestMergeReviewCommentsFromDisk_NewReplies(t *testing.T) {
 }
 
 func TestMergeReviewCommentsFromDisk_DedupesDuplicateDiskIDs(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{},
 		subscribers:    make(map[chan SSEEvent]struct{}),
@@ -4669,6 +4959,8 @@ func TestMergeReviewCommentsFromDisk_DedupesDuplicateDiskIDs(t *testing.T) {
 // --- SyncCommentsFromDisk tests ---
 
 func TestSyncCommentsFromDisk_ClearsPendingWrite(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(filePath, []byte("# Plan\n"), 0o644); err != nil {
@@ -4716,6 +5008,8 @@ func TestSyncCommentsFromDisk_ClearsPendingWrite(t *testing.T) {
 // --- filterDeletedReviewComments tests ---
 
 func TestFilterDeletedReviewComments_NoneDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1"}, {ID: "r2"},
@@ -4731,6 +5025,8 @@ func TestFilterDeletedReviewComments_NoneDeleted(t *testing.T) {
 }
 
 func TestFilterDeletedReviewComments_SomeDeleted(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		reviewComments: []Comment{
 			{ID: "r1"}, {ID: "r2"}, {ID: "r3"},
@@ -4751,6 +5047,8 @@ func TestFilterDeletedReviewComments_SomeDeleted(t *testing.T) {
 // --- computeScopedDiffHunks tests ---
 
 func TestComputeScopedDiffHunks_UntrackedFile(t *testing.T) {
+	t.Parallel()
+
 	hunks := computeScopedDiffHunks("test.go", "unstaged", "", "untracked", "", "package main\n", "", "", nil, false)
 	if len(hunks) == 0 {
 		t.Error("expected hunks for untracked file")
@@ -4758,6 +5056,8 @@ func TestComputeScopedDiffHunks_UntrackedFile(t *testing.T) {
 }
 
 func TestComputeScopedDiffHunks_AddedFileAllScope(t *testing.T) {
+	t.Parallel()
+
 	hunks := computeScopedDiffHunks("test.go", "all", "", "added", "", "package main\n", "", "", nil, false)
 	if len(hunks) == 0 {
 		t.Error("expected hunks for added file with all scope")
@@ -4765,6 +5065,8 @@ func TestComputeScopedDiffHunks_AddedFileAllScope(t *testing.T) {
 }
 
 func TestComputeScopedDiffHunks_AddedFileUnstagedScope(t *testing.T) {
+	t.Parallel()
+
 	// scope=unstaged + status=added => does not use vcs.FileDiffUnifiedNewFile
 	hunks := computeScopedDiffHunks("test.go", "unstaged", "", "added", "", "package main\n", "", "", nil, false)
 	// No vcs.VCS to fall back on, should return nil.
@@ -4774,6 +5076,8 @@ func TestComputeScopedDiffHunks_AddedFileUnstagedScope(t *testing.T) {
 }
 
 func TestComputeScopedDiffHunks_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	hunks := computeScopedDiffHunks("test.go", "branch", "", "modified", "", "package main\n", "main", "/tmp", nil, false)
 	if hunks != nil {
 		t.Error("expected nil hunks with no vcs.VCS")
@@ -4781,6 +5085,8 @@ func TestComputeScopedDiffHunks_NilVCS(t *testing.T) {
 }
 
 func TestComputeScopedDiffHunks_CommitRangeRename(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	commitAt(t, dir, "old.go", "package x\n", "add old")
 	base := gitT(t, dir, "rev-parse", "HEAD")
@@ -4834,6 +5140,8 @@ func TestGetFileDiffSnapshotScoped_CommitRangeRename(t *testing.T) {
 
 // Regression #701: range focus must ignore working-tree scope on /api/file/diff.
 func TestGetFileDiffSnapshotScoped_RangeFocus_IgnoresBranchScope(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	commitAt(t, dir, "changed.go", "line1\nline2\nline3\n", "add file")
@@ -4908,6 +5216,8 @@ func TestGetFileDiffSnapshotScoped_CommitRangeRename_PreloadedFile(t *testing.T)
 // --- scopedHunks tests ---
 
 func TestScopedHunks_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	fc := vcs.FileChange{Path: "test.go", Status: "modified"}
 	hunks := scopedHunks(fc, "branch", "", "main", "/tmp", nil, false)
 	if hunks != nil {
@@ -5023,6 +5333,8 @@ func TestGetSessionInfoScoped_CommitScope(t *testing.T) {
 }
 
 func TestSession_GetCommits_RangeMode(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	baseRef := gitT(t, dir, "rev-parse", "HEAD")
 
@@ -5071,6 +5383,8 @@ func TestSession_GetCommits_RangeMode(t *testing.T) {
 }
 
 func TestSession_GetCommits_WorkingTreeMode(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	baseRef := gitT(t, dir, "rev-parse", "HEAD")
 
@@ -5104,6 +5418,8 @@ func TestSession_GetCommits_WorkingTreeMode(t *testing.T) {
 }
 
 func TestSession_GetCommits_WorkingTreeMode_WithDirtyTreeAddsVirtualTop(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	baseRef := gitT(t, dir, "rev-parse", "HEAD")
 
@@ -5145,6 +5461,8 @@ func TestSession_GetCommits_WorkingTreeMode_WithDirtyTreeAddsVirtualTop(t *testi
 }
 
 func TestSession_GetSessionInfoScoped_VirtualWorkingCommitOnlyShowsUncommitted(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	baseRef := gitT(t, dir, "rev-parse", "HEAD")
 
@@ -5185,6 +5503,8 @@ func TestSession_GetSessionInfoScoped_VirtualWorkingCommitOnlyShowsUncommitted(t
 }
 
 func TestFileIgnored(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	cases := []struct {
 		pat  string
@@ -5208,6 +5528,8 @@ func TestFileIgnored(t *testing.T) {
 }
 
 func TestDirIgnored(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	cases := []struct {
 		pat  string
@@ -5287,6 +5609,8 @@ func mapKeys[V any](m map[string]V) []string {
 }
 
 func TestDOMAnchor_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	anchor := &DOMAnchor{
 		Pathname:       "/dashboard",
 		CSSSelector:    "#main > :nth-of-type(2) > h2",
@@ -5336,6 +5660,8 @@ func TestDOMAnchor_JSONRoundTrip(t *testing.T) {
 }
 
 func TestDOMAnchor_NilOmitted(t *testing.T) {
+	t.Parallel()
+
 	c := Comment{
 		ID:        "c_code01",
 		StartLine: 10,
@@ -5354,6 +5680,8 @@ func TestDOMAnchor_NilOmitted(t *testing.T) {
 }
 
 func TestComment_LegacyFileNoLiveFields(t *testing.T) {
+	t.Parallel()
+
 	raw := `{"id":"c_old","start_line":5,"end_line":5,"body":"old","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}`
 	var c Comment
 	if err := json.Unmarshal([]byte(raw), &c); err != nil {
@@ -5365,6 +5693,8 @@ func TestComment_LegacyFileNoLiveFields(t *testing.T) {
 }
 
 func TestCritJSON_LiveFields_RoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, "test-review")
 	cj := CritJSON{
@@ -5399,6 +5729,8 @@ func TestCritJSON_LiveFields_RoundTrip(t *testing.T) {
 }
 
 func TestCritJSON_LegacyNoReviewType(t *testing.T) {
+	t.Parallel()
+
 	raw := `{"branch":"main","review_round":1,"files":{}}`
 	var cj CritJSON
 	if err := json.Unmarshal([]byte(raw), &cj); err != nil {
@@ -5413,6 +5745,8 @@ func TestCritJSON_LegacyNoReviewType(t *testing.T) {
 }
 
 func TestComment_DriftedOnRound_RoundTrip(t *testing.T) {
+	t.Parallel()
+
 	in := Comment{
 		ID:             "p1",
 		Body:           "hi",
@@ -5440,6 +5774,8 @@ func TestComment_DriftedOnRound_RoundTrip(t *testing.T) {
 }
 
 func TestComment_DriftedOnRound_OmitWhenZero(t *testing.T) {
+	t.Parallel()
+
 	in := Comment{ID: "p1", Body: "hi"}
 	b, err := json.Marshal(in)
 	if err != nil {

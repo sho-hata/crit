@@ -22,6 +22,8 @@ import (
 // It only asserts that the file is always valid JSON at every observable
 // moment (read-modify-write loop) and at the end.
 func TestConcurrentSaveCritJSON_NoCorruption(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review.json")
 

@@ -59,6 +59,8 @@ func newAttachmentTestServer(t *testing.T, reviewIdentity string) *Server {
 }
 
 func TestHandleAttachments_UploadAndGet(t *testing.T) {
+	t.Parallel()
+
 	review := newReviewIdentity(t)
 	srv := newAttachmentTestServer(t, review)
 
@@ -107,6 +109,8 @@ func TestHandleAttachments_UploadAndGet(t *testing.T) {
 }
 
 func TestHandleAttachments_RejectsBadInput(t *testing.T) {
+	t.Parallel()
+
 	review := newReviewIdentity(t)
 	srv := newAttachmentTestServer(t, review)
 
@@ -157,6 +161,8 @@ func TestHandleAttachments_RejectsBadInput(t *testing.T) {
 	})
 
 	t.Run("any verb without review path is 503", func(t *testing.T) {
+		t.Parallel()
+
 		bare := &Server{reviewPath: ""}
 		req := httptest.NewRequest(http.MethodGet, "/api/attachments/x", nil)
 		rec := httptest.NewRecorder()

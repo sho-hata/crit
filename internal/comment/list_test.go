@@ -32,6 +32,8 @@ func writeTestReview(t *testing.T, dir string, cj CritJSON) string {
 }
 
 func TestListCommentsFromCritJSON_OrderAndFilter(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ReviewComments: []Comment{
 			{ID: "r_1", Body: "review note", Scope: "review", Resolved: false},
@@ -72,6 +74,8 @@ func TestListCommentsFromCritJSON_OrderAndFilter(t *testing.T) {
 }
 
 func TestListCommentsFromCritJSON_AllIncludesResolved(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ReviewComments: []Comment{
 			{ID: "r_1", Body: "open", Scope: "review"},
@@ -89,12 +93,16 @@ func TestListCommentsFromCritJSON_AllIncludesResolved(t *testing.T) {
 }
 
 func TestFormatCommentsText_Empty(t *testing.T) {
+	t.Parallel()
+
 	if got := formatCommentsText(nil, true); got != "No unresolved comments." {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestFormatCommentsText_WithReplies(t *testing.T) {
+	t.Parallel()
+
 	path := "main.go"
 	entries := []ListedComment{{
 		Scope: "line", Path: &path,
@@ -117,6 +125,8 @@ func TestFormatCommentsText_WithReplies(t *testing.T) {
 }
 
 func TestEncodeCommentsJSON_EmptyIsArray(t *testing.T) {
+	t.Parallel()
+
 	data, err := encodeCommentsJSON(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -154,6 +164,8 @@ func TestRunComments_JSONOutput(t *testing.T) {
 }
 
 func TestListCommentsFromCritJSON_PreservesPreviewFields(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"/preview-content/": {
@@ -207,6 +219,8 @@ func TestListCommentsFromCritJSON_PreservesPreviewFields(t *testing.T) {
 }
 
 func TestListedCommentJSONIncludesAllCommentFields(t *testing.T) {
+	t.Parallel()
+
 	offset := 4
 	c := Comment{
 		ID: "c_full", StartLine: 7, EndLine: 9, Side: "RIGHT", Body: "note",
@@ -286,6 +300,8 @@ func TestRunComments_ExplicitReviewJSONPath(t *testing.T) {
 }
 
 func TestRunComments_PlanAndOutputConflict(t *testing.T) {
+	t.Parallel()
+
 	err := RunComments([]string{"--plan", "x", "--output", "/tmp", "--json"})
 	if err == nil || !strings.Contains(err.Error(), "cannot be used together") {
 		t.Fatalf("got %v", err)
@@ -390,6 +406,8 @@ func TestResolveCommentsCritPath_PlanUsesColocatedCrit(t *testing.T) {
 }
 
 func TestResolveExplicitReviewPath(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	critPath := filepath.Join(tmp, ".crit")
 	if err := os.MkdirAll(critPath, 0o755); err != nil {
@@ -417,6 +435,8 @@ func TestResolveExplicitReviewPath(t *testing.T) {
 }
 
 func TestParseCommentsListFlagsSession(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		args    []string
@@ -429,6 +449,8 @@ func TestParseCommentsListFlagsSession(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := parseCommentsListFlags(tt.args)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
