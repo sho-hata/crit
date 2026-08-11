@@ -9,6 +9,8 @@ import (
 )
 
 func TestCountComments(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"a.go": {Comments: []Comment{
@@ -33,6 +35,8 @@ func TestCountComments(t *testing.T) {
 }
 
 func TestFindStaleReviews(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// Create a review file with an old updated_at.
@@ -75,6 +79,8 @@ func TestFindStaleReviews(t *testing.T) {
 }
 
 func TestFindStaleReviews_FolderForm(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// Folder-form review with stale updated_at.
@@ -132,6 +138,8 @@ func TestFindStaleReviews_FolderForm(t *testing.T) {
 }
 
 func TestFindStaleReviews_OrphanSnapshotsFolder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	orphan := filepath.Join(dir, "orphan1")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
@@ -157,6 +165,8 @@ func TestFindStaleReviews_OrphanSnapshotsFolder(t *testing.T) {
 }
 
 func TestDeleteStaleReviews_FolderForm(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "key1")
 	if err := os.MkdirAll(folder, 0o755); err != nil {
@@ -179,6 +189,8 @@ func TestDeleteStaleReviews_FolderForm(t *testing.T) {
 }
 
 func TestCleanupOnApproval_RemovesFolderForm(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, ".crit")
 	if err := saveCritJSON(identity, CritJSON{Branch: "main", Files: map[string]CritJSONFile{}}); err != nil {
@@ -196,6 +208,8 @@ func TestCleanupOnApproval_RemovesFolderForm(t *testing.T) {
 }
 
 func TestDeleteStaleReviews(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
@@ -213,6 +227,8 @@ func TestDeleteStaleReviews(t *testing.T) {
 }
 
 func TestCleanupOnApproval_DeletesReviewFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	reviewPath := filepath.Join(dir, "review.json")
 	os.WriteFile(reviewPath, []byte(`{"branch":"main"}`), 0644)
@@ -226,6 +242,8 @@ func TestCleanupOnApproval_DeletesReviewFile(t *testing.T) {
 }
 
 func TestCleanupOnApproval_KeepsFileWhenNotApproved(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	reviewPath := filepath.Join(dir, "review.json")
 	os.WriteFile(reviewPath, []byte(`{"branch":"main"}`), 0644)
@@ -238,6 +256,8 @@ func TestCleanupOnApproval_KeepsFileWhenNotApproved(t *testing.T) {
 }
 
 func TestCleanupOnApproval_KeepsFileWhenDisabled(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	reviewPath := filepath.Join(dir, "review.json")
 	os.WriteFile(reviewPath, []byte(`{"branch":"main"}`), 0644)
@@ -251,6 +271,8 @@ func TestCleanupOnApproval_KeepsFileWhenDisabled(t *testing.T) {
 }
 
 func TestCleanupOnApproval_EmptyPath(t *testing.T) {
+	t.Parallel()
+
 	// Should be a no-op when reviewPath is empty
 	cleanupOnApproval(true, "", true)
 }

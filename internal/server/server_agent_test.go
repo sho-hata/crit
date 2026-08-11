@@ -15,6 +15,8 @@ import (
 )
 
 func TestHandleAgentRequest_NoAgentConfigured(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	// agentCmd is "" by default in newTestServer
 	body := `{"comment_id":"c1"}`
@@ -28,6 +30,8 @@ func TestHandleAgentRequest_NoAgentConfigured(t *testing.T) {
 }
 
 func TestHandleAgentRequest_CommentNotFound(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	s.agentCmd = "echo test"
 	body := `{"comment_id":"nonexistent"}`
@@ -41,6 +45,8 @@ func TestHandleAgentRequest_CommentNotFound(t *testing.T) {
 }
 
 func TestHandleAgentRequest_Success(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	s.agentCmd = "echo test"
 
@@ -86,6 +92,8 @@ func TestHandleAgentRequest_Success(t *testing.T) {
 
 // Review-level comments carry no file path and must still reach the agent.
 func TestHandleAgentRequest_ReviewLevelComment(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	s.agentCmd = "echo test"
 
@@ -121,6 +129,8 @@ func TestHandleAgentRequest_ReviewLevelComment(t *testing.T) {
 
 // The answer must land in the review thread; there is no file to fall back on.
 func TestRunAgentCmd_ReviewLevelReply(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "test.md"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
@@ -152,6 +162,8 @@ func TestRunAgentCmd_ReviewLevelReply(t *testing.T) {
 
 // With no file path the prompt must not claim the comment sits on a file.
 func TestBuildAgentPrompt_ReviewLevel(t *testing.T) {
+	t.Parallel()
+
 	c := Comment{ID: "r_1", Body: "tighten the summary", Author: "reviewer", Scope: "review"}
 	got := buildAgentPrompt(c, "")
 	if strings.Contains(got, "comment on :") || strings.Contains(got, "comment on \n") {
@@ -168,6 +180,8 @@ func TestBuildAgentPrompt_ReviewLevel(t *testing.T) {
 // Empty file_path still resolves a normal file comment via the all-files scan
 // before the review-level fallback.
 func TestHandleAgentRequest_EmptyPathFindsFileComment(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	s.agentCmd = "echo test"
 
@@ -200,6 +214,8 @@ func TestHandleAgentRequest_EmptyPathFindsFileComment(t *testing.T) {
 // Deliberate ID collision: AddReply scans file comments before the review
 // fallback. Production IDs are namespaced (c_ vs r_); this locks prefer-file.
 func TestRunAgentCmd_IDCollisionPrefersFileComment(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "test.md"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
@@ -234,6 +250,8 @@ func TestRunAgentCmd_IDCollisionPrefersFileComment(t *testing.T) {
 }
 
 func TestAgentName_Codex(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		cmd  string
 		want string
@@ -253,6 +271,8 @@ func TestAgentName_Codex(t *testing.T) {
 }
 
 func TestRunAgentCmd_PromptPlaceholder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "test.md")
 	os.WriteFile(testFile, []byte("hello"), 0o644)
@@ -287,6 +307,8 @@ func TestRunAgentCmd_PromptPlaceholder(t *testing.T) {
 }
 
 func TestRunAgentCmd_StdinFallback(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "test.md")
 	os.WriteFile(testFile, []byte("hello"), 0o644)
@@ -363,6 +385,8 @@ func TestRunAgentCmd_CancelledByShutdownCtx(t *testing.T) {
 // TestWaitBackground_TimesOut verifies WaitBackground returns false when
 // background goroutines exceed the timeout, and true on clean drain.
 func TestWaitBackground_TimesOut(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 
 	// Clean drain: no work outstanding.
@@ -387,6 +411,8 @@ func TestWaitBackground_TimesOut(t *testing.T) {
 }
 
 func TestRunAgentCmd_MissingCommentLogs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "test.md"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)

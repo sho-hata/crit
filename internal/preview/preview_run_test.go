@@ -8,12 +8,16 @@ import (
 )
 
 func TestConnectToPreviewDaemon_NoDaemon(t *testing.T) {
+	t.Parallel()
+
 	if connectToPreviewDaemonForTest("nonexistent-key-12345", true, "", false) {
 		t.Error("expected false when no daemon running")
 	}
 }
 
 func TestRunPreview_NoFileExits(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_RunPreviewNoFile", "--")
 		cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
@@ -27,6 +31,8 @@ func TestRunPreview_NoFileExits(t *testing.T) {
 }
 
 func TestHelperProcess_RunPreviewNoFile(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -34,6 +40,8 @@ func TestHelperProcess_RunPreviewNoFile(t *testing.T) {
 }
 
 func TestRunPreview_MissingFileExits(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_RunPreviewMissingFile", "--")
 		cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
@@ -47,6 +55,8 @@ func TestRunPreview_MissingFileExits(t *testing.T) {
 }
 
 func TestHelperProcess_RunPreviewMissingFile(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -54,6 +64,8 @@ func TestHelperProcess_RunPreviewMissingFile(t *testing.T) {
 }
 
 func TestRunPreview_FlagParsing(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	html := filepath.Join(dir, "page.html")
 	if err := os.WriteFile(html, []byte("<html></html>"), 0o644); err != nil {

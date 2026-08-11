@@ -9,6 +9,8 @@ import (
 )
 
 func TestLooksLikeLineSpec(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in   string
 		want bool
@@ -27,6 +29,8 @@ func TestLooksLikeLineSpec(t *testing.T) {
 }
 
 func TestPlural(t *testing.T) {
+	t.Parallel()
+
 	if plural(1) != "" {
 		t.Errorf("plural(1) = %q, want empty", plural(1))
 	}
@@ -36,6 +40,8 @@ func TestPlural(t *testing.T) {
 }
 
 func TestFileExistsOnDiskOrSession_OnDisk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "exists.go")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
@@ -47,6 +53,8 @@ func TestFileExistsOnDiskOrSession_OnDisk(t *testing.T) {
 }
 
 func TestFileExistsOnDiskOrSession_InReviewFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cj := CritJSON{Files: map[string]CritJSONFile{
 		"session-only.go": {Status: "modified"},
@@ -64,6 +72,8 @@ func TestFileExistsOnDiskOrSession_InReviewFile(t *testing.T) {
 }
 
 func TestFileExistsOnDiskOrSession_Missing(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if fileExistsOnDiskOrSession("missing.go", dir) {
 		t.Error("expected false for missing path")

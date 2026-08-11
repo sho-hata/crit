@@ -7,6 +7,8 @@ import (
 )
 
 func TestParseGeneratedRules_MissingFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	rules, err := ParseGeneratedRules(dir)
 	if err != nil {
@@ -18,6 +20,8 @@ func TestParseGeneratedRules_MissingFile(t *testing.T) {
 }
 
 func TestParseGeneratedRules_CommentsAndBlanks(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	contents := `
 # this is a comment
@@ -39,6 +43,8 @@ func TestParseGeneratedRules_CommentsAndBlanks(t *testing.T) {
 }
 
 func TestParseGeneratedRules_IgnoresOtherAttributes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeGitattributes(t, dir, "*.go linguist-language=Go\n*.bin linguist-vendored\n")
 	rules, err := ParseGeneratedRules(dir)
@@ -51,6 +57,8 @@ func TestParseGeneratedRules_IgnoresOtherAttributes(t *testing.T) {
 }
 
 func TestIsGenerated(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		attrs    string
@@ -72,6 +80,8 @@ func TestIsGenerated(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			dir := t.TempDir()
 			if tt.attrs != "" {
 				writeGitattributes(t, dir, tt.attrs)

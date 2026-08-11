@@ -5,6 +5,8 @@ import (
 )
 
 func TestParseSaplingStatus(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -101,6 +103,8 @@ func TestParseSaplingStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := parseSaplingStatus(tt.input)
 			assertFileChangesEqual(t, got, tt.want)
 		})
@@ -108,6 +112,8 @@ func TestParseSaplingStatus(t *testing.T) {
 }
 
 func TestParseSaplingDiffStat(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -171,6 +177,8 @@ func TestParseSaplingDiffStat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := parseSaplingDiffStat(tt.input)
 			assertNumstatEqual(t, got, tt.want)
 		})

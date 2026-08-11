@@ -7,6 +7,8 @@ import (
 )
 
 func TestDirArgs(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	dir := filepath.Join(tmp, "subdir")
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -30,6 +32,8 @@ func TestDirArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := dirArgs(tt.paths)
 			if len(got) != tt.want {
 				t.Errorf("dirArgs(%v) returned %d dirs, want %d", tt.paths, len(got), tt.want)

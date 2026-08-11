@@ -55,6 +55,8 @@ func TestExportedFindReviewFileByCommentID(t *testing.T) {
 }
 
 func TestExportedCJContainsCommentID(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: map[string]CritJSONFile{
 		"f": {Comments: []Comment{{ID: "x"}}},
 	}}
@@ -67,6 +69,8 @@ func TestExportedCJContainsCommentID(t *testing.T) {
 }
 
 func TestExportedSnapshotsRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	snapPath := filepath.Join(dir, "snapshots.json")
 	sf := SnapshotsFile{RoundSnapshots: map[string]map[int]RoundSnapshot{
@@ -85,6 +89,8 @@ func TestExportedSnapshotsRoundTrip(t *testing.T) {
 }
 
 func TestStaleReviewMetaLabel(t *testing.T) {
+	t.Parallel()
+
 	sr := staleReview{reviewType: "live", origin: "http://x"}
 	if sr.metaLabel() != "live: http://x, " {
 		t.Errorf("got %q", sr.metaLabel())

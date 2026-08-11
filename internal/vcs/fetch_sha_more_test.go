@@ -8,6 +8,8 @@ import (
 )
 
 func TestHasGitDirAt(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	if !hasGitDirAtForTest(dir) {
 		t.Error("git repo should have .git directory")
@@ -18,6 +20,8 @@ func TestHasGitDirAt(t *testing.T) {
 }
 
 func TestTryGitFetch_FetchesMissingCommit(t *testing.T) {
+	t.Parallel()
+
 	// Bare remote with two commits; clone only has the first.
 	bare := t.TempDir()
 	GitRun(t, bare, "init", "--bare")
@@ -45,6 +49,8 @@ func TestTryGitFetch_FetchesMissingCommit(t *testing.T) {
 }
 
 func TestEnsureSHAFetched_Git_FetchesFromOrigin(t *testing.T) {
+	t.Parallel()
+
 	bare := t.TempDir()
 	GitRun(t, bare, "init", "--bare")
 	origin := InitTestRepo(t)
@@ -69,6 +75,8 @@ func TestEnsureSHAFetched_Git_FetchesFromOrigin(t *testing.T) {
 }
 
 func TestEnsureSHAFetched_Git_ForkURLStillMissing(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	g := &GitVCS{}
 	err := ensureSHAFetched(g, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", dir, "https://github.com/example/fork.git")
@@ -81,6 +89,8 @@ func TestEnsureSHAFetched_Git_ForkURLStillMissing(t *testing.T) {
 }
 
 func TestEnsureSHAFetchedJJ_ColocatedGitRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	// Simulate colocated JJ by only checking git fetch path — JJVCS name triggers JJ path.
 	j := &JJVCS{}
@@ -94,6 +104,8 @@ func TestEnsureSHAFetchedJJ_ColocatedGitRepo(t *testing.T) {
 }
 
 func TestEnsureSHAFetchedJJ_PureJJWithFork(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".jj"), 0o755); err != nil {
 		t.Fatal(err)
@@ -109,6 +121,8 @@ func TestEnsureSHAFetchedJJ_PureJJWithFork(t *testing.T) {
 }
 
 func TestEnsureSHAFetchedSapling_MissingCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t) // has .git for fallback path
 	sl := &SaplingVCS{}
 	err := ensureSHAFetchedSapling(sl, "deadbeef", dir, "")
@@ -121,6 +135,8 @@ func TestEnsureSHAFetchedSapling_MissingCommit(t *testing.T) {
 }
 
 func TestEnsureSHAFetchedSapling_ForkURL(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	sl := &SaplingVCS{}
 	err := ensureSHAFetchedSapling(sl, "abc", dir, "https://github.com/fork/repo")

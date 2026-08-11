@@ -35,6 +35,8 @@ func newPreviewContentTestServer(t *testing.T, htmlFile string) *Server {
 }
 
 func TestServePreviewHTML_AppendsAgentWhenNoBodyTag(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	htmlFile := filepath.Join(dir, "index.html")
 	if err := os.WriteFile(htmlFile, []byte("<div>fragment with no body tag</div>"), 0644); err != nil {

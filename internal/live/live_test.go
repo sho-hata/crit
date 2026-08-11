@@ -21,6 +21,8 @@ import (
 )
 
 func TestAddLivePin_AssignsMonotonicGlobalPinNumbers(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	a1 := &DOMAnchor{Pathname: "/foo", CSSSelector: "h1", TagChain: []string{"H1"}}
 	a2 := &DOMAnchor{Pathname: "/bar", CSSSelector: "h2", TagChain: []string{"H2"}}
@@ -54,6 +56,8 @@ func TestAddLivePin_AssignsMonotonicGlobalPinNumbers(t *testing.T) {
 // strict global monotonicity (no reuse ever, even at the top), the fix is a
 // session-scoped counter persisted in CritJSON — out of scope here.
 func TestAddLivePin_DeleteMiddle_DoesNotReuseGap(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	a1 := &DOMAnchor{Pathname: "/foo", CSSSelector: "h1", TagChain: []string{"H1"}}
 	a2 := &DOMAnchor{Pathname: "/foo", CSSSelector: "h2", TagChain: []string{"H2"}}
@@ -155,6 +159,8 @@ func TestDispatch_GitHubPRURLUsesReview(t *testing.T) {
 }
 
 func TestLooksLikeLiveArgs(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		args []string
 		want bool
@@ -181,6 +187,8 @@ func TestLooksLikeLiveArgs(t *testing.T) {
 }
 
 func TestSmokeTest_ConnectionRefused(t *testing.T) {
+	t.Parallel()
+
 	r := runSmokeTest("http://127.0.0.1:19999", "")
 	if r.kind != smokeConnRefused {
 		t.Errorf("kind = %v, want smokeConnRefused", r.kind)
@@ -191,6 +199,8 @@ func TestSmokeTest_ConnectionRefused(t *testing.T) {
 }
 
 func TestSmokeTest_Non2xx(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "auth required", http.StatusUnauthorized)
 	}))
@@ -205,6 +215,8 @@ func TestSmokeTest_Non2xx(t *testing.T) {
 }
 
 func TestSmokeTest_NonHTML(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintln(w, `{"ok":true}`)
@@ -220,6 +232,8 @@ func TestSmokeTest_NonHTML(t *testing.T) {
 }
 
 func TestSmokeTest_MissingBodyTag(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintln(w, "<html><head></head><!-- no closing body -->")
@@ -235,6 +249,8 @@ func TestSmokeTest_MissingBodyTag(t *testing.T) {
 }
 
 func TestSmokeTest_OK(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintln(w, "<html><body><p>hello</p></body></html>")
@@ -250,6 +266,8 @@ func TestSmokeTest_OK(t *testing.T) {
 }
 
 func TestSmokeTest_CSPFrameAncestors_Informational(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
@@ -266,6 +284,8 @@ func TestSmokeTest_CSPFrameAncestors_Informational(t *testing.T) {
 }
 
 func TestCommentCLIGuard_LiveReview(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, "review")
 	cj := CritJSON{ReviewType: "live", Origin: "http://localhost:3000", ReviewRound: 1, Files: map[string]CritJSONFile{}}
@@ -282,6 +302,8 @@ func TestCommentCLIGuard_LiveReview(t *testing.T) {
 }
 
 func TestCommentCLIGuard_CodeReview_Allowed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, "review")
 	cj := CritJSON{ReviewRound: 1, Files: map[string]CritJSONFile{}}
@@ -294,6 +316,8 @@ func TestCommentCLIGuard_CodeReview_Allowed(t *testing.T) {
 }
 
 func TestCarryForward_LivePinSkipsRemap(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "page.md")
 	writeFile(t, mdPath, "# Page\n\nNew content\n")
@@ -338,6 +362,8 @@ func TestCarryForward_LivePinSkipsRemap(t *testing.T) {
 }
 
 func TestMergeGHComments_LivePinNotDeduped(t *testing.T) {
+	t.Parallel()
+
 	pin := Comment{
 		ID: "pin1", StartLine: 0, EndLine: 0, Body: "pin body",
 		DOMAnchor: &DOMAnchor{Pathname: "/dashboard", CSSSelector: "#h1"},
@@ -372,6 +398,8 @@ func TestMergeGHComments_LivePinNotDeduped(t *testing.T) {
 }
 
 func TestParseServerFlags_LiveOrigin(t *testing.T) {
+	t.Parallel()
+
 	f := parseServerFlags([]string{"--live-origin", "http://localhost:3000"})
 	if f.liveOrigin != "http://localhost:3000" {
 		t.Errorf("liveOrigin = %q, want http://localhost:3000", f.liveOrigin)
@@ -379,6 +407,8 @@ func TestParseServerFlags_LiveOrigin(t *testing.T) {
 }
 
 func TestParseServerFlags_NoLiveOrigin(t *testing.T) {
+	t.Parallel()
+
 	f := parseServerFlags([]string{"plan.md"})
 	if f.liveOrigin != "" {
 		t.Errorf("liveOrigin = %q, want empty", f.liveOrigin)
@@ -386,6 +416,8 @@ func TestParseServerFlags_NoLiveOrigin(t *testing.T) {
 }
 
 func TestParseServerFlags_LiveCookie(t *testing.T) {
+	t.Parallel()
+
 	f := parseServerFlags([]string{"--live-origin", "http://localhost:3000", "--live-cookie", "session=abc"})
 	if f.liveCookie != "session=abc" {
 		t.Fatalf("liveCookie = %q, want session=abc", f.liveCookie)
@@ -393,6 +425,8 @@ func TestParseServerFlags_LiveCookie(t *testing.T) {
 }
 
 func TestCreateLiveSession_EmptyOriginIsFatal(t *testing.T) {
+	t.Parallel()
+
 	_, err := createLiveSession(&serverConfig{liveOrigin: ""})
 	if err == nil {
 		t.Fatal("createLiveSession with empty origin must error")
@@ -400,6 +434,8 @@ func TestCreateLiveSession_EmptyOriginIsFatal(t *testing.T) {
 }
 
 func TestRunLive_SmokeFailFatal(t *testing.T) {
+	t.Parallel()
+
 	result := runSmokeTest("http://127.0.0.1:19999", "")
 	if !result.fatal {
 		t.Error("conn refused must be fatal")
@@ -410,6 +446,8 @@ func TestRunLive_SmokeFailFatal(t *testing.T) {
 }
 
 func TestParseLiveCLIFlags(t *testing.T) {
+	t.Parallel()
+
 	f := parseLiveCLIFlags([]string{
 		"-p", "8080",
 		"--host", "0.0.0.0",
@@ -437,6 +475,8 @@ func TestParseLiveCLIFlags(t *testing.T) {
 }
 
 func TestBuildLiveDaemonArgs(t *testing.T) {
+	t.Parallel()
+
 	f := liveCLIFlags{port: 9000, host: "127.0.0.1", publicURL: "https://mymac.ts.net", quiet: true}
 	cfg := Config{Port: 3000, Quiet: false, PublicURL: "https://ignored.example.com"}
 
@@ -674,6 +714,8 @@ func containsArgPair(args []string, key, want string) bool {
 }
 
 func TestRunSmokeTest_WithCookies(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Cookie") != "session=abc" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -694,6 +736,8 @@ func TestRunSmokeTest_WithCookies(t *testing.T) {
 }
 
 func TestRunSmokeTest_WithCookies_Unauthorized(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -709,6 +753,8 @@ func TestRunSmokeTest_WithCookies_Unauthorized(t *testing.T) {
 }
 
 func TestCheckLiveSmoke_WarnsOnNon2xx(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -720,6 +766,8 @@ func TestCheckLiveSmoke_WarnsOnNon2xx(t *testing.T) {
 }
 
 func TestCheckLiveSmoke_NotesFrameworkAndCSP(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
 		w.Header().Set("Content-Type", "text/html")
@@ -731,6 +779,8 @@ func TestCheckLiveSmoke_NotesFrameworkAndCSP(t *testing.T) {
 }
 
 func TestRunLive_OriginNormalisedToSchemeHost(t *testing.T) {
+	t.Parallel()
+
 	u, _ := url.Parse("https://myapp.test:4000/dashboard?q=1")
 	origin := u.Scheme + "://" + u.Host
 	if origin != "https://myapp.test:4000" {
@@ -739,6 +789,8 @@ func TestRunLive_OriginNormalisedToSchemeHost(t *testing.T) {
 }
 
 func TestDetectFrameworks(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		body string
@@ -765,6 +817,8 @@ func TestDetectFrameworks(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := detectFrameworks([]byte(tc.body))
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %v want %v", got, tc.want)
@@ -785,6 +839,8 @@ func TestDetectFrameworks(t *testing.T) {
 // without any code change (LiveView re-renders, etc.). Live pins must
 // always emerge with Drifted=false after carry-forward.
 func TestCarryForwardComment_PreservesLivePinFields(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:             "pin-original",
 		Body:           "needs work",
@@ -826,6 +882,8 @@ func TestCarryForwardComment_PreservesLivePinFields(t *testing.T) {
 // comments (DOMAnchor == nil) must continue to carry their Drifted and
 // DriftedOnRound fields across rounds.
 func TestCarryForwardComment_CodeCommentDriftPreserved(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:             "code-original",
 		Body:           "needs work",
@@ -855,6 +913,8 @@ func TestCarryForwardComment_CodeCommentDriftPreserved(t *testing.T) {
 // This is the regression for the gap that left two
 // rounds.livemode.spec.ts scenarios fixme'd.
 func TestHandleRoundCompleteFiles_LivePinsSurvive(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	reviewPath := filepath.Join(dir, "review")
 
@@ -963,6 +1023,8 @@ func TestHandleRoundCompleteFiles_LivePinsSurvive(t *testing.T) {
 // the file empty of comments, it must reset to round 1 — otherwise the next
 // pin authored ships against a stale counter.
 func TestCreateLiveSession_FreshStartsOnRoundOne(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "review-id")
 	if err := os.MkdirAll(identity, 0o755); err != nil {
@@ -995,6 +1057,8 @@ func TestCreateLiveSession_FreshStartsOnRoundOne(t *testing.T) {
 // (carry-forward / drift detection depends on knowing which round each pin
 // was created in).
 func TestCreateLiveSession_HonorsRoundWhenCommentsPresent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "review-id")
 	if err := os.MkdirAll(identity, 0o755); err != nil {
@@ -1192,6 +1256,8 @@ func TestHandleFileComments_LivePinFansOutSSE(t *testing.T) {
 // the user authors a single pin, and the resulting comment ships against the
 // stale counter — surfaced in the UI as "Round #2 on a brand-new review".
 func TestCreateLiveSession_FreshAwaitsFirstReview(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "review-id-fresh")
 	// Deliberately do NOT create the directory or any review file: we are
@@ -1219,6 +1285,8 @@ func TestCreateLiveSession_FreshAwaitsFirstReview(t *testing.T) {
 // SignalRoundComplete at boot, the watcher bumps the round to 2, and the
 // AddLivePin stamps ReviewRound: 2 onto the user's first pin.
 func TestLiveSession_FirstPinAfterBootShipsRound1(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "review-id-firstpin")
 	sc := &serverConfig{
@@ -1265,6 +1333,8 @@ func TestLiveSession_FirstPinAfterBootShipsRound1(t *testing.T) {
 // field-presence tests are brittle. The Marshal output is the contract that
 // matters.
 func TestDOMAnchor_NoScreenshotField(t *testing.T) {
+	t.Parallel()
+
 	a := &DOMAnchor{
 		Pathname:    "/dashboard",
 		CSSSelector: "#h1",
@@ -1285,6 +1355,8 @@ func TestDOMAnchor_NoScreenshotField(t *testing.T) {
 // from before the field was removed. encoding/json silently ignores unknown
 // keys by default, so the load must succeed without error.
 func TestDOMAnchor_LegacyScreenshotIgnored(t *testing.T) {
+	t.Parallel()
+
 	raw := `{
 		"pathname": "/dashboard",
 		"css_selector": "#h1",
@@ -1311,6 +1383,8 @@ func TestDOMAnchor_LegacyScreenshotIgnored(t *testing.T) {
 // succeed (forward compat with old frontend builds), but the persisted
 // dom_anchor on the saved review.json must NOT contain a screenshot key.
 func TestLive_PostFileCommentsDropsScreenshot(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "review-id")
 	if err := os.MkdirAll(identity, 0o755); err != nil {

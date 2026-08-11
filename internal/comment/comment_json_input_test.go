@@ -12,6 +12,8 @@ import (
 )
 
 func TestBulkAddCommentsAtPathEmptyInput(t *testing.T) {
+	t.Parallel()
+
 	err := bulkAddCommentsToCritJSONAtPath(nil, "", "", filepath.Join(t.TempDir(), ".crit"), inheritedScope{})
 	if err == nil || !strings.Contains(err.Error(), "no comment entries") {
 		t.Fatalf("error = %v, want no comment entries", err)
@@ -19,6 +21,8 @@ func TestBulkAddCommentsAtPathEmptyInput(t *testing.T) {
 }
 
 func TestReadCommentJSONInputFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bulk.json")
 	want := `[{"body":"hello"}]`
@@ -36,6 +40,8 @@ func TestReadCommentJSONInputFile(t *testing.T) {
 }
 
 func TestReadCommentJSONInputStdinDash(t *testing.T) {
+	t.Parallel()
+
 	want := `[{"body":"from stdin"}]`
 	got, err := readCommentJSONInput("-", strings.NewReader(want))
 	if err != nil {
@@ -47,6 +53,8 @@ func TestReadCommentJSONInputStdinDash(t *testing.T) {
 }
 
 func TestReadCommentJSONInputStdinDefault(t *testing.T) {
+	t.Parallel()
+
 	want := `[]`
 	got, err := readCommentJSONInput("", strings.NewReader(want))
 	if err != nil {
@@ -58,6 +66,8 @@ func TestReadCommentJSONInputStdinDefault(t *testing.T) {
 }
 
 func TestReadCommentJSONInputMissingFile(t *testing.T) {
+	t.Parallel()
+
 	missing := filepath.Join(t.TempDir(), "does-not-exist.json")
 	_, err := readCommentJSONInput(missing, strings.NewReader(""))
 	if err == nil {
@@ -69,6 +79,8 @@ func TestReadCommentJSONInputMissingFile(t *testing.T) {
 }
 
 func TestParseCommentJSONEntriesValid(t *testing.T) {
+	t.Parallel()
+
 	data := []byte(`[{"file":"main.go","line":42,"body":"fix"}]`)
 	entries, err := parseCommentJSONEntries(data, "-")
 	if err != nil {
@@ -80,6 +92,8 @@ func TestParseCommentJSONEntriesValid(t *testing.T) {
 }
 
 func TestParseCommentJSONEntriesRawNewlineInString(t *testing.T) {
+	t.Parallel()
+
 	// A raw LF inside a JSON string is the exact failure mode --file is meant
 	// to give a better error for. We assemble the bytes manually so the test
 	// source itself stays well-formed.
@@ -104,6 +118,8 @@ func TestParseCommentJSONEntriesRawNewlineInString(t *testing.T) {
 }
 
 func TestJSONSourceLabel(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ in, want string }{
 		{"", "stdin"},
 		{"-", "stdin"},
@@ -119,6 +135,8 @@ func TestJSONSourceLabel(t *testing.T) {
 }
 
 func TestFormatJSONParseError_NoOffset(t *testing.T) {
+	t.Parallel()
+
 	// errors.New produces an error with no offset info — exercises the
 	// !hasOffset branch in formatJSONParseError.
 	err := formatJSONParseError([]byte(`[]`), "test.json", errors.New("generic error"))
@@ -132,6 +150,8 @@ func TestFormatJSONParseError_NoOffset(t *testing.T) {
 }
 
 func TestParseCommentFlagsFile(t *testing.T) {
+	t.Parallel()
+
 	got, err := parseCommentFlags([]string{"--json", "--file", "bulk.json"})
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +173,8 @@ func TestParseCommentFlagsFile(t *testing.T) {
 }
 
 func TestJSONErrorOffset(t *testing.T) {
+	t.Parallel()
+
 	var dst struct{ N int }
 	typeErr := json.Unmarshal([]byte(`{"n":"not-a-number"}`), &dst)
 	if typeErr == nil {
@@ -176,6 +198,8 @@ func TestJSONErrorOffset(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			off, ok := jsonErrorOffset(tc.err)
 			if ok != tc.wantOK {
 				t.Errorf("ok=%v, want %v", ok, tc.wantOK)
@@ -188,6 +212,8 @@ func TestJSONErrorOffset(t *testing.T) {
 }
 
 func TestVisibleControl(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		in, want string
 	}{
@@ -200,6 +226,8 @@ func TestVisibleControl(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
+
 			if got := visibleControl([]byte(tc.in)); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
@@ -212,6 +240,8 @@ func TestVisibleControl(t *testing.T) {
 // TestRunComment_* in main_test.go).
 
 func TestRunCommentJSON_FromFile(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_RunCommentJSONFile", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -224,6 +254,8 @@ func TestRunCommentJSON_FromFile(t *testing.T) {
 }
 
 func TestHelperProcess_RunCommentJSONFile(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -242,6 +274,8 @@ func TestHelperProcess_RunCommentJSONFile(t *testing.T) {
 }
 
 func TestRunCommentJSON_ParseErrorExits(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_RunCommentJSONBad", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -257,6 +291,8 @@ func TestRunCommentJSON_ParseErrorExits(t *testing.T) {
 }
 
 func TestHelperProcess_RunCommentJSONBad(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -272,6 +308,8 @@ func TestHelperProcess_RunCommentJSONBad(t *testing.T) {
 }
 
 func TestRunCommentJSON_MissingFileExits(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_RunCommentJSONMissing", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -284,6 +322,8 @@ func TestRunCommentJSON_MissingFileExits(t *testing.T) {
 }
 
 func TestHelperProcess_RunCommentJSONMissing(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}

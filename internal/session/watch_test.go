@@ -145,6 +145,8 @@ func TestWatchFileMtimes_ConcurrentAddDuringChange(t *testing.T) {
 // The old comment ID must be tracked as deleted so mergeFileSnapshotIntoCritJSON
 // skips it, leaving only the new carried-forward copy.
 func TestCarryForwardAllComments_NoDuplicateOnDisk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// v4 folder layout: identity is a folder, review.json lives inside.
 	// Using a flat-file identity worked by accident on POSIX (write failed
@@ -261,6 +263,8 @@ func TestCarryForwardAllComments_NoDuplicateOnDisk(t *testing.T) {
 }
 
 func TestCarryForwardComments_NoDuplicateOnDisk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// v4 folder layout: identity is a folder, review.json lives inside.
 	identity := filepath.Join(dir, ".crit")
@@ -358,6 +362,8 @@ func TestCarryForwardComments_NoDuplicateOnDisk(t *testing.T) {
 }
 
 func TestCarryForwardComment_PreservesQuote(t *testing.T) {
+	t.Parallel()
+
 	offset := 5
 	old := Comment{
 		ID:          "c_old",
@@ -388,6 +394,8 @@ func TestCarryForwardComment_PreservesQuote(t *testing.T) {
 }
 
 func TestCarryForwardComment_PreservesGitHubID(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:        "c_old",
 		StartLine: 10,
@@ -413,6 +421,8 @@ func TestCarryForwardComment_PreservesGitHubID(t *testing.T) {
 // carry-forward, resolved comments appear at the wrong point in the timeline
 // (the legacy round-1 fallback kicks in).
 func TestCarryForwardComment_PreservesResolvedRound(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:            "c_old",
 		StartLine:     5,
@@ -442,6 +452,8 @@ func TestCarryForwardComment_PreservesResolvedRound(t *testing.T) {
 // after a round bump and `crit push` would re-PATCH (or double-post) bodies
 // that are actually unchanged.
 func TestCarryForwardComment_PreservesLastPushedBodyHash(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:                 "c_old",
 		StartLine:          7,
@@ -530,6 +542,8 @@ func TestWatchGit_SkipsGitStatusWhenNotWaiting(t *testing.T) {
 }
 
 func TestRestoreOrphanedComments(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	s := &Session{
@@ -617,6 +631,8 @@ func TestRestoreOrphanedComments(t *testing.T) {
 }
 
 func TestCarryForward_AnchorCorrectShift(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "plan.md")
 	os.WriteFile(mdPath, []byte("# Plan\n\nStep 1\n\nStep 2\n"), 0644)
@@ -669,6 +685,8 @@ func TestCarryForward_AnchorCorrectShift(t *testing.T) {
 }
 
 func TestCarryForward_AnchorDrifted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "plan.md")
 	os.WriteFile(mdPath, []byte("# Plan\n\nSomething else\n"), 0644)
@@ -714,6 +732,8 @@ func TestCarryForward_AnchorDrifted(t *testing.T) {
 }
 
 func TestCarryForward_AnchorEditedInPlaceNotDrifted(t *testing.T) {
+	t.Parallel()
+
 	// Old anchor is a clean prefix of the new line — text appended in place.
 	// LCS maps the line to the same position, but exact match fails.
 	// Should be treated as anchored, not drifted.
@@ -767,6 +787,8 @@ func TestCarryForward_AnchorEditedInPlaceNotDrifted(t *testing.T) {
 }
 
 func TestAnchorSimilar(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		candidate string
@@ -788,6 +810,8 @@ func TestAnchorSimilar(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := anchorSimilar(tt.candidate, tt.anchor); got != tt.want {
 				t.Errorf("anchorSimilar(%q, %q) = %v, want %v",
 					tt.candidate, tt.anchor, got, tt.want)
@@ -797,6 +821,8 @@ func TestAnchorSimilar(t *testing.T) {
 }
 
 func TestCarryForward_AnchorFindsCorrectPositionWhenLCSWrong(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "plan.md")
 
@@ -852,6 +878,8 @@ func TestCarryForward_AnchorFindsCorrectPositionWhenLCSWrong(t *testing.T) {
 }
 
 func TestCarryForward_WithoutAnchorBackwardsCompatible(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "plan.md")
 	os.WriteFile(mdPath, []byte("# Plan\n\nNew line\nStep 1\n\nStep 2\n"), 0644)
@@ -901,6 +929,8 @@ func TestCarryForward_WithoutAnchorBackwardsCompatible(t *testing.T) {
 }
 
 func TestCarryForwardComment_PreservesAnchor(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:        "c_old",
 		StartLine: 10,
@@ -923,6 +953,8 @@ func TestCarryForwardComment_PreservesAnchor(t *testing.T) {
 }
 
 func TestCarryForward_AnchorMultilineRange(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mdPath := filepath.Join(dir, "plan.md")
 
@@ -975,6 +1007,8 @@ func TestCarryForward_AnchorMultilineRange(t *testing.T) {
 }
 
 func TestCarryForward_AnchorLenFromAnchorNotLCS(t *testing.T) {
+	t.Parallel()
+
 	// Regression: anchorLen must come from the anchor text, not the LCS span.
 	// If LCS maps old lines 2-4 to new lines 5-10 (gap lines inserted between),
 	// the end line should still be 5+3-1=7 (3-line anchor), not 5+6-1=10.
@@ -1032,6 +1066,8 @@ func TestCarryForward_AnchorLenFromAnchorNotLCS(t *testing.T) {
 }
 
 func TestCarryForwardComments_CodeFileAnchorMoves(t *testing.T) {
+	t.Parallel()
+
 	// Code file with anchor text that moves to a different line between rounds.
 	// carryForwardComments should find the anchor in the new content and remap.
 	dir := t.TempDir()
@@ -1089,6 +1125,8 @@ func TestCarryForwardComments_CodeFileAnchorMoves(t *testing.T) {
 }
 
 func TestCarryForwardComments_CodeFileAnchorDeleted(t *testing.T) {
+	t.Parallel()
+
 	// Code file where the anchor text was deleted between rounds.
 	// The comment should be marked Drifted=true.
 	dir := t.TempDir()
@@ -1140,6 +1178,8 @@ func TestCarryForwardComments_CodeFileAnchorDeleted(t *testing.T) {
 }
 
 func TestCarryForwardComments_CodeFileNoAnchorUsesLCS(t *testing.T) {
+	t.Parallel()
+
 	// Code file with a comment that has no Anchor (old comment before anchors existed).
 	// With PreviousContent available, carryForwardComments uses LCS to remap
 	// the line position, same as markdown files.
@@ -1195,6 +1235,8 @@ func TestCarryForwardComments_CodeFileNoAnchorUsesLCS(t *testing.T) {
 }
 
 func TestCarryForwardComments_CodeFileWithPreviousContent(t *testing.T) {
+	t.Parallel()
+
 	// Code file where PreviousContent is set before carryForwardComments runs.
 	// This simulates the handleRoundCompleteGit flow where we snapshot Content
 	// before re-reading. The carry-forward should use anchor search on the
@@ -1273,6 +1315,8 @@ func TestCarryForwardComments_CodeFileWithPreviousContent(t *testing.T) {
 }
 
 func TestCarryForwardComments_CodeFileFileLevelComment(t *testing.T) {
+	t.Parallel()
+
 	// File-level comments (scope=file) on code files should be carried forward as-is.
 	dir := t.TempDir()
 	goPath := filepath.Join(dir, "main.go")
@@ -1322,6 +1366,8 @@ func TestCarryForwardComments_CodeFileFileLevelComment(t *testing.T) {
 }
 
 func TestCarryForwardComments_CodeFileOldSidePreservesPosition(t *testing.T) {
+	t.Parallel()
+
 	// Old-side comments have line numbers referencing the base ref, not the
 	// working tree. Their anchor text comes from deleted lines that don't exist
 	// in the working tree. LCS remapping and anchor search against the working
@@ -1384,6 +1430,8 @@ func TestCarryForwardComments_CodeFileOldSidePreservesPosition(t *testing.T) {
 }
 
 func TestFindAnchorInLines(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name           string
 		lines          []string
@@ -1443,6 +1491,8 @@ func TestFindAnchorInLines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := findAnchorInLines(tt.lines, tt.anchor, tt.preferredStart)
 			if got != tt.want {
 				t.Errorf("findAnchorInLines() = %d, want %d", got, tt.want)
@@ -1452,6 +1502,8 @@ func TestFindAnchorInLines(t *testing.T) {
 }
 
 func TestRemapLines(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		lineMap  map[int]int
@@ -1518,6 +1570,8 @@ func TestRemapLines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			s, e := remapLines(tt.lineMap, tt.oldStart, tt.oldEnd, tt.maxLine)
 			if s != tt.wantS || e != tt.wantE {
 				t.Errorf("remapLines() = (%d, %d), want (%d, %d)", s, e, tt.wantS, tt.wantE)
@@ -1527,6 +1581,8 @@ func TestRemapLines(t *testing.T) {
 }
 
 func TestFinishRoundComplete_InvokesOnRoundReady(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{ReviewRound: 3}
 	var got int
 	var calls int
@@ -1548,6 +1604,8 @@ func TestFinishRoundComplete_InvokesOnRoundReady(t *testing.T) {
 }
 
 func TestOnLiveRoundStart_OnlyForLiveAndPreviewReviews(t *testing.T) {
+	t.Parallel()
+
 	called := 0
 	hook := func(int, int) { called++ }
 

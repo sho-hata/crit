@@ -16,6 +16,8 @@ import (
 // avoids the //go:build integration tag so it runs in the default test suite
 // and catches regressions in CI without an opt-in flag.
 func TestRoundSnapshots_Integration(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.md")
 	r1Body := "# Plan\n\nstep one\n"
@@ -110,6 +112,8 @@ func TestRoundSnapshots_Integration(t *testing.T) {
 // in-memory edit, and Files[0].Content must have been re-read back to the
 // on-disk (R1) state.
 func TestHandleRoundCompleteFiles_CapturesBeforeReread(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.md")
 	r1Body := "# Plan\n\nstep one\n"
@@ -160,6 +164,8 @@ func TestHandleRoundCompleteFiles_CapturesBeforeReread(t *testing.T) {
 // skips the write when (a) the identity was set on entry and (b) the
 // sidecar carried at least one snapshot.
 func TestLoadCritJSON_ResumedSession_DoesNotRewriteSidecar(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.md")
 	if err := os.WriteFile(planPath, []byte("# Plan\n\nstep one\n"), 0o644); err != nil {

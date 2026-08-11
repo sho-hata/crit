@@ -6,6 +6,8 @@ import (
 )
 
 func TestParsePRSpec(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in      string
 		want    int
@@ -22,6 +24,8 @@ func TestParsePRSpec(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := ParsePRSpec(c.in)
 			if (err != nil) != c.wantErr {
 				t.Errorf("err=%v wantErr=%v", err, c.wantErr)
@@ -34,6 +38,8 @@ func TestParsePRSpec(t *testing.T) {
 }
 
 func TestLooksLikePRURL(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in   string
 		want bool
@@ -48,6 +54,8 @@ func TestLooksLikePRURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
+			t.Parallel()
+
 			if got := LooksLikePRURL(c.in); got != c.want {
 				t.Errorf("LooksLikePRURL(%q) = %v, want %v", c.in, got, c.want)
 			}
@@ -56,6 +64,8 @@ func TestLooksLikePRURL(t *testing.T) {
 }
 
 func TestParseRangeSpec(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in       string
 		wantBase string
@@ -72,6 +82,8 @@ func TestParseRangeSpec(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
+			t.Parallel()
+
 			b, h, err := ParseRangeSpec(c.in)
 			if (err != nil) != c.wantErr {
 				t.Fatalf("err=%v wantErr=%v", err, c.wantErr)
@@ -84,6 +96,8 @@ func TestParseRangeSpec(t *testing.T) {
 }
 
 func TestParseScopeSpec(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in      string
 		want    DiffScope
@@ -99,6 +113,8 @@ func TestParseScopeSpec(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := ParseScopeSpec(c.in)
 			if (err != nil) != c.wantErr {
 				t.Errorf("err=%v wantErr=%v", err, c.wantErr)
@@ -111,6 +127,8 @@ func TestParseScopeSpec(t *testing.T) {
 }
 
 func TestResolveFocus_PRAndRangeMutuallyExclusive(t *testing.T) {
+	t.Parallel()
+
 	_, err := ResolveFocus("1", "a..b", "", false, nil, "")
 	if err == nil {
 		t.Fatal("expected error from mutually-exclusive flags")
@@ -121,6 +139,8 @@ func TestResolveFocus_PRAndRangeMutuallyExclusive(t *testing.T) {
 }
 
 func TestResolveFocus_RangeWithoutVCS(t *testing.T) {
+	t.Parallel()
+
 	f, err := ResolveFocus("", "abc..def", "", false, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -137,6 +157,8 @@ func TestResolveFocus_RangeWithoutVCS(t *testing.T) {
 }
 
 func TestResolveFocus_NilWhenNoFlags(t *testing.T) {
+	t.Parallel()
+
 	f, err := ResolveFocus("", "", "", false, nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -147,6 +169,8 @@ func TestResolveFocus_NilWhenNoFlags(t *testing.T) {
 }
 
 func TestResolveFocus_InvalidScopeRejected(t *testing.T) {
+	t.Parallel()
+
 	_, err := ResolveFocus("", "a..b", "bogus", false, nil, "")
 	if err == nil {
 		t.Fatal("expected error from invalid scope")

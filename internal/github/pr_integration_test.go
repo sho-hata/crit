@@ -22,6 +22,8 @@ func skipIfNoGH(t *testing.T) {
 }
 
 func TestPRIntegration_FetchByNumber(t *testing.T) {
+	t.Parallel()
+
 	skipIfNoGH(t)
 	prStr := os.Getenv("CRIT_TEST_PR")
 	if prStr == "" {
@@ -47,6 +49,8 @@ func TestPRIntegration_FetchByNumber(t *testing.T) {
 }
 
 func TestPRIntegration_IsStackedPR_RealPR(t *testing.T) {
+	t.Parallel()
+
 	skipIfNoGH(t)
 	if pr := os.Getenv("CRIT_TEST_STACKED_PR"); pr != "" {
 		prNum, _ := strconv.Atoi(pr)

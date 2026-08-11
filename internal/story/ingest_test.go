@@ -47,6 +47,8 @@ func validPrologue() *session.StoryPrologue {
 }
 
 func TestIngest_InvalidPrologueReject(t *testing.T) {
+	t.Parallel()
+
 	indexed := []HunkID{hunk("a.go", 1)}
 	story := &session.Story{
 		Version:  1,
@@ -69,6 +71,8 @@ func TestIngest_InvalidPrologueReject(t *testing.T) {
 }
 
 func TestIngest_InvalidChapterIDsReject(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		chapters []session.StoryChapter
@@ -80,6 +84,8 @@ func TestIngest_InvalidChapterIDsReject(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			st := &session.Story{Prologue: validPrologue(), Chapters: tt.chapters}
 			if _, err := Run(baseScope(t, st, nil)); !errors.Is(err, ErrInvalidChapterID) {
 				t.Fatalf("expected ErrInvalidChapterID, got %v", err)
@@ -89,6 +95,8 @@ func TestIngest_InvalidChapterIDsReject(t *testing.T) {
 }
 
 func TestIngest_DriftReject(t *testing.T) {
+	t.Parallel()
+
 	indexed := []HunkID{hunk("a.go", 1), hunk("b.go", 10)}
 	story := &session.Story{
 		Version:  1,
@@ -111,6 +119,8 @@ func TestIngest_DriftReject(t *testing.T) {
 }
 
 func TestIngest_DuplicateReject(t *testing.T) {
+	t.Parallel()
+
 	indexed := []HunkID{hunk("a.go", 1), hunk("b.go", 10)}
 	story := &session.Story{
 		Version: 1,
@@ -135,6 +145,8 @@ func TestIngest_DuplicateReject(t *testing.T) {
 }
 
 func TestIngest_FloorReject(t *testing.T) {
+	t.Parallel()
+
 	// 4 hunks indexed, only 1 placed (25% < 50%): reject.
 	indexed := []HunkID{hunk("a.go", 1), hunk("b.go", 10), hunk("c.go", 20), hunk("d.go", 30)}
 	story := &session.Story{
@@ -156,6 +168,8 @@ func TestIngest_FloorReject(t *testing.T) {
 }
 
 func TestIngest_AutoRepairAtFloor(t *testing.T) {
+	t.Parallel()
+
 	// 4 hunks, 2 placed (exactly 50%): repair the rest into support[].
 	indexed := []HunkID{hunk("a.go", 1), hunk("b.go", 10), hunk("c.go", 20), hunk("d.go", 30)}
 	story := &session.Story{
@@ -193,6 +207,8 @@ func TestIngest_AutoRepairAtFloor(t *testing.T) {
 }
 
 func TestIngest_IgnoredPrePlacement(t *testing.T) {
+	t.Parallel()
+
 	// Ignored files are pre-placed into support[] and counted as placed, so a
 	// story that only covers the non-ignored hunk still passes cleanly.
 	indexed := []HunkID{hunk("a.go", 1)}
@@ -226,6 +242,8 @@ func TestIngest_IgnoredPrePlacement(t *testing.T) {
 }
 
 func TestIngest_CleanPass(t *testing.T) {
+	t.Parallel()
+
 	indexed := []HunkID{hunk("a.go", 1), hunk("b.go", 10)}
 	story := &session.Story{
 		Version: 1,
@@ -255,6 +273,8 @@ func TestIngest_CleanPass(t *testing.T) {
 }
 
 func TestIngest_CapsStoryTitles(t *testing.T) {
+	t.Parallel()
+
 	indexed := []HunkID{hunk("a.go", 1)}
 	longTitle := "This is a deliberately long chapter title that should not fit in the story rail"
 	story := &session.Story{
@@ -291,6 +311,8 @@ func TestIngest_CapsStoryTitles(t *testing.T) {
 }
 
 func TestIngest_SupportPlacementCountsAsPlaced(t *testing.T) {
+	t.Parallel()
+
 	// A hunk the author intentionally files under support[] (e.g. mechanical
 	// churn) counts as placed and must not be auto-repaired.
 	indexed := []HunkID{hunk("a.go", 1), hunk("gen.go", 100)}
@@ -313,6 +335,8 @@ func TestIngest_SupportPlacementCountsAsPlaced(t *testing.T) {
 }
 
 func TestIngest_DuplicateAcrossChapterAndSupport(t *testing.T) {
+	t.Parallel()
+
 	indexed := []HunkID{hunk("a.go", 1)}
 	story := &session.Story{
 		Version:  1,

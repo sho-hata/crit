@@ -54,8 +54,12 @@ func TestPrintHelpMentionsSession(t *testing.T) {
 
 // TestSubcommandDispatch_Help verifies that help flags are recognized.
 func TestSubcommandDispatch_Help(t *testing.T) {
+	t.Parallel()
+
 	for _, arg := range []string{"help", "--help", "-h"} {
 		t.Run(arg, func(t *testing.T) {
+			t.Parallel()
+
 			cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_Help", "--")
 			cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1", "GO_TEST_HELP_ARG="+arg)
 			out, err := cmd.CombinedOutput()
@@ -92,6 +96,8 @@ func TestHelperProcess_Help(t *testing.T) {
 
 // TestSubcommandDispatch_Version verifies the version flag.
 func TestSubcommandDispatch_Version(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_Version", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -104,6 +110,8 @@ func TestSubcommandDispatch_Version(t *testing.T) {
 }
 
 func TestHelperProcess_Version(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -112,6 +120,8 @@ func TestHelperProcess_Version(t *testing.T) {
 
 // TestSubcommandDispatch_Config verifies that "crit config --generate" produces output.
 func TestSubcommandDispatch_Config(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_Config", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -124,6 +134,8 @@ func TestSubcommandDispatch_Config(t *testing.T) {
 }
 
 func TestHelperProcess_Config(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -133,6 +145,8 @@ func TestHelperProcess_Config(t *testing.T) {
 // TestInstallGeminiSettings_MalformedJSON verifies that a malformed settings.json
 // causes a non-zero exit instead of silently overwriting user data.
 func TestInstallGeminiSettings_MalformedJSON(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	if err := os.WriteFile(path, []byte("not json{{{"), 0o644); err != nil {
@@ -150,6 +164,8 @@ func TestInstallGeminiSettings_MalformedJSON(t *testing.T) {
 }
 
 func TestHelperProcess_GeminiSettingsBadJSON(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -158,6 +174,8 @@ func TestHelperProcess_GeminiSettingsBadJSON(t *testing.T) {
 
 // TestRunComment_MissingArgs verifies that runComment exits with usage when given no args.
 func TestRunComment_MissingArgs(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentMissing", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	err := cmd.Run()
@@ -174,6 +192,8 @@ func TestRunComment_MissingArgs(t *testing.T) {
 }
 
 func TestHelperProcess_CommentMissing(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -182,6 +202,8 @@ func TestHelperProcess_CommentMissing(t *testing.T) {
 
 // TestRunComment_InvalidLocation verifies that a bad location format exits with error.
 func TestRunComment_InvalidLocation(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentBadLoc", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	err := cmd.Run()
@@ -191,6 +213,8 @@ func TestRunComment_InvalidLocation(t *testing.T) {
 }
 
 func TestHelperProcess_CommentBadLoc(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -200,6 +224,8 @@ func TestHelperProcess_CommentBadLoc(t *testing.T) {
 
 // TestRunComment_InvalidLineNumber verifies that a non-numeric line exits with error.
 func TestRunComment_InvalidLineNumber(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentBadLine", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	err := cmd.Run()
@@ -209,6 +235,8 @@ func TestRunComment_InvalidLineNumber(t *testing.T) {
 }
 
 func TestHelperProcess_CommentBadLine(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -217,6 +245,8 @@ func TestHelperProcess_CommentBadLine(t *testing.T) {
 
 // TestRunInstall_MissingAgent verifies that runInstall with no args exits with usage.
 func TestRunInstall_MissingAgent(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_InstallMissing", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	err := cmd.Run()
@@ -226,6 +256,8 @@ func TestRunInstall_MissingAgent(t *testing.T) {
 }
 
 func TestHelperProcess_InstallMissing(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -235,6 +267,8 @@ func TestHelperProcess_InstallMissing(t *testing.T) {
 // TestRunShare_MissingFiles verifies that runShare with no files exits with usage.
 // TestRunComment_FlagParsing verifies that --output and --author flags are parsed correctly.
 func TestRunComment_FlagParsing(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentFlags", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -244,6 +278,8 @@ func TestRunComment_FlagParsing(t *testing.T) {
 }
 
 func TestHelperProcess_CommentFlags(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -255,6 +291,8 @@ func TestHelperProcess_CommentFlags(t *testing.T) {
 
 // TestRunComment_ClearFlag verifies that --clear works.
 func TestRunComment_ClearFlag(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentClear", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -264,6 +302,8 @@ func TestRunComment_ClearFlag(t *testing.T) {
 }
 
 func TestHelperProcess_CommentClear(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -275,6 +315,8 @@ func TestHelperProcess_CommentClear(t *testing.T) {
 
 // TestRunComment_RangeLine verifies that a range line spec like "10-25" is parsed.
 func TestRunComment_RangeLine(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentRange", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	out, err := cmd.CombinedOutput()
@@ -284,6 +326,8 @@ func TestRunComment_RangeLine(t *testing.T) {
 }
 
 func TestHelperProcess_CommentRange(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -293,6 +337,8 @@ func TestHelperProcess_CommentRange(t *testing.T) {
 
 // TestRunComment_InvalidRange verifies that a bad range like "10-abc" exits with error.
 func TestRunComment_InvalidRange(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess_CommentBadRange", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	err := cmd.Run()
@@ -302,6 +348,8 @@ func TestRunComment_InvalidRange(t *testing.T) {
 }
 
 func TestHelperProcess_CommentBadRange(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -310,6 +358,8 @@ func TestHelperProcess_CommentBadRange(t *testing.T) {
 
 // TestRunComment_JSONFlag verifies that --json reads from stdin and produces output.
 func TestRunComment_JSONFlag(t *testing.T) {
+	t.Parallel()
+
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess_CommentJSON$", "--")
 	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=1")
 	cmd.Stdin = strings.NewReader(`[{"file":"main.go","line":1,"body":"test"}]`)
@@ -323,6 +373,8 @@ func TestRunComment_JSONFlag(t *testing.T) {
 }
 
 func TestHelperProcess_CommentJSON(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}
@@ -332,6 +384,8 @@ func TestHelperProcess_CommentJSON(t *testing.T) {
 
 // TestRunComment_JSONFlagMixed verifies that --json handles mixed comments and replies.
 func TestRunComment_JSONFlagMixed(t *testing.T) {
+	t.Parallel()
+
 	// Step 1: Create a comment and capture its ID
 	tmp := t.TempDir()
 	err := comment.AddCommentToCritJSONScoped("main.go", 1, 1, "comment", "TestBot", "", tmp, focus.InheritedScope{})
@@ -365,6 +419,8 @@ func TestRunComment_JSONFlagMixed(t *testing.T) {
 }
 
 func TestHelperProcess_CommentJSONMix(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_TEST_HELPER") != "1" {
 		return
 	}

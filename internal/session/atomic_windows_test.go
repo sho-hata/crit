@@ -11,6 +11,8 @@ import (
 )
 
 func TestIsWindowsTransientIOErr(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		err  error
@@ -25,6 +27,8 @@ func TestIsWindowsTransientIOErr(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := isWindowsTransientIOErr(tc.err); got != tc.want {
 				t.Fatalf("isWindowsTransientIOErr(%v) = %v, want %v", tc.err, got, tc.want)
 			}

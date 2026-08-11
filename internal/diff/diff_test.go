@@ -7,6 +7,8 @@ import (
 )
 
 func TestComputeLineDiff_BasicChanges(t *testing.T) {
+	t.Parallel()
+
 	oldContent := "a\nb\nc"
 	newContent := "a\nx\nc\nd"
 	diff := ComputeLineDiff(oldContent, newContent)
@@ -36,6 +38,8 @@ func TestComputeLineDiff_BasicChanges(t *testing.T) {
 }
 
 func TestComputeLineDiff_EmptyOld(t *testing.T) {
+	t.Parallel()
+
 	diff := ComputeLineDiff("", "a\nb")
 	if len(diff) != 2 {
 		t.Fatalf("diff len = %d, want 2", len(diff))
@@ -46,6 +50,8 @@ func TestComputeLineDiff_EmptyOld(t *testing.T) {
 }
 
 func TestComputeLineDiff_EmptyNew(t *testing.T) {
+	t.Parallel()
+
 	diff := ComputeLineDiff("a\nb", "")
 	if len(diff) != 2 {
 		t.Fatalf("diff len = %d, want 2", len(diff))
@@ -56,6 +62,8 @@ func TestComputeLineDiff_EmptyNew(t *testing.T) {
 }
 
 func TestComputeLineDiff_Identical(t *testing.T) {
+	t.Parallel()
+
 	diff := ComputeLineDiff("a\nb\nc", "a\nb\nc")
 	for _, e := range diff {
 		if e.Type != "unchanged" {
@@ -66,6 +74,8 @@ func TestComputeLineDiff_Identical(t *testing.T) {
 }
 
 func TestComputeLineDiff_WhitespaceOnlyChanges(t *testing.T) {
+	t.Parallel()
+
 	oldContent := "line1\n  indented\nline3"
 	newContent := "line1\n    indented\nline3"
 	diff := ComputeLineDiff(oldContent, newContent)
@@ -85,6 +95,8 @@ func TestComputeLineDiff_WhitespaceOnlyChanges(t *testing.T) {
 }
 
 func TestComputeLineDiff_BothEmpty(t *testing.T) {
+	t.Parallel()
+
 	diff := ComputeLineDiff("", "")
 	if len(diff) != 0 {
 		t.Errorf("expected empty diff, got %+v", diff)
@@ -92,6 +104,8 @@ func TestComputeLineDiff_BothEmpty(t *testing.T) {
 }
 
 func TestComputeLineDiff_CompleteReplacement(t *testing.T) {
+	t.Parallel()
+
 	diff := ComputeLineDiff("a\nb\nc", "x\ny\nz")
 	// Should have 6 entries: 3 removed + 3 added
 	removedCount := 0
@@ -113,6 +127,8 @@ func TestComputeLineDiff_CompleteReplacement(t *testing.T) {
 }
 
 func TestMapOldLineToNew_UnchangedLines(t *testing.T) {
+	t.Parallel()
+
 	entries := ComputeLineDiff("a\nb\nc", "a\nb\nc")
 	m := MapOldLineToNew(entries)
 	for i := 1; i <= 3; i++ {
@@ -123,6 +139,8 @@ func TestMapOldLineToNew_UnchangedLines(t *testing.T) {
 }
 
 func TestMapOldLineToNew_WithInsertions(t *testing.T) {
+	t.Parallel()
+
 	// Old: a, b, c  →  New: a, x, b, c
 	entries := ComputeLineDiff("a\nb\nc", "a\nx\nb\nc")
 	m := MapOldLineToNew(entries)
@@ -138,6 +156,8 @@ func TestMapOldLineToNew_WithInsertions(t *testing.T) {
 }
 
 func TestMapOldLineToNew_WithRemovals(t *testing.T) {
+	t.Parallel()
+
 	// Old: a, b, c  →  New: a, c
 	entries := ComputeLineDiff("a\nb\nc", "a\nc")
 	m := MapOldLineToNew(entries)
@@ -154,6 +174,8 @@ func TestMapOldLineToNew_WithRemovals(t *testing.T) {
 }
 
 func TestDiffEntriesToHunks_BasicChange(t *testing.T) {
+	t.Parallel()
+
 	entries := ComputeLineDiff("a\nb\nc", "a\nx\nc")
 	hunks := DiffEntriesToHunks(entries)
 	if len(hunks) != 1 {
@@ -184,6 +206,8 @@ func TestDiffEntriesToHunks_BasicChange(t *testing.T) {
 }
 
 func TestDiffEntriesToHunks_NoChanges(t *testing.T) {
+	t.Parallel()
+
 	entries := ComputeLineDiff("a\nb\nc", "a\nb\nc")
 	hunks := DiffEntriesToHunks(entries)
 	if len(hunks) != 0 {
@@ -192,6 +216,8 @@ func TestDiffEntriesToHunks_NoChanges(t *testing.T) {
 }
 
 func TestDiffEntriesToHunks_AllNew(t *testing.T) {
+	t.Parallel()
+
 	entries := ComputeLineDiff("", "a\nb\nc")
 	hunks := DiffEntriesToHunks(entries)
 	if len(hunks) != 1 {
@@ -272,6 +298,8 @@ func BenchmarkComputeLineDiff(b *testing.B) {
 }
 
 func TestDiffEntriesToHunks_SeparateHunks(t *testing.T) {
+	t.Parallel()
+
 	// Changes far apart should produce separate hunks (gap > 2*context lines)
 	var oldLines, newLines []string
 	for i := 1; i <= 30; i++ {
@@ -296,6 +324,8 @@ func TestDiffEntriesToHunks_SeparateHunks(t *testing.T) {
 }
 
 func TestMapOldLineToNew_AllRemoved(t *testing.T) {
+	t.Parallel()
+
 	// Old: a, b, c  →  New: (empty)
 	entries := ComputeLineDiff("a\nb\nc", "")
 	m := MapOldLineToNew(entries)
@@ -310,6 +340,8 @@ func TestMapOldLineToNew_AllRemoved(t *testing.T) {
 }
 
 func TestMapOldLineToNew_AllAdded(t *testing.T) {
+	t.Parallel()
+
 	// Old: (empty)  →  New: a, b, c
 	entries := ComputeLineDiff("", "a\nb\nc")
 	m := MapOldLineToNew(entries)
@@ -320,6 +352,8 @@ func TestMapOldLineToNew_AllAdded(t *testing.T) {
 }
 
 func TestMapOldLineToNew_MixedOperations(t *testing.T) {
+	t.Parallel()
+
 	// Old: a, b, c, d, e  →  New: a, x, c, y, e
 	entries := ComputeLineDiff("a\nb\nc\nd\ne", "a\nx\nc\ny\ne")
 	m := MapOldLineToNew(entries)

@@ -6,6 +6,8 @@ import (
 )
 
 func TestBuildDiffArgs(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		baseRef string
@@ -19,6 +21,8 @@ func TestBuildDiffArgs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := buildDiffArgs(c.baseRef, c.path, false)
 			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("buildDiffArgs(%q, %q) = %v, want %v", c.baseRef, c.path, got, c.want)

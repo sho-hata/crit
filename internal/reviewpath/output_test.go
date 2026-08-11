@@ -9,6 +9,8 @@ import (
 )
 
 func TestIdentity(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	got, err := Identity(root, "deadbeef1234")
 	if err != nil {
@@ -21,6 +23,8 @@ func TestIdentity(t *testing.T) {
 }
 
 func TestReviewsDir(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	got, err := ReviewsDir(root)
 	if err != nil {
@@ -33,6 +37,8 @@ func TestReviewsDir(t *testing.T) {
 }
 
 func TestHasLegacyIdentity(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	if HasLegacyIdentity(root) {
 		t.Fatal("expected no legacy identity in empty root")
@@ -46,6 +52,8 @@ func TestHasLegacyIdentity(t *testing.T) {
 }
 
 func TestHasLegacyIdentity_JSONFile(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".crit.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
@@ -56,6 +64,8 @@ func TestHasLegacyIdentity_JSONFile(t *testing.T) {
 }
 
 func TestLegacyIdentityPath(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	got, err := LegacyIdentityPath(root)
 	if err != nil {
@@ -68,7 +78,11 @@ func TestLegacyIdentityPath(t *testing.T) {
 }
 
 func TestIdentityUnderDataRoot(t *testing.T) {
+	t.Parallel()
+
 	t.Run("keys under reviews when the root is clean", func(t *testing.T) {
+		t.Parallel()
+
 		root := t.TempDir()
 		got, err := IdentityUnderDataRoot(root, "deadbeef1234")
 		if err != nil {
@@ -81,6 +95,8 @@ func TestIdentityUnderDataRoot(t *testing.T) {
 	})
 
 	t.Run("honors a legacy .crit folder", func(t *testing.T) {
+		t.Parallel()
+
 		root := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(root, ".crit"), 0o755); err != nil {
 			t.Fatal(err)
@@ -96,6 +112,8 @@ func TestIdentityUnderDataRoot(t *testing.T) {
 	})
 
 	t.Run("honors a legacy .crit.json flat file", func(t *testing.T) {
+		t.Parallel()
+
 		root := t.TempDir()
 		if err := os.WriteFile(filepath.Join(root, ".crit.json"), []byte("{}"), 0o644); err != nil {
 			t.Fatal(err)

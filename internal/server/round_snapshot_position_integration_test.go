@@ -11,6 +11,8 @@ import (
 // TestServeFileAtRound_IncludesPosition confirms the per-round file API
 // surfaces Position in its JSON response.
 func TestServeFileAtRound_IncludesPosition(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newRoundsTestServer(t)
 	rs := sess.RoundSnapshots["test.md"][2]
 	rs.Position = 7

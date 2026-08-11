@@ -7,6 +7,8 @@ import (
 )
 
 func TestResolveDaemonCLIConfig_RemoteFlagIgnoredWithoutFocus(t *testing.T) {
+	t.Parallel()
+
 	sc, err := server.ResolveDaemonCLIConfig([]string{"--remote", "file.md"})
 	if err != nil {
 		t.Fatal(err)
@@ -17,6 +19,8 @@ func TestResolveDaemonCLIConfig_RemoteFlagIgnoredWithoutFocus(t *testing.T) {
 }
 
 func TestResolveDaemonCLIConfig_RemoteDefaultsFalse(t *testing.T) {
+	t.Parallel()
+
 	sc, err := server.ResolveDaemonCLIConfig([]string{"file.md"})
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +31,8 @@ func TestResolveDaemonCLIConfig_RemoteDefaultsFalse(t *testing.T) {
 }
 
 func TestFocusKeyArgs_PR(t *testing.T) {
+	t.Parallel()
+
 	sc := &server.DaemonCLIConfig{Focus: &server.Focus{Kind: server.FocusRange, PRNumber: 295}}
 	got := server.FocusKeyArgs(sc)
 	if len(got) != 1 || got[0] != "pr:295" {
@@ -35,6 +41,8 @@ func TestFocusKeyArgs_PR(t *testing.T) {
 }
 
 func TestFocusKeyArgs_Range(t *testing.T) {
+	t.Parallel()
+
 	sc := &server.DaemonCLIConfig{Focus: &server.Focus{Kind: server.FocusRange, BaseSHA: "abc", HeadSHA: "def"}}
 	got := server.FocusKeyArgs(sc)
 	if len(got) != 1 || got[0] != "range:abc..def" {
@@ -43,6 +51,8 @@ func TestFocusKeyArgs_Range(t *testing.T) {
 }
 
 func TestFocusKeyArgs_FallsBackToFiles(t *testing.T) {
+	t.Parallel()
+
 	sc := &server.DaemonCLIConfig{Files: []string{"a.md", "b.md"}}
 	got := server.FocusKeyArgs(sc)
 	if len(got) != 2 || got[0] != "a.md" || got[1] != "b.md" {

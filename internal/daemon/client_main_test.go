@@ -22,6 +22,8 @@ import (
 // review-cycle was called immediately after daemon start, got 503, and
 // allowed through on error.
 func TestRunReviewClientRaw_WaitsForReadiness(t *testing.T) {
+	t.Parallel()
+
 	var sessionCalls atomic.Int32
 	var reviewCycleCalled atomic.Bool
 
@@ -81,6 +83,8 @@ func TestRunReviewClientRaw_WaitsForReadiness(t *testing.T) {
 // TestRunReviewClientRaw_NoReadinessDelay verifies that when the daemon is
 // already ready, runReviewClientRaw proceeds immediately without extra delay.
 func TestRunReviewClientRaw_NoReadinessDelay(t *testing.T) {
+	t.Parallel()
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/session":
@@ -125,7 +129,11 @@ func TestRunReviewClientRaw_NoReadinessDelay(t *testing.T) {
 // Covers two paths: the daemon answers /api/review-cycle with 503+shutdown
 // payload, and the daemon's HTTP server force-closes the connection.
 func TestRunReviewClientRaw_DaemonShutdownDeniesNotApproves(t *testing.T) {
+	t.Parallel()
+
 	t.Run("503 shutdown response", func(t *testing.T) {
+		t.Parallel()
+
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/session":
@@ -160,6 +168,8 @@ func TestRunReviewClientRaw_DaemonShutdownDeniesNotApproves(t *testing.T) {
 	})
 
 	t.Run("connection drop mid-request", func(t *testing.T) {
+		t.Parallel()
+
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/session":
@@ -283,6 +293,8 @@ func TestWaitForDaemonReady_SurfacesFailureAfterSameKeyCleanup(t *testing.T) {
 }
 
 func TestRunReviewClientRaw_ReturnsInitializationError(t *testing.T) {
+	t.Parallel()
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/session" {
 			t.Errorf("unexpected request to %s", r.URL.Path)

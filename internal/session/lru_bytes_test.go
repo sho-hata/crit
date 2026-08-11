@@ -6,6 +6,8 @@ import (
 )
 
 func TestBytesLRU_GetPutHit(t *testing.T) {
+	t.Parallel()
+
 	c := newBytesLRU(4)
 	c.Put("a", []byte("alpha"))
 	got, ok := c.Get("a")
@@ -15,6 +17,8 @@ func TestBytesLRU_GetPutHit(t *testing.T) {
 }
 
 func TestBytesLRU_MissReportsFalse(t *testing.T) {
+	t.Parallel()
+
 	c := newBytesLRU(4)
 	if _, ok := c.Get("missing"); ok {
 		t.Errorf("Get(missing) should miss")
@@ -22,6 +26,8 @@ func TestBytesLRU_MissReportsFalse(t *testing.T) {
 }
 
 func TestBytesLRU_EvictsLeastRecentlyUsed(t *testing.T) {
+	t.Parallel()
+
 	c := newBytesLRU(3)
 	c.Put("a", []byte("1"))
 	c.Put("b", []byte("2"))
@@ -43,6 +49,8 @@ func TestBytesLRU_EvictsLeastRecentlyUsed(t *testing.T) {
 }
 
 func TestBytesLRU_PutOverwritesPromotes(t *testing.T) {
+	t.Parallel()
+
 	c := newBytesLRU(2)
 	c.Put("a", []byte("1"))
 	c.Put("b", []byte("2"))
@@ -60,6 +68,8 @@ func TestBytesLRU_PutOverwritesPromotes(t *testing.T) {
 }
 
 func TestBytesLRU_ZeroCapClampsToOne(t *testing.T) {
+	t.Parallel()
+
 	c := newBytesLRU(0)
 	c.Put("a", []byte("x"))
 	c.Put("b", []byte("y"))

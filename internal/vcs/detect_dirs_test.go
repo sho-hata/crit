@@ -7,6 +7,8 @@ import (
 )
 
 func TestHasJJDirFrom(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if hasJJDirFromTest(dir) {
 		t.Error("expected false")
@@ -20,6 +22,8 @@ func TestHasJJDirFrom(t *testing.T) {
 }
 
 func TestHasSLDirFrom(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if hasSLDirFromTest(dir) {
 		t.Error("expected false")

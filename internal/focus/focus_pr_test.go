@@ -54,6 +54,8 @@ func TestResolveFocusFromPR(t *testing.T) {
 }
 
 func TestSetPRResolveHooks(t *testing.T) {
+	t.Parallel()
+
 	SetPRResolveHooks(
 		func(int) (PRResolveInfo, error) { return PRResolveInfo{Number: 1}, nil },
 		func(PRResolveInfo, vcs.VCS) bool { return true },

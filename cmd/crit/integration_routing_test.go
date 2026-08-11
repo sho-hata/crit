@@ -20,6 +20,8 @@ import (
 // (The aider integration has its own end-to-end coverage in aider_install_test.go.)
 
 func TestDestFor_ProjectMode(t *testing.T) {
+	t.Parallel()
+
 	// Project install must always use the dest field, regardless of whether a
 	// globalDest is set.
 	for name, files := range integrationMap {
@@ -33,6 +35,8 @@ func TestDestFor_ProjectMode(t *testing.T) {
 }
 
 func TestDestFor_GlobalMode(t *testing.T) {
+	t.Parallel()
+
 	// In global mode, integrations with no globalDest fall through to the raw
 	// relative dest (which lands under $HOME because cwd == $HOME during a
 	// global install). Integrations with a globalDest get the redirected
@@ -87,6 +91,8 @@ func TestDestFor_GlobalMode(t *testing.T) {
 }
 
 func TestDestFor_ClineGlobalUsesPrimaryConfigDirectory(t *testing.T) {
+	t.Parallel()
+
 	home := "/home/me"
 	f := integrationMap["cline"][0]
 	got := destFor(f, true, home, "cline")
@@ -97,6 +103,8 @@ func TestDestFor_ClineGlobalUsesPrimaryConfigDirectory(t *testing.T) {
 }
 
 func TestIntegrationMap_SnapshotGlobalRouting(t *testing.T) {
+	t.Parallel()
+
 	// Snapshot test: verifies each tool's globalDest configuration matches
 	// what the integration validation findings established. Update this test
 	// when intentionally changing routing.
@@ -136,6 +144,8 @@ func TestIntegrationMap_SnapshotGlobalRouting(t *testing.T) {
 }
 
 func TestInstallOneFile_WritesAndSkips(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "subdir", "out.md")
 	f := integration{source: "integrations/cline/crit.md", dest: dest}
@@ -566,6 +576,8 @@ func TestInstallIntegration_CodexPluginDoesNotActivateExistingProjectFiles(t *te
 }
 
 func TestInstallCodexPluginMarketplaceForceOverwritesInvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
@@ -581,6 +593,8 @@ func TestInstallCodexPluginMarketplaceForceOverwritesInvalidJSON(t *testing.T) {
 }
 
 func TestInstallCodexPluginMarketplaceForceOverwritesMalformedPlugins(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	if err := os.WriteFile(path, []byte(`{"plugins":{}}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -596,6 +610,8 @@ func TestInstallCodexPluginMarketplaceForceOverwritesMalformedPlugins(t *testing
 }
 
 func TestInstallCodexPluginMarketplaceInvalidJSONReturnsErrorWithoutForce(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
@@ -607,6 +623,8 @@ func TestInstallCodexPluginMarketplaceInvalidJSONReturnsErrorWithoutForce(t *tes
 }
 
 func TestInstallCodexPluginMarketplaceMalformedPluginsReturnsErrorWithoutForce(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	if err := os.WriteFile(path, []byte(`{"plugins":{}}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -618,8 +636,12 @@ func TestInstallCodexPluginMarketplaceMalformedPluginsReturnsErrorWithoutForce(t
 }
 
 func TestInstallCodexPluginMarketplaceRejectsWhitespaceNameWithoutForce(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"local ", "   "} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			path := filepath.Join(t.TempDir(), "marketplace.json")
 			existing := fmt.Sprintf(`{
   "name": %q,
@@ -639,6 +661,8 @@ func TestInstallCodexPluginMarketplaceRejectsWhitespaceNameWithoutForce(t *testi
 }
 
 func TestInstallCodexPluginMarketplaceRepairsStaleSourcePath(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	stale := `{
   "name": "local",
@@ -665,6 +689,8 @@ func TestInstallCodexPluginMarketplaceRepairsStaleSourcePath(t *testing.T) {
 }
 
 func TestInstallCodexPluginMarketplaceRepairsStalePolicyAndDedupes(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	stale := `{
   "name": "local",
@@ -697,6 +723,8 @@ func TestInstallCodexPluginMarketplaceRepairsStalePolicyAndDedupes(t *testing.T)
 }
 
 func TestInstallCodexPluginMarketplacePreservesOtherTypedFields(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	existing := `{
   "name": "local",
@@ -756,6 +784,8 @@ func TestInstallCodexPluginMarketplacePreservesOtherTypedFields(t *testing.T) {
 }
 
 func TestInstallCodexPluginMarketplacePreservesShorthandSource(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "marketplace.json")
 	existing := `{
   "name": "local",
@@ -793,6 +823,8 @@ func TestInstallCodexPluginMarketplacePreservesShorthandSource(t *testing.T) {
 }
 
 func TestUpsertCodexPluginConfig(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		raw  string
@@ -826,6 +858,8 @@ func TestUpsertCodexPluginConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := upsertCodexPluginConfig(tt.raw, "crit@local"); got != tt.want {
 				t.Fatalf("got:\n%s\nwant:\n%s", got, tt.want)
 			}
@@ -834,6 +868,8 @@ func TestUpsertCodexPluginConfig(t *testing.T) {
 }
 
 func TestInstallCodexPluginConfigPreservesModeAndSymlink(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink behavior differs on Windows")
 	}
@@ -870,6 +906,8 @@ func TestInstallCodexPluginConfigPreservesModeAndSymlink(t *testing.T) {
 }
 
 func TestInstallCodexPluginConfigDefaultsNewFileTo0600(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := installCodexPluginConfig(path, "crit@local"); err != nil {
 		t.Fatalf("installCodexPluginConfig: %v", err)
@@ -884,6 +922,8 @@ func TestInstallCodexPluginConfigDefaultsNewFileTo0600(t *testing.T) {
 }
 
 func TestCodexPluginCachePathComponentsAreValidated(t *testing.T) {
+	t.Parallel()
+
 	for _, value := range []string{"", "..", ".", "bad/name", `bad\name`, "bad.name", "bad name", " ", " local", "local ", "ümlaut"} {
 		if _, err := validCodexPluginSegment(value, "test"); err == nil {
 			t.Fatalf("expected %q to be rejected", value)
@@ -897,6 +937,8 @@ func TestCodexPluginCachePathComponentsAreValidated(t *testing.T) {
 }
 
 func TestCodexPluginManifestVersionRejectsWhitespace(t *testing.T) {
+	t.Parallel()
+
 	if _, err := codexPluginManifestVersionFromBytes([]byte(`{"version":"   "}`)); err == nil {
 		t.Fatal("expected whitespace version to be rejected")
 	}
@@ -1020,6 +1062,8 @@ func TestInstallIntegration_HermesPrintsExternalDirsNote(t *testing.T) {
 }
 
 func TestPrintUniqueHints_Dedups(t *testing.T) {
+	t.Parallel()
+
 	// printUniqueHints prints to stdout; we just verify it doesn't panic on
 	// duplicates and empty input. Output ordering and dedup logic are simple
 	// enough that visual inspection during integration use covers the rest.
@@ -1028,6 +1072,8 @@ func TestPrintUniqueHints_Dedups(t *testing.T) {
 }
 
 func TestInstallGeminiSettings(t *testing.T) {
+	t.Parallel()
+
 	hookEntry := func(data []byte) bool {
 		var m map[string]interface{}
 		if err := json.Unmarshal(data, &m); err != nil {
@@ -1058,6 +1104,8 @@ func TestInstallGeminiSettings(t *testing.T) {
 	})
 
 	t.Run("skips when hook already present and no force", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 		path := filepath.Join(dir, "settings.json")
 		// Write a valid settings.json that already has the hook plus a sentinel field.
@@ -1071,6 +1119,8 @@ func TestInstallGeminiSettings(t *testing.T) {
 	})
 
 	t.Run("force overwrites existing hook entry", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 		path := filepath.Join(dir, "settings.json")
 		// write a settings file with a stale exit_plan_mode entry
@@ -1103,6 +1153,8 @@ func TestInstallGeminiSettings(t *testing.T) {
 	})
 
 	t.Run("preserves existing unrelated hooks", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 		path := filepath.Join(dir, "settings.json")
 		existing := `{"hooks":{"BeforeTool":[{"matcher":"other_tool","hooks":[{"type":"command","command":"other"}]}]}}`

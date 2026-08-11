@@ -20,6 +20,8 @@ import (
 // source tree, while FS is the compiled-in embed.FS — comparing the two is the
 // whole point.
 func TestEmbedCoversAllAssets(t *testing.T) {
+	t.Parallel()
+
 	srcFS := os.DirFS(".")
 
 	err := fs.WalkDir(srcFS, ".", func(p string, d fs.DirEntry, err error) error {

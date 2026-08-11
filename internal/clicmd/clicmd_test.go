@@ -10,6 +10,8 @@ import (
 )
 
 func TestPlural(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		n    int
 		want string
@@ -21,6 +23,8 @@ func TestPlural(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("n=%d", tt.n), func(t *testing.T) {
+			t.Parallel()
+
 			if got := Plural(tt.n); got != tt.want {
 				t.Errorf("Plural(%d) = %q, want %q", tt.n, got, tt.want)
 			}
@@ -29,6 +33,8 @@ func TestPlural(t *testing.T) {
 }
 
 func TestExitError_ErrorAndUnwrap(t *testing.T) {
+	t.Parallel()
+
 	inner := errors.New("boom")
 	err := ExitError{Code: 2, Err: inner}
 	if err.Error() != "boom" {
@@ -43,6 +49,8 @@ func TestExitError_ErrorAndUnwrap(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
+	t.Parallel()
+
 	err := Usage("bad flags")
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
@@ -54,6 +62,8 @@ func TestUsage(t *testing.T) {
 }
 
 func TestRequireFlagValue(t *testing.T) {
+	t.Parallel()
+
 	got, err := RequireFlagValue([]string{"--output", "/tmp"}, 0, "--output")
 	if err != nil || got != "/tmp" {
 		t.Fatalf("got %q, %v", got, err)
@@ -69,6 +79,8 @@ func TestRequireFlagValue(t *testing.T) {
 }
 
 func TestMustGetwd(t *testing.T) {
+	t.Parallel()
+
 	wd, err := MustGetwd()
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +102,8 @@ func mustGetwdFallback() string {
 }
 
 func TestReorderFlagsFirst(t *testing.T) {
+	t.Parallel()
+
 	boolFlags := map[string]bool{
 		"no-open":                       true,
 		"allow-unauthenticated-network": true,
@@ -168,6 +182,8 @@ func TestReorderFlagsFirst(t *testing.T) {
 }
 
 func TestReorderFlagsFirst_RoundTripFlagParse(t *testing.T) {
+	t.Parallel()
+
 	boolFlags := map[string]bool{"no-open": true}
 	tests := []struct {
 		name       string

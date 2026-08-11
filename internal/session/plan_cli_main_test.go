@@ -13,6 +13,8 @@ import (
 )
 
 func TestResolvePlanConfig_NameAndFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "plan.md")
 	os.WriteFile(path, []byte("# Test Plan"), 0644)
@@ -27,6 +29,8 @@ func TestResolvePlanConfig_NameAndFile(t *testing.T) {
 }
 
 func TestResolvePlanConfig_NameOnly(t *testing.T) {
+	t.Parallel()
+
 	pc := resolvePlanConfig([]string{"--name", "auth-flow"})
 	if pc.name != "auth-flow" {
 		t.Errorf("name = %q, want %q", pc.name, "auth-flow")
@@ -40,6 +44,8 @@ func TestResolvePlanConfig_NameOnly(t *testing.T) {
 }
 
 func TestResolvePlanSlug_UsesNameWhenProvided(t *testing.T) {
+	t.Parallel()
+
 	slug := resolvePlanSlug("my-custom-name", []byte("# Some Heading"))
 	if slug != "my-custom-name" {
 		t.Errorf("resolvePlanSlug with name = %q, want my-custom-name", slug)
@@ -47,6 +53,8 @@ func TestResolvePlanSlug_UsesNameWhenProvided(t *testing.T) {
 }
 
 func TestResolvePlanSlug_DerivesFromContent(t *testing.T) {
+	t.Parallel()
+
 	slug := resolvePlanSlug("", []byte("# Auth Flow\n\nDetails here"))
 	if slug == "" {
 		t.Error("expected non-empty slug derived from content")
@@ -307,10 +315,14 @@ func TestEmitHookDecision_InvalidPlanApproveModeWarnsAndPreservesOutput(t *testi
 }
 
 func TestPlanApproveModePermissionUpdate_ValidModes(t *testing.T) {
+	t.Parallel()
+
 	for _, mode := range []string{
 		"default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions",
 	} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+
 			update, valid := planApproveModePermissionUpdate(mode)
 			if !valid {
 				t.Fatalf("mode %q rejected", mode)

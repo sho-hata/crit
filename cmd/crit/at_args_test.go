@@ -10,6 +10,8 @@ import (
 // TestResolveAtPrefixedArgs covers the "@file" form that agent file pickers
 // (e.g. Claude Code's "@" autocomplete) insert. See issue #656.
 func TestResolveAtPrefixedArgs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	real := filepath.Join(dir, "myfile.md")
 	if err := os.WriteFile(real, []byte("# hi\n"), 0o644); err != nil {
@@ -37,6 +39,8 @@ func TestResolveAtPrefixedArgs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := resolveAtPrefixedArgs(tc.in)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("resolveAtPrefixedArgs(%q) = %q, want %q", tc.in, got, tc.want)

@@ -70,6 +70,8 @@ func doLSPRequest(t *testing.T, srv *Server, url string) *httptest.ResponseRecor
 }
 
 func TestLSPHoverHappyPath(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeLSPProvider{hoverContents: "```go\nfunc main()\n```"}
 	srv, _ := newLSPTestServer(t, fake)
 
@@ -89,6 +91,8 @@ func TestLSPHoverHappyPath(t *testing.T) {
 }
 
 func TestLSPHoverErrors(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeLSPProvider{}
 	srv, _ := newLSPTestServer(t, fake)
 
@@ -117,6 +121,8 @@ func TestLSPHoverErrors(t *testing.T) {
 }
 
 func TestLSPHoverMethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
 	req := httptest.NewRequest(http.MethodPost, "/api/lsp/hover?path=main.go&line=1&char=0", nil)
 	w := httptest.NewRecorder()
@@ -127,6 +133,8 @@ func TestLSPHoverMethodNotAllowed(t *testing.T) {
 }
 
 func TestLSPDisabledByConfig(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeLSPProvider{}
 	srv, _ := newLSPTestServer(t, fake)
 	disabled := false
@@ -141,6 +149,8 @@ func TestLSPDisabledByConfig(t *testing.T) {
 }
 
 func TestLSPUnavailableUnderRangeFocus(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeLSPProvider{hoverContents: "doc"}
 	srv, sess := newLSPTestServer(t, fake)
 	sess.Focus = Focus{Kind: FocusRange, BaseSHA: "b", HeadSHA: "h"}
@@ -154,6 +164,8 @@ func TestLSPUnavailableUnderRangeFocus(t *testing.T) {
 }
 
 func TestLSPDefinitionInSessionAndPeek(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newLSPTestServer(t, nil)
 	fake := &fakeLSPProvider{
 		locations: []lsp.Location{
@@ -191,6 +203,8 @@ func TestLSPDefinitionInSessionAndPeek(t *testing.T) {
 }
 
 func TestLSPDefinitionInRepoNotInSession(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newLSPTestServer(t, nil)
 	otherPath := filepath.Join(sess.RepoRoot, "helper.go")
 	if err := os.WriteFile(otherPath, []byte("package main\n\nfunc helper() {}\n"), 0o644); err != nil {
@@ -216,6 +230,8 @@ func TestLSPDefinitionInRepoNotInSession(t *testing.T) {
 }
 
 func TestLSPDefinitionOutsideAllowedRootsHasNoPeek(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newLSPTestServer(t, nil)
 	outside := filepath.Join(t.TempDir(), "secret.go")
 	if err := os.WriteFile(outside, []byte("package secret\n"), 0o644); err != nil {
@@ -242,6 +258,8 @@ func TestLSPDefinitionOutsideAllowedRootsHasNoPeek(t *testing.T) {
 }
 
 func TestTruncateLineKeepsRuneBoundary(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		line string
@@ -253,6 +271,8 @@ func TestTruncateLineKeepsRuneBoundary(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := truncateLine(tt.line)
 			if !strings.HasSuffix(got, "…") {
 				t.Fatalf("long line must end with ellipsis, got %q…", got[len(got)-10:])
@@ -272,6 +292,8 @@ func TestTruncateLineKeepsRuneBoundary(t *testing.T) {
 }
 
 func TestReadPeekBoundaries(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	write := func(name string, lineCount int) string {
 		path := filepath.Join(dir, name)
@@ -311,6 +333,8 @@ func TestReadPeekBoundaries(t *testing.T) {
 }
 
 func TestLSPDefinitionPeekTruncatesLargeFiles(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newLSPTestServer(t, nil)
 	bigPath := filepath.Join(sess.RepoRoot, "generated.go")
 	var b strings.Builder
@@ -362,6 +386,8 @@ func TestLSPDefinitionPeekTruncatesLargeFiles(t *testing.T) {
 }
 
 func TestLSPDefinitionGorootPeek(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newLSPTestServer(t, nil)
 	goroot := t.TempDir()
 	stdlibFile := filepath.Join(goroot, "src", "fmt", "print.go")
@@ -399,6 +425,8 @@ func TestLSPDefinitionGorootPeek(t *testing.T) {
 // TestLSPAbsolutePathScoping covers chained jumps from the peek popup:
 // absolute paths are accepted only under repo root / GOROOT / GOMODCACHE.
 func TestLSPAbsolutePathScoping(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeLSPProvider{hoverContents: "doc"}
 	srv, sess := newLSPTestServer(t, fake)
 
@@ -445,6 +473,8 @@ type lspReferencesResponse struct {
 }
 
 func TestLSPReferencesSortedWithSnippetPeek(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newLSPTestServer(t, nil)
 	helperPath := filepath.Join(sess.RepoRoot, "helper.go")
 	if err := os.WriteFile(helperPath, []byte("package main\n\nfunc helper() { main() }\n"), 0o644); err != nil {
@@ -496,6 +526,8 @@ func TestLSPReferencesSortedWithSnippetPeek(t *testing.T) {
 // exist than fit, the ones in files under review must survive even though
 // their paths sort last alphabetically.
 func TestLSPReferencesCapKeepsRelevantFiles(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newLSPTestServer(t, nil)
 	// aaa.go is in the repo but not under review, and sorts before main.go.
 	bulkPath := filepath.Join(sess.RepoRoot, "aaa.go")
@@ -528,6 +560,8 @@ func TestLSPReferencesCapKeepsRelevantFiles(t *testing.T) {
 // TestReferenceCharacterTiebreak pins the character tiebreak: two references
 // on the same line must have a deterministic order.
 func TestReferenceCharacterTiebreak(t *testing.T) {
+	t.Parallel()
+
 	_, sess := newLSPTestServer(t, nil)
 	path := filepath.Join(sess.RepoRoot, "main.go")
 	locs := []lsp.Location{
@@ -542,6 +576,8 @@ func TestReferenceCharacterTiebreak(t *testing.T) {
 }
 
 func TestLSPReferencesSmallPeekWindow(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newLSPTestServer(t, nil)
 	bigPath := filepath.Join(sess.RepoRoot, "big.go")
 	var b strings.Builder
@@ -570,6 +606,8 @@ func TestLSPReferencesSmallPeekWindow(t *testing.T) {
 }
 
 func TestLSPReferencesTruncatesLongLists(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newLSPTestServer(t, nil)
 	mainPath := filepath.Join(sess.RepoRoot, "main.go")
 	refs := make([]lsp.Location, maxReferenceLocations+50)
@@ -593,6 +631,8 @@ func TestLSPReferencesTruncatesLongLists(t *testing.T) {
 }
 
 func TestLSPReferencesProviderError(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeLSPProvider{referencesErr: os.ErrDeadlineExceeded}
 	srv, _ := newLSPTestServer(t, fake)
 
@@ -602,6 +642,8 @@ func TestLSPReferencesProviderError(t *testing.T) {
 }
 
 func TestLSPReferencesMethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
 	req := httptest.NewRequest(http.MethodPost, "/api/lsp/references?path=main.go&line=1&char=0", nil)
 	w := httptest.NewRecorder()
@@ -612,6 +654,8 @@ func TestLSPReferencesMethodNotAllowed(t *testing.T) {
 }
 
 func TestLSPConfigExposesAvailability(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
 	w := doLSPRequest(t, srv, "/api/config")
 	var resp map[string]any
@@ -624,6 +668,8 @@ func TestLSPConfigExposesAvailability(t *testing.T) {
 }
 
 func TestShutdownLSPStopsProvider(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeLSPProvider{}
 	srv, _ := newLSPTestServer(t, fake)
 	// Provider is created lazily; trigger it, then shut down.
@@ -640,6 +686,8 @@ func TestShutdownLSPStopsProvider(t *testing.T) {
 }
 
 func TestLSPEnabledConfigDefault(t *testing.T) {
+	t.Parallel()
+
 	var c config.Config
 	if !c.LSPEnabled() {
 		t.Error("LSPEnabled must default to true")

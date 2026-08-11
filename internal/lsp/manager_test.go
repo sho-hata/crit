@@ -58,6 +58,8 @@ func writeGoFile(t *testing.T, dir, name, content string) string {
 }
 
 func TestManagerLazyStartAndFileSync(t *testing.T) {
+	t.Parallel()
+
 	m, h := newManagerHarness(t, hoverOK)
 	if h.spawns.Load() != 0 {
 		t.Fatal("manager must not spawn before first request")
@@ -101,6 +103,8 @@ func TestManagerLazyStartAndFileSync(t *testing.T) {
 }
 
 func TestManagerIdleShutdownAndRespawn(t *testing.T) {
+	t.Parallel()
+
 	m, h := newManagerHarness(t, hoverOK)
 	m.idleTimeout = 30 * time.Millisecond
 	file := writeGoFile(t, m.root, "main.go", "package main\n")
@@ -123,6 +127,8 @@ func TestManagerIdleShutdownAndRespawn(t *testing.T) {
 }
 
 func TestManagerRestartsAfterCrash(t *testing.T) {
+	t.Parallel()
+
 	var crashed atomic.Bool
 	var h *managerHarness
 	handler := func(method string, params json.RawMessage) any {
@@ -150,6 +156,8 @@ func TestManagerRestartsAfterCrash(t *testing.T) {
 }
 
 func TestManagerMissingFile(t *testing.T) {
+	t.Parallel()
+
 	m, _ := newManagerHarness(t, hoverOK)
 	if _, err := m.Hover(filepath.Join(m.root, "nope.go"), 0, 0); err == nil {
 		t.Error("Hover on missing file should error")
@@ -157,5 +165,7 @@ func TestManagerMissingFile(t *testing.T) {
 }
 
 func TestGoplsAvailableDoesNotPanic(t *testing.T) {
+	t.Parallel()
+
 	_ = GoplsAvailable() // smoke: PATH lookup must be side-effect free
 }

@@ -41,6 +41,8 @@ func newReviewIdentity(t *testing.T) string {
 const uuidV4Pattern = `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`
 
 func TestRandomUUID_Format(t *testing.T) {
+	t.Parallel()
+
 	got, err := randomUUID()
 	if err != nil {
 		t.Fatalf("randomUUID: %v", err)
@@ -57,6 +59,8 @@ func TestRandomUUID_Format(t *testing.T) {
 }
 
 func TestReviewPathsFor_Attachments(t *testing.T) {
+	t.Parallel()
+
 	identity := filepath.Join("home", "u", ".crit", "reviews", "deadbeef")
 	got := ReviewPathsFor(identity).Attachments
 	want := filepath.Join(identity, "attachments")
@@ -66,7 +70,11 @@ func TestReviewPathsFor_Attachments(t *testing.T) {
 }
 
 func TestSaveAttachment(t *testing.T) {
+	t.Parallel()
+
 	t.Run("rejects empty payload", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := saveAttachment(newReviewIdentity(t), nil)
 		if err == nil {
 			t.Fatal("expected error for empty payload")
@@ -74,6 +82,8 @@ func TestSaveAttachment(t *testing.T) {
 	})
 
 	t.Run("rejects oversized payload", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := saveAttachment(newReviewIdentity(t), bytes.Repeat([]byte{0xff}, maxAttachmentBytes+1))
 		if err == nil || !strings.Contains(err.Error(), "too large") {
 			t.Fatalf("expected too-large error, got %v", err)
@@ -81,6 +91,8 @@ func TestSaveAttachment(t *testing.T) {
 	})
 
 	t.Run("rejects non-image MIME", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := saveAttachment(newReviewIdentity(t), []byte("just plain text not an image"))
 		if err == nil || !strings.Contains(err.Error(), "unsupported image type") {
 			t.Fatalf("expected unsupported-type error, got %v", err)
@@ -88,6 +100,8 @@ func TestSaveAttachment(t *testing.T) {
 	})
 
 	t.Run("rejects empty review path", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := saveAttachment("", makeTestPNG(t, color.RGBA{255, 0, 0, 255}))
 		if err == nil {
 			t.Fatal("expected error when reviewPath is empty")
@@ -95,6 +109,8 @@ func TestSaveAttachment(t *testing.T) {
 	})
 
 	t.Run("writes png and returns uuid-shaped name", func(t *testing.T) {
+		t.Parallel()
+
 		review := newReviewIdentity(t)
 		data := makeTestPNG(t, color.RGBA{0, 200, 0, 255})
 		filename, err := saveAttachment(review, data)
@@ -116,6 +132,8 @@ func TestSaveAttachment(t *testing.T) {
 	})
 
 	t.Run("two pastes of identical bytes get distinct UUID names", func(t *testing.T) {
+		t.Parallel()
+
 		review := newReviewIdentity(t)
 		data := makeTestPNG(t, color.RGBA{1, 2, 3, 255})
 		first, err := saveAttachment(review, data)
@@ -132,6 +150,8 @@ func TestSaveAttachment(t *testing.T) {
 	})
 
 	t.Run("write failure surfaces as 'write attachment' error", func(t *testing.T) {
+		t.Parallel()
+
 		// POSIX-only: chmod doesn't reliably block writes on Windows.
 		if runtime.GOOS == "windows" {
 			t.Skip("chmod-based write block doesn't apply on Windows")
@@ -159,6 +179,8 @@ func TestSaveAttachment(t *testing.T) {
 }
 
 func TestAttachmentPathFor(t *testing.T) {
+	t.Parallel()
+
 	review := newReviewIdentity(t)
 
 	t.Run("rejects path-traversal filenames", func(t *testing.T) {
@@ -199,6 +221,8 @@ func TestAttachmentPathFor(t *testing.T) {
 	})
 
 	t.Run("rejects empty review path with valid uuid filename", func(t *testing.T) {
+		t.Parallel()
+
 		uuid, _ := randomUUID()
 		if _, _, err := attachmentPathFor("", uuid+".png"); err == nil {
 			t.Errorf("expected error when reviewPath is empty")
@@ -207,6 +231,8 @@ func TestAttachmentPathFor(t *testing.T) {
 }
 
 func TestStripAttachmentReferences(t *testing.T) {
+	t.Parallel()
+
 	uuid, _ := randomUUID()
 	t.Run("strips multiple refs and appends placeholder", func(t *testing.T) {
 		body := "first ![a](attachments/" + uuid + ".png) and ![b](attachments/" + uuid + ".jpg)"
@@ -223,6 +249,8 @@ func TestStripAttachmentReferences(t *testing.T) {
 	})
 
 	t.Run("no-op when no attachment refs", func(t *testing.T) {
+		t.Parallel()
+
 		body := "![](https://example.com/x.png)"
 		out, n := StripAttachmentReferences(body)
 		if n != 0 || out != body {
@@ -231,6 +259,8 @@ func TestStripAttachmentReferences(t *testing.T) {
 	})
 
 	t.Run("contains 'attachments/' substring but no valid ref", func(t *testing.T) {
+		t.Parallel()
+
 		// Hits the defensive count==0 branch: substring check passes but the
 		// markdown ref regex matches nothing.
 		body := "this mentions attachments/foo but is not a markdown image ref"
@@ -245,6 +275,8 @@ func TestStripAttachmentReferences(t *testing.T) {
 }
 
 func TestSanitizeAttachmentAltText(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		in   string
@@ -260,6 +292,8 @@ func TestSanitizeAttachmentAltText(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := sanitizeAttachmentAltText(tt.in)
 			if got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)

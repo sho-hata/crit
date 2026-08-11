@@ -6,6 +6,8 @@ import (
 )
 
 func TestFocus_DiffBaseSHA(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		f    Focus
@@ -18,6 +20,8 @@ func TestFocus_DiffBaseSHA(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := c.f.DiffBaseSHA(); got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
@@ -26,6 +30,8 @@ func TestFocus_DiffBaseSHA(t *testing.T) {
 }
 
 func TestFocus_PickerVisible(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		f    Focus
 		want bool
@@ -42,6 +48,8 @@ func TestFocus_PickerVisible(t *testing.T) {
 }
 
 func TestFocus_FullStackAvailable(t *testing.T) {
+	t.Parallel()
+
 	if !(Focus{Kind: FocusRange, DefaultSHA: "abc"}).FullStackAvailable() {
 		t.Error("range with DefaultSHA should be available")
 	}
@@ -54,6 +62,8 @@ func TestFocus_FullStackAvailable(t *testing.T) {
 }
 
 func TestFocus_ReadOnly(t *testing.T) {
+	t.Parallel()
+
 	// v1 is always writable per spec §B "Read-only correction".
 	if (Focus{Kind: FocusRange}).ReadOnly() {
 		t.Error("v1 Range focus must be writable")
@@ -64,6 +74,8 @@ func TestFocus_ReadOnly(t *testing.T) {
 }
 
 func TestVisibleInFocus(t *testing.T) {
+	t.Parallel()
+
 	prFocus := Focus{Kind: FocusRange, DiffScope: DiffScopeLayer, PRNumber: 9}
 	prFocusFS := Focus{Kind: FocusRange, DiffScope: DiffScopeFullStack, PRNumber: 9}
 	otherPR := Focus{Kind: FocusRange, DiffScope: DiffScopeLayer, PRNumber: 10}
@@ -90,6 +102,8 @@ func TestVisibleInFocus(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := visibleInFocus(c.c, c.f); got != c.want {
 				t.Errorf("got %v want %v", got, c.want)
 			}
@@ -98,6 +112,8 @@ func TestVisibleInFocus(t *testing.T) {
 }
 
 func TestStampWithFocus(t *testing.T) {
+	t.Parallel()
+
 	wt := Focus{Kind: FocusWorkingTree, BaseRef: "abc"}
 	rng := Focus{Kind: FocusRange, HeadSHA: "deadbeef", DiffScope: DiffScopeLayer, PRNumber: 7}
 
@@ -116,6 +132,8 @@ func TestStampWithFocus(t *testing.T) {
 }
 
 func TestFocusKeyFor(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		f    Focus
@@ -128,6 +146,8 @@ func TestFocusKeyFor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := focusKeyFor(c.f); got != c.want {
 				t.Errorf("got %q want %q", got, c.want)
 			}
@@ -138,6 +158,8 @@ func TestFocusKeyFor(t *testing.T) {
 // TestFocusKeyFor_WireFormat locks down the exact string format produced for
 // each focus kind.
 func TestFocusKeyFor_WireFormat(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		f    Focus
@@ -170,6 +192,8 @@ func TestFocusKeyFor_WireFormat(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := focusKeyFor(c.f); got != c.want {
 				t.Errorf("got %q want %q", got, c.want)
 			}
@@ -178,6 +202,8 @@ func TestFocusKeyFor_WireFormat(t *testing.T) {
 }
 
 func TestSession_AddComment_StampsScope(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.Focus = Focus{Kind: FocusRange, HeadSHA: "abc", DiffScope: DiffScopeLayer}
 	c, ok := s.AddComment("plan.md", 1, 1, "RIGHT", "hi", "", "u", "u1")
@@ -190,6 +216,8 @@ func TestSession_AddComment_StampsScope(t *testing.T) {
 }
 
 func TestSession_GetComments_FiltersByScope(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.Focus = Focus{Kind: FocusRange, DiffScope: DiffScopeLayer, HeadSHA: "h"}
 	if _, ok := s.AddComment("plan.md", 1, 1, "RIGHT", "layer", "", "u", "u"); !ok {
@@ -208,6 +236,8 @@ func TestSession_GetComments_FiltersByScope(t *testing.T) {
 }
 
 func TestSession_GetComments_LegacyHiddenInRange(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	// Author in working-tree mode (no scope stamp).
 	if _, ok := s.AddComment("plan.md", 1, 1, "RIGHT", "old", "", "u", "u"); !ok {
@@ -226,6 +256,8 @@ func TestSession_GetComments_LegacyHiddenInRange(t *testing.T) {
 }
 
 func TestCarryForwardComment_PreservesScope(t *testing.T) {
+	t.Parallel()
+
 	old := Comment{
 		ID:        "c1",
 		Body:      "carry me",

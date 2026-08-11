@@ -15,6 +15,8 @@ func readIntegrationForPolicyTest(t *testing.T, path string) string {
 }
 
 func TestInteractiveSkillsRequireExplicitCritWording(t *testing.T) {
+	t.Parallel()
+
 	const sharedDescription = "Review code changes, a plan, a live page (running dev server), or a local HTML file with Crit inline comments and structured human feedback. Use only when the user explicitly invokes /crit or directly asks to use Crit; a generic review request does not count."
 	paths := []string{
 		"integrations/claude-code/skills/crit/SKILL.md",
@@ -51,6 +53,8 @@ func TestInteractiveSkillsRequireExplicitCritWording(t *testing.T) {
 }
 
 func TestCodexNoLongerShipsImplicitInvocationPolicyFile(t *testing.T) {
+	t.Parallel()
+
 	paths := []string{
 		"integrations/codex/skills/crit/agents/openai.yaml",
 		"integrations/codex/plugin/crit/skills/crit/agents/openai.yaml",
@@ -63,6 +67,8 @@ func TestCodexNoLongerShipsImplicitInvocationPolicyFile(t *testing.T) {
 }
 
 func TestCritCLIStaysModelDiscoverableWithoutStartingInteractiveCrit(t *testing.T) {
+	t.Parallel()
+
 	paths := []string{
 		"integrations/claude-code/skills/crit-cli/SKILL.md",
 		"integrations/cline/skills/crit-cli/SKILL.md",
@@ -80,6 +86,8 @@ func TestCritCLIStaysModelDiscoverableWithoutStartingInteractiveCrit(t *testing.
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
 			content := readIntegrationForPolicyTest(t, path)
 			if !strings.Contains(content, "name: crit-cli") {
 				t.Fatalf("%s is not a crit-cli skill", path)
@@ -92,6 +100,8 @@ func TestCritCLIStaysModelDiscoverableWithoutStartingInteractiveCrit(t *testing.
 }
 
 func TestCritCLIDescriptionsSeparateInteractiveWorkflow(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"integrations/cline/skills/crit-cli/SKILL.md":    "`/crit.md` workflow",
 		"integrations/hermes/skills/crit-cli/SKILL.md":   "`crit` skill",
@@ -113,6 +123,8 @@ func TestCritCLIDescriptionsSeparateInteractiveWorkflow(t *testing.T) {
 }
 
 func TestManualWorkflowsReplaceAlwaysOnRules(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		tool string
 		dest string
@@ -135,6 +147,8 @@ func TestManualWorkflowsReplaceAlwaysOnRules(t *testing.T) {
 }
 
 func TestPlanExitHooksRemainEnabled(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"integrations/claude-code/hooks/hooks.json":       "ExitPlanMode",
 		"integrations/codex/plugin/crit/hooks/hooks.json": "crit plan-hook --mode codex",

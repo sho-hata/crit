@@ -9,6 +9,8 @@ import (
 )
 
 func TestSplitCommitRange(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		commit   string
@@ -32,6 +34,8 @@ func TestSplitCommitRange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			base, head, ok := vcs.SplitCommitRange(tt.commit)
 			if base != tt.wantBase || head != tt.wantHead || ok != tt.wantOK {
 				t.Errorf("vcs.SplitCommitRange(%q) = (%q, %q, %v), want (%q, %q, %v)",
@@ -42,6 +46,8 @@ func TestSplitCommitRange(t *testing.T) {
 }
 
 func TestIsCommitish(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		in   string
 		want bool
@@ -67,6 +73,8 @@ func TestIsCommitish(t *testing.T) {
 // matching ChangedFilesBetweenSHAs, while a single-commit param still returns
 // only that commit's files.
 func TestGetSessionInfoScoped_CommitRange(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 

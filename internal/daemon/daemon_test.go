@@ -18,6 +18,8 @@ import (
 )
 
 func TestSessionKey_Deterministic(t *testing.T) {
+	t.Parallel()
+
 	k1 := SessionKey("/tmp/repo", "main", []string{"plan.md"})
 	k2 := SessionKey("/tmp/repo", "main", []string{"plan.md"})
 	if k1 != k2 {
@@ -26,6 +28,8 @@ func TestSessionKey_Deterministic(t *testing.T) {
 }
 
 func TestSessionKey_DifferentArgs(t *testing.T) {
+	t.Parallel()
+
 	k1 := SessionKey("/tmp/repo", "main", nil)
 	k2 := SessionKey("/tmp/repo", "main", []string{"plan.md"})
 	if k1 == k2 {
@@ -34,6 +38,8 @@ func TestSessionKey_DifferentArgs(t *testing.T) {
 }
 
 func TestSessionKey_SortedArgs(t *testing.T) {
+	t.Parallel()
+
 	k1 := SessionKey("/tmp/repo", "main", []string{"a.md", "b.md"})
 	k2 := SessionKey("/tmp/repo", "main", []string{"b.md", "a.md"})
 	if k1 != k2 {
@@ -42,6 +48,8 @@ func TestSessionKey_SortedArgs(t *testing.T) {
 }
 
 func TestSessionKey_DifferentCWD(t *testing.T) {
+	t.Parallel()
+
 	k1 := SessionKey("/tmp/repo1", "main", nil)
 	k2 := SessionKey("/tmp/repo2", "main", nil)
 	if k1 == k2 {
@@ -50,6 +58,8 @@ func TestSessionKey_DifferentCWD(t *testing.T) {
 }
 
 func TestSessionKey_NilVsEmpty(t *testing.T) {
+	t.Parallel()
+
 	k1 := SessionKey("/tmp/repo", "main", nil)
 	k2 := SessionKey("/tmp/repo", "main", []string{})
 	if k1 != k2 {
@@ -58,6 +68,8 @@ func TestSessionKey_NilVsEmpty(t *testing.T) {
 }
 
 func TestSessionKey_FileMode_BranchIndependent(t *testing.T) {
+	t.Parallel()
+
 	k1 := SessionKey("/tmp/repo", "main", []string{"plan.md"})
 	k2 := SessionKey("/tmp/repo", "feature-x", []string{"plan.md"})
 	if k1 != k2 {
@@ -66,6 +78,8 @@ func TestSessionKey_FileMode_BranchIndependent(t *testing.T) {
 }
 
 func TestSessionKey_GitMode_BranchDependent(t *testing.T) {
+	t.Parallel()
+
 	k1 := SessionKey("/tmp/repo", "main", nil)
 	k2 := SessionKey("/tmp/repo", "feature-x", nil)
 	if k1 == k2 {
@@ -74,6 +88,8 @@ func TestSessionKey_GitMode_BranchDependent(t *testing.T) {
 }
 
 func TestSessionKey_Length(t *testing.T) {
+	t.Parallel()
+
 	k := SessionKey("/tmp/repo", "main", nil)
 	if len(k) != 12 {
 		t.Errorf("expected key length 12, got %d: %s", len(k), k)
@@ -81,6 +97,8 @@ func TestSessionKey_Length(t *testing.T) {
 }
 
 func TestValidSessionKey(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		key  string
 		want bool
@@ -99,6 +117,8 @@ func TestValidSessionKey(t *testing.T) {
 }
 
 func TestInvalidSessionIDError(t *testing.T) {
+	t.Parallel()
+
 	err := InvalidSessionIDError("not-valid")
 	if err == nil {
 		t.Fatal("expected error")
@@ -112,6 +132,8 @@ func TestInvalidSessionIDError(t *testing.T) {
 }
 
 func TestSessionEntry_DisplayHost(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		host string
 		want string
@@ -131,6 +153,8 @@ func TestSessionEntry_DisplayHost(t *testing.T) {
 }
 
 func TestSessionEntry_BaseURL(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		host      string
 		port      int
@@ -153,6 +177,8 @@ func TestSessionEntry_BaseURL(t *testing.T) {
 }
 
 func TestAdvertisedURL(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		publicURL  string
 		listenHost string
@@ -175,6 +201,8 @@ func TestAdvertisedURL(t *testing.T) {
 }
 
 func TestSessionEntry_ConnURL(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		host string
 		port int
@@ -355,6 +383,8 @@ func TestAcquireSessionLock_FlockBased(t *testing.T) {
 }
 
 func TestIsDaemonAlive_NoPID(t *testing.T) {
+	t.Parallel()
+
 	if isDaemonAlive(SessionEntry{PID: 0, Port: 9999}) {
 		t.Error("PID 0 should not be alive")
 	}
@@ -415,6 +445,8 @@ func TestListSessionsForCWD_FiltersAndCleans(t *testing.T) {
 }
 
 func TestDaemonHasBrowser(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		handler http.HandlerFunc
@@ -478,6 +510,8 @@ func TestDaemonHasBrowser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			srv := httptest.NewServer(tt.handler)
 			defer srv.Close()
 
@@ -494,6 +528,8 @@ func TestDaemonHasBrowser(t *testing.T) {
 }
 
 func TestDaemonHasBrowser_Unreachable(t *testing.T) {
+	t.Parallel()
+
 	// Port that nothing listens on
 	entry := SessionEntry{PID: os.Getpid(), Port: 1}
 	got := DaemonHasBrowser(entry)
@@ -503,6 +539,8 @@ func TestDaemonHasBrowser_Unreachable(t *testing.T) {
 }
 
 func TestIsDaemonAlive_ValidatesResponseBody(t *testing.T) {
+	t.Parallel()
+
 	// Test that isDaemonAlive rejects a non-crit process responding on the port
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// A non-crit server returning 200 but without {"status":"ok"}
@@ -518,6 +556,8 @@ func TestIsDaemonAlive_ValidatesResponseBody(t *testing.T) {
 }
 
 func TestIsDaemonAlive_AcceptsCritResponse(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "browser_clients": true})
 	}))
@@ -763,6 +803,8 @@ func TestListAllSessions_NoHomeReturnsEmpty(t *testing.T) {
 }
 
 func TestAtomicWriteFile_Success(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	target := filepath.Join(dir, "test.txt")
 	data := []byte("hello world")
@@ -789,6 +831,8 @@ func TestAtomicWriteFile_Success(t *testing.T) {
 }
 
 func TestAtomicWriteFile_CreatesDirectories(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	target := filepath.Join(dir, "sub", "dir", "test.txt")
 
@@ -806,6 +850,8 @@ func TestAtomicWriteFile_CreatesDirectories(t *testing.T) {
 }
 
 func TestAtomicWriteFile_OverwriteExisting(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	target := filepath.Join(dir, "overwrite.txt")
 
@@ -829,6 +875,8 @@ func TestAtomicWriteFile_OverwriteExisting(t *testing.T) {
 }
 
 func TestAtomicWriteFile_NoTempFilesLeftBehind(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	target := filepath.Join(dir, "clean.txt")
 
@@ -848,6 +896,8 @@ func TestAtomicWriteFile_NoTempFilesLeftBehind(t *testing.T) {
 }
 
 func TestAtomicWriteFile_RestrictivePermissions(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix file mode bits aren't meaningful on Windows")
 	}
@@ -868,6 +918,8 @@ func TestAtomicWriteFile_RestrictivePermissions(t *testing.T) {
 }
 
 func TestReadPortFromPipe_ValidPort(t *testing.T) {
+	t.Parallel()
+
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
@@ -890,6 +942,8 @@ func TestReadPortFromPipe_ValidPort(t *testing.T) {
 }
 
 func TestReadPortFromPipe_ErrorPrefix(t *testing.T) {
+	t.Parallel()
+
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
@@ -914,6 +968,8 @@ func TestReadPortFromPipe_ErrorPrefix(t *testing.T) {
 }
 
 func TestReadPortFromPipe_InvalidPort(t *testing.T) {
+	t.Parallel()
+
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
@@ -935,6 +991,8 @@ func TestReadPortFromPipe_InvalidPort(t *testing.T) {
 }
 
 func TestReadPortFromPipe_ClosedWithoutWriting(t *testing.T) {
+	t.Parallel()
+
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
@@ -954,7 +1012,11 @@ func TestReadPortFromPipe_ClosedWithoutWriting(t *testing.T) {
 }
 
 func TestSignalReadiness(t *testing.T) {
+	t.Parallel()
+
 	t.Run("writes port to pipe", func(t *testing.T) {
+		t.Parallel()
+
 		r, w, err := os.Pipe()
 		if err != nil {
 			t.Fatalf("pipe: %v", err)
@@ -972,6 +1034,8 @@ func TestSignalReadiness(t *testing.T) {
 	})
 
 	t.Run("noop when pipe is nil", func(t *testing.T) {
+		t.Parallel()
+
 		// Should not panic
 		SignalReadiness(nil, 3456)
 	})
@@ -1126,12 +1190,16 @@ func TestReviewFilePath(t *testing.T) {
 }
 
 func TestIsDaemonAlive_NegativePID(t *testing.T) {
+	t.Parallel()
+
 	if isDaemonAlive(SessionEntry{PID: -1, Port: 9999}) {
 		t.Error("negative PID should not be alive")
 	}
 }
 
 func TestIsDaemonAlive_NoPort(t *testing.T) {
+	t.Parallel()
+
 	if isDaemonAlive(SessionEntry{PID: os.Getpid(), Port: 0}) {
 		t.Error("port 0 should not be alive")
 	}
@@ -1200,6 +1268,8 @@ func TestCleanOrphanedSessions(t *testing.T) {
 }
 
 func TestLiveSessionKey_MatchesSpec(t *testing.T) {
+	t.Parallel()
+
 	cwd := "/Users/alice/myapp"
 	origin := "http://localhost:3000"
 	got := LiveSessionKey(cwd, origin)
@@ -1217,6 +1287,8 @@ func TestLiveSessionKey_MatchesSpec(t *testing.T) {
 }
 
 func TestLiveSessionKey_NoCollisionWithCodeKey(t *testing.T) {
+	t.Parallel()
+
 	cwd := "/Users/alice/myapp"
 	dk := LiveSessionKey(cwd, "http://localhost:3000")
 	ck := SessionKey(cwd, "main", nil)
@@ -1226,6 +1298,8 @@ func TestLiveSessionKey_NoCollisionWithCodeKey(t *testing.T) {
 }
 
 func TestLiveSessionKey_DifferentOriginsProduceDifferentKeys(t *testing.T) {
+	t.Parallel()
+
 	cwd := "/Users/alice/myapp"
 	k1 := LiveSessionKey(cwd, "http://localhost:3000")
 	k2 := LiveSessionKey(cwd, "http://localhost:4000")
@@ -1235,6 +1309,8 @@ func TestLiveSessionKey_DifferentOriginsProduceDifferentKeys(t *testing.T) {
 }
 
 func TestLiveSessionKey_Deterministic(t *testing.T) {
+	t.Parallel()
+
 	k1 := LiveSessionKey("/app", "http://localhost:3000")
 	k2 := LiveSessionKey("/app", "http://localhost:3000")
 	if k1 != k2 {
@@ -1243,6 +1319,8 @@ func TestLiveSessionKey_Deterministic(t *testing.T) {
 }
 
 func TestAppendCommonDaemonFlags(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		f    commonDaemonFlags
@@ -1284,6 +1362,8 @@ func TestAppendCommonDaemonFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			base := []string{"--preview-file", "/tmp/x.html"}
 			got := appendCommonDaemonFlags(base, tt.f)
 			if len(got) != len(tt.want) {

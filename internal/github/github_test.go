@@ -36,6 +36,8 @@ func outputDataRootIdentity(t *testing.T, dataRoot string) string {
 }
 
 func TestMergeGHComments_BasicConversion(t *testing.T) {
+	t.Parallel()
+
 	comments := []ghComment{
 		{
 			ID:   1,
@@ -103,6 +105,8 @@ func TestMergeGHComments_BasicConversion(t *testing.T) {
 }
 
 func TestGHVersionSupportsSlurp(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		version string
@@ -119,6 +123,8 @@ func TestGHVersionSupportsSlurp(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := ghVersionSupportsSlurp(tt.version); got != tt.want {
 				t.Fatalf("ghVersionSupportsSlurp(%q) = %v, want %v", tt.version, got, tt.want)
 			}
@@ -127,6 +133,8 @@ func TestGHVersionSupportsSlurp(t *testing.T) {
 }
 
 func TestMergeGHComments_FiltersLeftSide(t *testing.T) {
+	t.Parallel()
+
 	comments := []ghComment{
 		{ID: 1, Path: "old.go", Line: 5, Side: "LEFT", Body: "old code comment"},
 		{ID: 2, Path: "new.go", Line: 5, Side: "RIGHT", Body: "new code comment"},
@@ -144,6 +152,8 @@ func TestMergeGHComments_FiltersLeftSide(t *testing.T) {
 }
 
 func TestMergeGHComments_SkipsNoLineComments(t *testing.T) {
+	t.Parallel()
+
 	comments := []ghComment{
 		{ID: 1, Path: "main.go", Line: 0, Side: "RIGHT", Body: "PR-level comment"},
 	}
@@ -157,6 +167,8 @@ func TestMergeGHComments_SkipsNoLineComments(t *testing.T) {
 }
 
 func TestBuildReviewPayload_EmptyMessageByDefault(t *testing.T) {
+	t.Parallel()
+
 	comments := []map[string]any{{"path": "main.go", "line": 1, "side": "RIGHT", "body": "fix"}}
 	data, err := buildReviewPayload(comments, "", "COMMENT")
 	if err != nil {
@@ -175,6 +187,8 @@ func TestBuildReviewPayload_EmptyMessageByDefault(t *testing.T) {
 }
 
 func TestBuildReviewPayload_CustomMessage(t *testing.T) {
+	t.Parallel()
+
 	comments := []map[string]any{{"path": "main.go", "line": 1, "side": "RIGHT", "body": "fix"}}
 	data, err := buildReviewPayload(comments, "Round 2 review", "COMMENT")
 	if err != nil {
@@ -190,6 +204,8 @@ func TestBuildReviewPayload_CustomMessage(t *testing.T) {
 }
 
 func TestBuildReviewPayload_ApproveEvent(t *testing.T) {
+	t.Parallel()
+
 	comments := []map[string]any{{"path": "main.go", "line": 1, "side": "RIGHT", "body": "lgtm"}}
 	data, err := buildReviewPayload(comments, "", "APPROVE")
 	if err != nil {
@@ -205,6 +221,8 @@ func TestBuildReviewPayload_ApproveEvent(t *testing.T) {
 }
 
 func TestBuildReviewPayload_RequestChangesEvent(t *testing.T) {
+	t.Parallel()
+
 	comments := []map[string]any{{"path": "main.go", "line": 1, "side": "RIGHT", "body": "fix this"}}
 	data, err := buildReviewPayload(comments, "Needs work", "REQUEST_CHANGES")
 	if err != nil {
@@ -223,6 +241,8 @@ func TestBuildReviewPayload_RequestChangesEvent(t *testing.T) {
 }
 
 func TestCritJSONToGHComments_BasicConversion(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"auth.go": {
@@ -257,6 +277,8 @@ func TestCritJSONToGHComments_BasicConversion(t *testing.T) {
 }
 
 func TestMergeGHComments_PreservesExistingComments(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Branch: "feature", BaseRef: "abc", ReviewRound: 1,
 		Files: map[string]CritJSONFile{
@@ -301,6 +323,8 @@ func TestMergeGHComments_PreservesExistingComments(t *testing.T) {
 }
 
 func TestCritJSONToGHComments_SkipsResolved(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"main.go": {
@@ -318,6 +342,8 @@ func TestCritJSONToGHComments_SkipsResolved(t *testing.T) {
 }
 
 func TestCritJSONToGHComments_BodyNotPrefixedWithAuthor(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"main.go": {
@@ -338,6 +364,8 @@ func TestCritJSONToGHComments_BodyNotPrefixedWithAuthor(t *testing.T) {
 }
 
 func TestMergeGHComments_DeduplicatesOnRepeatedPull(t *testing.T) {
+	t.Parallel()
+
 	comments := []ghComment{
 		{ID: 1, Path: "main.go", Line: 10, Side: "RIGHT", Body: "Fix this",
 			User: struct {
@@ -367,6 +395,8 @@ func TestMergeGHComments_DeduplicatesOnRepeatedPull(t *testing.T) {
 }
 
 func TestMergeGHComments_Threading(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: map[string]CritJSONFile{}}
 	ghComments := []ghComment{
 		{ID: 101, Path: "server.go", Line: 42, Side: "RIGHT",
@@ -410,6 +440,8 @@ func TestMergeGHComments_Threading(t *testing.T) {
 }
 
 func TestMergeGHComments_ThreadDedup(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: map[string]CritJSONFile{}}
 	ghComments := []ghComment{
 		{ID: 101, Path: "server.go", Line: 42, Side: "RIGHT",
@@ -439,6 +471,8 @@ func TestMergeGHComments_ThreadDedup(t *testing.T) {
 }
 
 func TestMergeGHComments_NewReplyOnExistingRoot(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: map[string]CritJSONFile{}}
 	// First pull: root + 1 reply
 	ghComments1 := []ghComment{
@@ -486,6 +520,8 @@ func TestMergeGHComments_NewReplyOnExistingRoot(t *testing.T) {
 }
 
 func TestMergeGHComments_OrphanReply(t *testing.T) {
+	t.Parallel()
+
 	// Pre-populate cj with a root comment from a previous pull
 	cj := &CritJSON{Files: map[string]CritJSONFile{
 		"server.go": {
@@ -523,6 +559,8 @@ func TestMergeGHComments_OrphanReply(t *testing.T) {
 }
 
 func TestMergeGHComments_FlatCommentsStillWork(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: map[string]CritJSONFile{}}
 	ghComments := []ghComment{
 		{ID: 201, Path: "main.go", Line: 10, Side: "RIGHT",
@@ -556,6 +594,8 @@ func TestMergeGHComments_FlatCommentsStillWork(t *testing.T) {
 }
 
 func TestMergeGHComments_ReplySortedByCreatedAt(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: map[string]CritJSONFile{}}
 	// Replies intentionally out of order
 	ghComments := []ghComment{
@@ -590,6 +630,8 @@ func TestMergeGHComments_ReplySortedByCreatedAt(t *testing.T) {
 }
 
 func TestCritJSONToGHComments_WithReplies(t *testing.T) {
+	t.Parallel()
+
 	// Verify root comments with replies are still pushed as top-level comments
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
@@ -609,6 +651,8 @@ func TestCritJSONToGHComments_WithReplies(t *testing.T) {
 }
 
 func TestCollectNewRepliesForPush(t *testing.T) {
+	t.Parallel()
+
 	cf := CritJSONFile{
 		Comments: []Comment{
 			{ID: "c1", GitHubID: 101, StartLine: 42, EndLine: 42, Body: "Fix this",
@@ -632,6 +676,8 @@ func TestCollectNewRepliesForPush(t *testing.T) {
 }
 
 func TestCollectNewRepliesForPush_NoGitHubRoot(t *testing.T) {
+	t.Parallel()
+
 	// Local-only comments (no GitHubID) should not produce replies
 	cf := CritJSONFile{
 		Comments: []Comment{
@@ -653,6 +699,8 @@ func TestCollectNewRepliesForPush_NoGitHubRoot(t *testing.T) {
 // whether the parent was imported via `crit pull` or pushed by us in an
 // earlier `crit push`. This pins the fix for issue #442.
 func TestCollectNewRepliesForPush_ParentSources(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name        string
 		cf          CritJSONFile
@@ -691,6 +739,8 @@ func TestCollectNewRepliesForPush_ParentSources(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := collectNewRepliesForPush(tc.cf, nil)
 			if len(got) != tc.wantReplies {
 				t.Fatalf("got %d replies, want %d: %+v", len(got), tc.wantReplies, got)
@@ -989,6 +1039,8 @@ func TestAddCommentToCritJSON_RespectsBaseBranchConfig(t *testing.T) {
 }
 
 func TestAddReplyToCritJSON(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cj := CritJSON{
 		Branch:      "main",
@@ -1027,6 +1079,8 @@ func TestAddReplyToCritJSON(t *testing.T) {
 }
 
 func TestAddReplyToCritJSON_WithResolve(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cj := CritJSON{
 		Branch:      "main",
@@ -1056,6 +1110,8 @@ func TestAddReplyToCritJSON_WithResolve(t *testing.T) {
 }
 
 func TestAddReplyToCritJSON_NotFound(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cj := CritJSON{
 		Branch:      "main",
@@ -1210,6 +1266,8 @@ func TestFindReviewFileByCommentID_FolderForm(t *testing.T) {
 }
 
 func TestCritJSONToGHComments_SkipsAlreadyPushed(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"main.go": {
@@ -1230,6 +1288,8 @@ func TestCritJSONToGHComments_SkipsAlreadyPushed(t *testing.T) {
 }
 
 func TestUpdateCritJSONWithGitHubIDs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, ".crit")
 
@@ -1272,6 +1332,8 @@ func TestUpdateCritJSONWithGitHubIDs(t *testing.T) {
 }
 
 func TestUpdateCritJSONWithGitHubIDs_Replies(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, ".crit")
 
@@ -1384,6 +1446,8 @@ func TestBulkAddCommentsToCritJSON_MixedCommentsAndReplies(t *testing.T) {
 }
 
 func TestBulkAddCommentsToCritJSON_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	entries := []BulkCommentEntry{{File: "main.go", Line: 1, Body: ""}}
 	err := bulkAddCommentsToCritJSONScoped(entries, "Bot", "", dir, inheritedScope{})
@@ -1393,6 +1457,8 @@ func TestBulkAddCommentsToCritJSON_EmptyBody(t *testing.T) {
 }
 
 func TestBulkAddCommentsToCritJSON_MissingFile(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	entries := []BulkCommentEntry{{Line: 1, Body: "test"}}
 	err := bulkAddCommentsToCritJSONScoped(entries, "Bot", "", dir, inheritedScope{})
@@ -1402,6 +1468,8 @@ func TestBulkAddCommentsToCritJSON_MissingFile(t *testing.T) {
 }
 
 func TestBulkAddCommentsToCritJSON_InvalidLine(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	entries := []BulkCommentEntry{{File: "main.go", Line: 0, Body: "test"}}
 	err := bulkAddCommentsToCritJSONScoped(entries, "Bot", "", dir, inheritedScope{})
@@ -1411,6 +1479,8 @@ func TestBulkAddCommentsToCritJSON_InvalidLine(t *testing.T) {
 }
 
 func TestBulkAddCommentsToCritJSON_PathTraversal(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	entries := []BulkCommentEntry{{File: "../etc/passwd", Line: 1, Body: "test"}}
 	err := bulkAddCommentsToCritJSONScoped(entries, "Bot", "", dir, inheritedScope{})
@@ -1420,6 +1490,8 @@ func TestBulkAddCommentsToCritJSON_PathTraversal(t *testing.T) {
 }
 
 func TestBulkAddCommentsToCritJSON_EmptyEntries(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	err := bulkAddCommentsToCritJSONScoped(nil, "Bot", "", dir, inheritedScope{})
 	if err == nil || !strings.Contains(err.Error(), "no comment entries") {
@@ -1621,6 +1693,8 @@ func TestBulkAddCommentsToCritJSON_MultipleFiles(t *testing.T) {
 }
 
 func TestBuildReviewPayload_ApproveNoComments(t *testing.T) {
+	t.Parallel()
+
 	data, err := buildReviewPayload(nil, "Looks good!", "APPROVE")
 	if err != nil {
 		t.Fatalf("buildReviewPayload: %v", err)
@@ -1671,6 +1745,8 @@ func TestBulkAddCommentsToCritJSON_EndLineDefaultsToLine(t *testing.T) {
 }
 
 func TestTruncateStr(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		s    string
@@ -1688,6 +1764,8 @@ func TestTruncateStr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := truncateStr(tt.s, tt.n)
 			if got != tt.want {
 				t.Errorf("truncateStr(%q, %d) = %q, want %q", tt.s, tt.n, got, tt.want)
@@ -1702,7 +1780,11 @@ func TestTruncateStr(t *testing.T) {
 // on index alignment. This test verifies the mapping works correctly,
 // including when response has fewer or more items than input.
 func TestCreateGHReview_IDMapping(t *testing.T) {
+	t.Parallel()
+
 	t.Run("zip maps IDs by position", func(t *testing.T) {
+		t.Parallel()
+
 		// Simulate the mapping logic from createGHReview without shelling out to gh.
 		// The core logic: for i, rc := range reviewComments { idMap[key(comments[i])] = rc.ID }
 		comments := []map[string]any{
@@ -1741,6 +1823,8 @@ func TestCreateGHReview_IDMapping(t *testing.T) {
 	})
 
 	t.Run("fewer response items than input", func(t *testing.T) {
+		t.Parallel()
+
 		comments := []map[string]any{
 			{"path": "a.go", "line": 1, "side": "RIGHT", "body": "fix"},
 			{"path": "b.go", "line": 2, "side": "RIGHT", "body": "fix"},
@@ -1774,6 +1858,8 @@ func TestCreateGHReview_IDMapping(t *testing.T) {
 	})
 
 	t.Run("more response items than input (should not panic)", func(t *testing.T) {
+		t.Parallel()
+
 		comments := []map[string]any{
 			{"path": "a.go", "line": 1, "side": "RIGHT", "body": "fix"},
 		}
@@ -1802,6 +1888,8 @@ func TestCreateGHReview_IDMapping(t *testing.T) {
 	})
 
 	t.Run("duplicate path:line overwrites with last match", func(t *testing.T) {
+		t.Parallel()
+
 		// Two comments on the same file:line — the second should win
 		comments := []map[string]any{
 			{"path": "auth.go", "line": 10, "side": "RIGHT", "body": "first"},
@@ -1832,6 +1920,8 @@ func TestCreateGHReview_IDMapping(t *testing.T) {
 // TestUpdateCritJSONWithGitHubIDs_ReplyMapping tests the replyKey-based mapping
 // that matches pushed replies back to their .crit.json entries.
 func TestUpdateCritJSONWithGitHubIDs_ReplyMapping(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, ".crit")
 
@@ -1876,6 +1966,8 @@ func TestUpdateCritJSONWithGitHubIDs_ReplyMapping(t *testing.T) {
 }
 
 func TestParseLineSpec(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		spec      string
 		wantStart int
@@ -1908,6 +2000,8 @@ func TestParseLineSpec(t *testing.T) {
 }
 
 func TestBulkCommentEntry_UnmarshalJSON_IntLine(t *testing.T) {
+	t.Parallel()
+
 	data := `{"file": "main.go", "line": 42, "body": "fix"}`
 	var e BulkCommentEntry
 	if err := json.Unmarshal([]byte(data), &e); err != nil {
@@ -1922,6 +2016,8 @@ func TestBulkCommentEntry_UnmarshalJSON_IntLine(t *testing.T) {
 }
 
 func TestBulkCommentEntry_UnmarshalJSON_StringLine(t *testing.T) {
+	t.Parallel()
+
 	data := `{"file": "main.go", "line": "10-20", "body": "fix"}`
 	var e BulkCommentEntry
 	if err := json.Unmarshal([]byte(data), &e); err != nil {
@@ -1936,6 +2032,8 @@ func TestBulkCommentEntry_UnmarshalJSON_StringLine(t *testing.T) {
 }
 
 func TestBulkCommentEntry_UnmarshalJSON_NoLine(t *testing.T) {
+	t.Parallel()
+
 	data := `{"file": "main.go", "body": "file-level note", "scope": "file"}`
 	var e BulkCommentEntry
 	if err := json.Unmarshal([]byte(data), &e); err != nil {
@@ -1953,6 +2051,8 @@ func TestBulkCommentEntry_UnmarshalJSON_NoLine(t *testing.T) {
 }
 
 func TestBulkCommentEntry_UnmarshalJSON_InvalidLineType(t *testing.T) {
+	t.Parallel()
+
 	data := `{"file": "main.go", "line": true, "body": "fix"}`
 	var e BulkCommentEntry
 	err := json.Unmarshal([]byte(data), &e)
@@ -1965,6 +2065,8 @@ func TestBulkCommentEntry_UnmarshalJSON_InvalidLineType(t *testing.T) {
 }
 
 func TestAppendReply_ToReviewComment(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{
 		ReviewComments: []Comment{
 			{ID: "r0", Body: "general note", Scope: "review"},
@@ -1985,6 +2087,8 @@ func TestAppendReply_ToReviewComment(t *testing.T) {
 }
 
 func TestAppendReply_ToReviewCommentWithResolve(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{
 		ReviewComments: []Comment{
 			{ID: "r0", Body: "needs fixing", Scope: "review"},
@@ -2002,6 +2106,8 @@ func TestAppendReply_ToReviewCommentWithResolve(t *testing.T) {
 }
 
 func TestAppendReply_NotFound(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{
 		Files: make(map[string]CritJSONFile),
 	}
@@ -2012,6 +2118,8 @@ func TestAppendReply_NotFound(t *testing.T) {
 }
 
 func TestAppendReviewComment(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: make(map[string]CritJSONFile)}
 
 	appendReviewCommentScoped(cj, "general observation", "reviewer", "", inheritedScope{})
@@ -2043,6 +2151,8 @@ func TestAppendReviewComment(t *testing.T) {
 }
 
 func TestAppendFileComment(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: make(map[string]CritJSONFile)}
 
 	appendFileCommentScoped(cj, "server.go", "needs restructuring", "reviewer", "", inheritedScope{})
@@ -2063,6 +2173,8 @@ func TestAppendFileComment(t *testing.T) {
 }
 
 func TestAppendComment_IDIncrementsGlobally(t *testing.T) {
+	t.Parallel()
+
 	cj := &CritJSON{Files: make(map[string]CritJSONFile)}
 
 	appendCommentScoped(cj, "main.go", 1, 1, "first", "reviewer", "", inheritedScope{})
@@ -2187,6 +2299,8 @@ func TestAddReplyToCritJSON_WithResolve_ViaFile(t *testing.T) {
 }
 
 func TestRandomCommentID_Format(t *testing.T) {
+	t.Parallel()
+
 	id := randomCommentID()
 	if !strings.HasPrefix(id, "c_") || len(id) != 8 {
 		t.Errorf("randomCommentID() = %q, want c_ prefix + 6 hex chars", id)
@@ -2194,6 +2308,8 @@ func TestRandomCommentID_Format(t *testing.T) {
 }
 
 func TestRandomReviewCommentID_Format(t *testing.T) {
+	t.Parallel()
+
 	id := randomReviewCommentID()
 	if !strings.HasPrefix(id, "r_") || len(id) != 8 {
 		t.Errorf("randomReviewCommentID() = %q, want r_ prefix + 6 hex chars", id)
@@ -2201,6 +2317,8 @@ func TestRandomReviewCommentID_Format(t *testing.T) {
 }
 
 func TestRandomReplyID_Format(t *testing.T) {
+	t.Parallel()
+
 	id := randomReplyID()
 	if !strings.HasPrefix(id, "rp_") || len(id) != 9 {
 		t.Errorf("randomReplyID() = %q, want rp_ prefix + 6 hex chars", id)
@@ -2208,6 +2326,8 @@ func TestRandomReplyID_Format(t *testing.T) {
 }
 
 func TestParsePushEvent(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		flag    string
 		want    string
@@ -2313,6 +2433,8 @@ func TestClearCritJSON(t *testing.T) {
 // TestAddReplyToCritJSON_RandomIDs exercises the reply threading workflow
 // end-to-end with the new random hex ID format (c_XXXXXX, r_XXXXXX, rp_XXXXXX).
 func TestAddReplyToCritJSON_RandomIDs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// Build a .crit.json with random-format IDs across multiple files
@@ -2411,6 +2533,8 @@ func TestAddReplyToCritJSON_RandomIDs(t *testing.T) {
 // TestAppendReply_AmbiguousID verifies the --path disambiguation error when
 // the same comment ID appears in multiple files.
 func TestAppendReply_AmbiguousID(t *testing.T) {
+	t.Parallel()
+
 	duplicateID := "c_abcdef"
 	cj := &CritJSON{
 		Files: map[string]CritJSONFile{
@@ -2567,6 +2691,8 @@ func TestBulkAddCommentsToCritJSON_PopulatesAnchor(t *testing.T) {
 // --- processBulkReviewEntry tests ---
 
 func TestProcessBulkReviewEntry_ReviewScope(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}}
 	e := BulkCommentEntry{Body: "overall looks good", Scope: "review"}
 	err := processBulkReviewEntry(&cj, 0, e, "reviewer", "", inheritedScope{})
@@ -2585,6 +2711,8 @@ func TestProcessBulkReviewEntry_ReviewScope(t *testing.T) {
 }
 
 func TestProcessBulkReviewEntry_WithLineRejectsNoFile(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}}
 	e := BulkCommentEntry{Body: "bad", Scope: "review", Line: 5}
 	err := processBulkReviewEntry(&cj, 0, e, "author", "", inheritedScope{})
@@ -2594,6 +2722,8 @@ func TestProcessBulkReviewEntry_WithLineRejectsNoFile(t *testing.T) {
 }
 
 func TestProcessBulkReviewEntry_NonReviewScopeWithFile(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}}
 	// When scope != "review" but File/Path are set, it errors because
 	// file-scoped comments should go through processBulkFileOrLineEntry.
@@ -2605,6 +2735,8 @@ func TestProcessBulkReviewEntry_NonReviewScopeWithFile(t *testing.T) {
 }
 
 func TestProcessBulkReviewEntry_NoFileFallsThrough(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}}
 	// When no file/path is set and scope is not "review", it still adds a review comment.
 	e := BulkCommentEntry{Body: "general feedback", Scope: "line"}
@@ -2620,6 +2752,8 @@ func TestProcessBulkReviewEntry_NoFileFallsThrough(t *testing.T) {
 // --- addFileCommentToCritJSON additional tests ---
 
 func TestAddFileCommentToCritJSON_Success(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(dir, "test.go"), "package main\n")
 
@@ -2662,6 +2796,8 @@ func TestAddFileCommentToCritJSON_Success(t *testing.T) {
 }
 
 func TestDisplayName(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		login, name, want string
 	}{
@@ -2678,6 +2814,8 @@ func TestDisplayName(t *testing.T) {
 }
 
 func TestMergeGHComments_UsesDisplayNameFromCache(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{"main.go": {Status: "modified"}}}
 	ghComments := []ghComment{
 		{ID: 100, Path: "main.go", Line: 5, Side: "RIGHT", Body: "looks good",
@@ -2700,6 +2838,8 @@ func TestMergeGHComments_UsesDisplayNameFromCache(t *testing.T) {
 // running inside an active range-mode focus), imported root comments are
 // stamped with HeadSHA + DiffScope=layer so visibleInFocus shows them.
 func TestMergeGHCommentsScoped_StampsHeadAndLayer(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}}
 	ghComments := []ghComment{
 		{ID: 7, Path: "main.go", Line: 12, Side: "RIGHT", Body: "looks wrong",
@@ -2726,6 +2866,8 @@ func TestMergeGHCommentsScoped_StampsHeadAndLayer(t *testing.T) {
 // ActiveDiffScope), pulled comments are NOT stamped, preserving today's
 // behavior.
 func TestMergeGHCommentsScoped_NoStampWithEmptyScope(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}}
 	ghComments := []ghComment{
 		{ID: 8, Path: "main.go", Line: 3, Side: "RIGHT", Body: "x",
@@ -2796,6 +2938,8 @@ func TestResolvePullScope(t *testing.T) {
 // headRepository.url so ensureSHAFetched can fall back to the fork remote.
 // This guards against future refactors stripping fields from prJSONFields.
 func TestParsePRViewJSON_ForkPR(t *testing.T) {
+	t.Parallel()
+
 	if !strings.Contains(prJSONFields, "isCrossRepository") {
 		t.Fatalf("prJSONFields missing isCrossRepository: %q", prJSONFields)
 	}
@@ -2833,6 +2977,8 @@ func TestParsePRViewJSON_ForkPR(t *testing.T) {
 // same-repo PRs but IsCrossRepository is false, so callers know not to pass
 // the URL as a fallback remote (which would point at the same origin).
 func TestParsePRViewJSON_SameRepoPR(t *testing.T) {
+	t.Parallel()
+
 	raw := `{
 		"number": 7,
 		"url": "https://github.com/owner/repo/pull/7",
@@ -2863,6 +3009,8 @@ func TestParsePRViewJSON_SameRepoPR(t *testing.T) {
 //   - GitHubID != 0 and hash matches Body → not enqueued
 //   - Resolved comment with edited body → not enqueued
 func TestCollectEditedForPush_DetectsBodyDivergence(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
 			"a.go": {Comments: []Comment{
@@ -2909,6 +3057,8 @@ func TestCollectEditedForPush_DetectsBodyDivergence(t *testing.T) {
 // after PATCH, the review file is rewritten with the edited body's digest
 // stored in LastPushedBodyHash so the next push is a no-op.
 func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review.json")
 
@@ -2976,6 +3126,8 @@ func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
 // If you change merge behavior to reject foreign comments, this test
 // should fail and be updated to assert the new contract.
 func TestMergeGHComments_DoesNotValidatePRProvenance(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		Branch:  "feature-A",
 		BaseRef: "main",
@@ -3034,7 +3186,11 @@ func TestMergeGHComments_DoesNotValidatePRProvenance(t *testing.T) {
 //   - collectNewRepliesForPush (reply push selector): parent must be on
 //     GH (GitHubID!=0) AND reply must be local (GitHubID==0).
 func TestZeroGitHubID_TreatedAsNotPushed(t *testing.T) {
+	t.Parallel()
+
 	t.Run("root_zero_is_pushed", func(t *testing.T) {
+		t.Parallel()
+
 		cj := CritJSON{
 			Files: map[string]CritJSONFile{
 				"a.go": {Comments: []Comment{
@@ -3049,6 +3205,8 @@ func TestZeroGitHubID_TreatedAsNotPushed(t *testing.T) {
 	})
 
 	t.Run("root_nonzero_is_skipped", func(t *testing.T) {
+		t.Parallel()
+
 		cj := CritJSON{
 			Files: map[string]CritJSONFile{
 				"a.go": {Comments: []Comment{
@@ -3063,6 +3221,8 @@ func TestZeroGitHubID_TreatedAsNotPushed(t *testing.T) {
 	})
 
 	t.Run("reply_with_zero_parent_skipped", func(t *testing.T) {
+		t.Parallel()
+
 		// Parent root is local (GitHubID==0): reply has nothing to attach
 		// to on GitHub, so collectNewRepliesForPush must skip it.
 		cf := CritJSONFile{Comments: []Comment{
@@ -3077,6 +3237,8 @@ func TestZeroGitHubID_TreatedAsNotPushed(t *testing.T) {
 	})
 
 	t.Run("reply_with_nonzero_parent_zero_self_pushed", func(t *testing.T) {
+		t.Parallel()
+
 		// Parent on GitHub (GitHubID!=0), reply local (GitHubID==0):
 		// must be queued for push.
 		cf := CritJSONFile{Comments: []Comment{
@@ -3094,6 +3256,8 @@ func TestZeroGitHubID_TreatedAsNotPushed(t *testing.T) {
 	})
 
 	t.Run("reply_with_nonzero_parent_nonzero_self_skipped", func(t *testing.T) {
+		t.Parallel()
+
 		// Both parent and reply on GitHub: nothing to do.
 		cf := CritJSONFile{Comments: []Comment{
 			{ID: "c1", GitHubID: 100, Body: "remote root", Replies: []Reply{
@@ -3110,6 +3274,8 @@ func TestZeroGitHubID_TreatedAsNotPushed(t *testing.T) {
 // TestCollectDeletesForPush_ReturnsPendingList verifies that
 // collectDeletesForPush returns a copy of CritJSON.PendingGitHubDeletes.
 func TestCollectDeletesForPush_ReturnsPendingList(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		PendingGitHubDeletes: []int64{100, 200, 300},
 		Files:                map[string]CritJSONFile{},
@@ -3135,6 +3301,8 @@ func TestCollectDeletesForPush_ReturnsPendingList(t *testing.T) {
 // are removed from PendingGitHubDeletes on disk; non-drained IDs persist for
 // retry on the next push.
 func TestUpdateCritJSONAfterDeletes_DrainsPendingList(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -3175,6 +3343,8 @@ func TestUpdateCritJSONAfterDeletes_DrainsPendingList(t *testing.T) {
 // not retain an empty array (omitempty on the struct tag) — the field should
 // vanish from disk once everything has been DELETEd upstream.
 func TestUpdateCritJSONAfterDeletes_FullDrainOmitsField(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	reviewPath := filepath.Join(dir, "review.json")
 	cj := CritJSON{PendingGitHubDeletes: []int64{42}, Files: map[string]CritJSONFile{}}
@@ -3195,6 +3365,8 @@ func TestUpdateCritJSONAfterDeletes_FullDrainOmitsField(t *testing.T) {
 // resurrect a comment whose ID is in PendingGitHubDeletes — the user has
 // already issued an intent to DELETE that must survive intermediate pulls.
 func TestMergeRootComment_SkipsPendingDelete(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		PendingGitHubDeletes: []int64{999},
 		Files: map[string]CritJSONFile{
@@ -3220,6 +3392,8 @@ func TestMergeRootComment_SkipsPendingDelete(t *testing.T) {
 // TestMergeOrphanReplies_SkipsPendingDelete asserts that a reply queued for
 // DELETE locally is not re-imported when its parent is already in cj.
 func TestMergeOrphanReplies_SkipsPendingDelete(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		PendingGitHubDeletes: []int64{777},
 		Files: map[string]CritJSONFile{
@@ -3245,6 +3419,8 @@ func TestMergeOrphanReplies_SkipsPendingDelete(t *testing.T) {
 
 // TestParseGHIncludeStatus parses representative `gh api --include` outputs.
 func TestParseGHIncludeStatus(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		in   string
@@ -3258,6 +3434,8 @@ func TestParseGHIncludeStatus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := parseGHIncludeStatus([]byte(tc.in)); got != tc.want {
 				t.Errorf("parseGHIncludeStatus(%q) = %d, want %d", tc.in, got, tc.want)
 			}
@@ -3319,6 +3497,8 @@ func TestDeleteGHComment_StatusHandling(t *testing.T) {
 // TestThreadResolvedForRoot covers the lookup precedence: root databaseID
 // first, then any reply, then absent.
 func TestThreadResolvedForRoot(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name           string
 		rootID         int64
@@ -3365,6 +3545,8 @@ func TestThreadResolvedForRoot(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			gotResolved, gotPresent := threadResolvedForRoot(tc.rootID, tc.replies, tc.threadResolved)
 			if gotResolved != tc.wantResolved || gotPresent != tc.wantPresent {
 				t.Errorf("got (%v,%v), want (%v,%v)",
@@ -3378,6 +3560,8 @@ func TestThreadResolvedForRoot(t *testing.T) {
 // root inherits Resolved=true and ResolvedRound=cj.ReviewRound when its
 // thread is resolved on github.com.
 func TestMergeGHComments_ThreadResolved_NewComment(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}, ReviewRound: 3}
 	ghComments := []ghComment{
 		{ID: 42, Path: "main.go", Line: 5, Side: "RIGHT", Body: "decide", CreatedAt: "2025-01-01T00:00:00Z",
@@ -3404,6 +3588,8 @@ func TestMergeGHComments_ThreadResolved_NewComment(t *testing.T) {
 // Resolved=false; the reviewer later clicked Resolve on github.com; the
 // next pull must update Resolved on the deduplicated local comment.
 func TestMergeGHComments_ThreadResolved_ExistingDedupedComment(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ReviewRound: 4,
 		Files: map[string]CritJSONFile{
@@ -3444,6 +3630,8 @@ func TestMergeGHComments_ThreadResolved_ExistingDedupedComment(t *testing.T) {
 // crit / crit-web independently of github.com, and crit pull is not
 // authoritative on the unresolved->resolved transition direction.
 func TestMergeGHComments_ThreadUnresolved_DoesNotClobberLocallyResolved(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{
 		ReviewRound: 5,
 		Files: map[string]CritJSONFile{
@@ -3480,6 +3668,8 @@ func TestMergeGHComments_ThreadUnresolved_DoesNotClobberLocallyResolved(t *testi
 // (e.g., a GraphQL fetch failed best-effort) preserve all existing
 // behavior — no Resolved bits are flipped, no new Resolved bits set.
 func TestMergeGHComments_NilThreadMap_NoOp(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}, ReviewRound: 1}
 	ghComments := []ghComment{
 		{ID: 7, Path: "main.go", Line: 3, Side: "RIGHT", Body: "x", CreatedAt: "2025-01-01T00:00:00Z",
@@ -3502,6 +3692,8 @@ func TestMergeGHComments_NilThreadMap_NoOp(t *testing.T) {
 // (e.g., the GraphQL response indexed only the reply's databaseID — both
 // are valid keys since the bit is shared across the thread.)
 func TestMergeGHComments_ThreadResolvedViaReplyID(t *testing.T) {
+	t.Parallel()
+
 	cj := CritJSON{Files: map[string]CritJSONFile{}, ReviewRound: 2}
 	ghComments := []ghComment{
 		{ID: 42, Path: "main.go", Line: 5, Side: "RIGHT", Body: "root", CreatedAt: "2025-01-01T00:00:00Z",

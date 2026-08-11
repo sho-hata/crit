@@ -5,6 +5,8 @@ import "testing"
 // TestRoundSnapshotPosition asserts that captureRoundSnapshot records each
 // file's index in s.Files as Position.
 func TestRoundSnapshotPosition(t *testing.T) {
+	t.Parallel()
+
 	s := &Session{
 		Mode:        "files",
 		ReviewRound: 1,

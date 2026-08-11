@@ -56,6 +56,8 @@ func TestDetectVCS_JJOverrideFallsBackToGitWhenNotInstalled(t *testing.T) {
 }
 
 func TestHasJJDirAt(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if hasJJDirAt(dir) {
 		t.Error("hasJJDirAt on empty temp dir = true")
@@ -73,6 +75,8 @@ func TestHasJJDirAt(t *testing.T) {
 // real fetchable remote. The stub reports the jj name and a permanently-
 // missing object so the function takes the no-fetch branches.
 func TestEnsureSHAFetchedJJ_PureJJErrorMessages(t *testing.T) {
+	t.Parallel()
+
 	repoRoot := t.TempDir() // no .git/, no .jj/ — pure-JJ behavior path
 
 	stub := &fakeJJVCSForFetch{}

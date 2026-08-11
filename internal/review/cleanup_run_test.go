@@ -37,6 +37,8 @@ func writeStaleReview(t *testing.T, revDir, name string, daysOld int) string {
 }
 
 func TestRunCleanup_InvalidDays(t *testing.T) {
+	t.Parallel()
+
 	err := RunCleanup([]string{"--days", "notanumber"})
 	if err == nil {
 		t.Fatal("RunCleanup with bad --days = nil, want error")
@@ -48,12 +50,16 @@ func TestRunCleanup_InvalidDays(t *testing.T) {
 }
 
 func TestRunCleanup_NegativeDays(t *testing.T) {
+	t.Parallel()
+
 	if err := RunCleanup([]string{"--days", "-3"}); err == nil {
 		t.Fatal("RunCleanup with negative --days = nil, want error")
 	}
 }
 
 func TestRunCleanup_UnknownFlag(t *testing.T) {
+	t.Parallel()
+
 	if err := RunCleanup([]string{"--bogus"}); err == nil {
 		t.Fatal("RunCleanup with unknown flag = nil, want error")
 	}

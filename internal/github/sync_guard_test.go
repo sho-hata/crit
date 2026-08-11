@@ -6,6 +6,8 @@ import (
 )
 
 func TestGitHubSyncGuard(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		cj        CritJSON
@@ -19,6 +21,8 @@ func TestGitHubSyncGuard(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := checkGitHubSyncAllowed(tt.cj, tt.op)
 			if tt.wantError {
 				if err == nil {

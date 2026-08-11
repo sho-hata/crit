@@ -215,6 +215,8 @@ func TestReconnectDeadSession_OutputReviewPath(t *testing.T) {
 }
 
 func TestDaemonArgsForReconnect_OutputAndPublicURL(t *testing.T) {
+	t.Parallel()
+
 	key := "839f3b4cd5d6"
 	outputDir := filepath.Join(os.TempDir(), "review-out")
 	revDir := filepath.Join(outputDir, "reviews", key)
@@ -240,6 +242,8 @@ func containsArg(args []string, want string) bool {
 }
 
 func TestResolveReconnectReviewDir_MissingStaleReview(t *testing.T) {
+	t.Parallel()
+
 	missing := filepath.Join(t.TempDir(), ".crit")
 	_, err := resolveReconnectReviewDir("839f3b4cd5d6", daemon.SessionEntry{ReviewPath: missing})
 	if err == nil {
@@ -350,6 +354,8 @@ func TestMigrateLegacyOutputReconnect_DestExists(t *testing.T) {
 }
 
 func TestMigrateLegacyOutputReconnect_NotLegacy(t *testing.T) {
+	t.Parallel()
+
 	if args := migrateLegacyOutputReconnect("839f3b4cd5d6", filepath.Join(t.TempDir(), "reviews", "839f3b4cd5d6")); args != nil {
 		t.Fatalf("non-legacy path returned %v", args)
 	}
@@ -474,6 +480,8 @@ func TestReconnectDeadSession_StalePathMissing(t *testing.T) {
 }
 
 func TestReconnectCommand(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		key  string
 		want string
@@ -489,6 +497,8 @@ func TestReconnectCommand(t *testing.T) {
 }
 
 func TestPlanReconnectCommand(t *testing.T) {
+	t.Parallel()
+
 	if got := PlanReconnectCommand("auth-flow"); got != "crit plan --name auth-flow" {
 		t.Errorf("PlanReconnectCommand() = %q", got)
 	}
@@ -498,6 +508,8 @@ func TestPlanReconnectCommand(t *testing.T) {
 }
 
 func TestNextRoundCommand(t *testing.T) {
+	t.Parallel()
+
 	plan := &Session{Mode: "plan", PlanDir: "/home/user/.crit/plans/auth-flow", SessionKey: "abc123def456"}
 	if got := NextRoundCommand(plan); got != "crit plan --name auth-flow" {
 		t.Errorf("plan NextRoundCommand() = %q", got)
@@ -516,6 +528,8 @@ func TestNextRoundCommand(t *testing.T) {
 }
 
 func TestValidSessionKey(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		key  string
 		want bool
@@ -534,6 +548,8 @@ func TestValidSessionKey(t *testing.T) {
 }
 
 func TestDaemonArgsFromCliArgs(t *testing.T) {
+	t.Parallel()
+
 	key := "839f3b4cd5d6"
 	tests := []struct {
 		name    string

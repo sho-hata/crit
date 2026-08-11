@@ -12,6 +12,8 @@ import (
 // path: a write into a read-only parent must surface an error AND leave no
 // .tmp files behind.
 func TestAtomicWriteFile_FailureLeavesNoTmpFiles(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("read-only-dir failure path needs non-root POSIX")
 	}

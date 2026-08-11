@@ -7,6 +7,8 @@ import (
 )
 
 func TestParsePRViewJSON(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name      string
 		fixture   string
@@ -44,6 +46,8 @@ func TestParsePRViewJSON(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			info, err := parsePRViewJSON([]byte(tc.fixture))
 			if err != nil {
 				t.Fatal(err)
@@ -65,6 +69,8 @@ func TestParsePRViewJSON(t *testing.T) {
 }
 
 func TestParsePRListJSON(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		fixture string
@@ -96,6 +102,8 @@ func TestParsePRListJSON(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			prs, err := parsePRListJSON([]byte(tc.fixture))
 			if err != nil {
 				t.Fatal(err)
@@ -109,6 +117,8 @@ func TestParsePRListJSON(t *testing.T) {
 }
 
 func TestParsePRListJSON_Malformed(t *testing.T) {
+	t.Parallel()
+
 	if _, err := parsePRListJSON([]byte(`not json`)); err == nil {
 		t.Fatal("expected error on malformed JSON")
 	}
@@ -119,6 +129,8 @@ func TestParsePRListJSON_Malformed(t *testing.T) {
 // wanted coverage of the production code path that synthetic e2e fixtures
 // bypass by setting is_stacked explicitly.
 func TestIsStackedPR(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		base    string
@@ -136,6 +148,8 @@ func TestIsStackedPR(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			var info *PRInfo
 			if !c.nilInfo {
 				info = &PRInfo{BaseRefName: c.base}
@@ -177,6 +191,8 @@ func (f *fakeStackVCS) HasObject(_, _ string) bool {
 }
 
 func TestEnsureSHAFetched_AlreadyPresent(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeStackVCS{name: "git", hasSeq: []bool{true}}
 	if err := ensureSHAFetched(v, "abc", t.TempDir(), ""); err != nil {
 		t.Fatal(err)
@@ -187,6 +203,8 @@ func TestEnsureSHAFetched_AlreadyPresent(t *testing.T) {
 }
 
 func TestEnsureSHAFetched_StillMissingAfterFetch(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeStackVCS{name: "git", hasSeq: nil} // always false
 	err := ensureSHAFetched(v, "deadbeef", t.TempDir(), "")
 	if err == nil {
@@ -195,12 +213,16 @@ func TestEnsureSHAFetched_StillMissingAfterFetch(t *testing.T) {
 }
 
 func TestEnsureSHAFetched_NilVCSIsNoop(t *testing.T) {
+	t.Parallel()
+
 	if err := ensureSHAFetched(nil, "abc", "", ""); err != nil {
 		t.Errorf("nil vcs should no-op, got %v", err)
 	}
 }
 
 func TestEnsureSHAFetched_UnsupportedVCS(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeStackVCS{name: "fossil", hasSeq: nil}
 	err := ensureSHAFetched(v, "abc", t.TempDir(), "")
 	if err == nil {

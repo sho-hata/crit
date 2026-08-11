@@ -12,6 +12,8 @@ import (
 )
 
 func TestLoadConfigFromFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	os.WriteFile(configPath, []byte(`{
@@ -43,6 +45,8 @@ func TestLoadConfigFromFile(t *testing.T) {
 }
 
 func TestLoadConfigFileMissing(t *testing.T) {
+	t.Parallel()
+
 	cfg, presence, err := LoadConfigFile("/nonexistent/.crit.config.json")
 	if err != nil {
 		t.Fatalf("missing file should not error: %v", err)
@@ -56,6 +60,8 @@ func TestLoadConfigFileMissing(t *testing.T) {
 }
 
 func TestLoadConfigFile_VCSJJ(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	if err := os.WriteFile(configPath, []byte(`{"vcs": "jj"}`), 0o644); err != nil {
@@ -71,6 +77,8 @@ func TestLoadConfigFile_VCSJJ(t *testing.T) {
 }
 
 func TestMergeConfigs_AuthorFallback_JJ_PreservesExplicitAuthor(t *testing.T) {
+	t.Parallel()
+
 	global := Config{VCS: "jj", Author: "Explicit Author"}
 	project := Config{}
 	merged := mergeConfigs(global, project, ConfigPresence{})
@@ -83,6 +91,8 @@ func TestMergeConfigs_AuthorFallback_JJ_PreservesExplicitAuthor(t *testing.T) {
 }
 
 func TestLoadConfigFileInvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	os.WriteFile(configPath, []byte(`{invalid json`), 0644)
@@ -94,6 +104,8 @@ func TestLoadConfigFileInvalidJSON(t *testing.T) {
 }
 
 func TestLoadConfigFilePresenceEmptyValues(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	os.WriteFile(configPath, []byte(`{"ignore_patterns": []}`), 0644)
@@ -111,6 +123,8 @@ func TestLoadConfigFilePresenceEmptyValues(t *testing.T) {
 }
 
 func TestMergeConfigs(t *testing.T) {
+	t.Parallel()
+
 	global := Config{Port: 3000}
 	global.IgnorePatterns = []string{"*.lock"}
 
@@ -127,6 +141,8 @@ func TestMergeConfigs(t *testing.T) {
 }
 
 func TestMergeConfigsHostGlobalOnly(t *testing.T) {
+	t.Parallel()
+
 	// A project config must not override host — doing so would let a malicious
 	// repo disable the DNS-rebinding defense by setting host to "0.0.0.0".
 	global := Config{Host: "127.0.0.1"}
@@ -138,6 +154,8 @@ func TestMergeConfigsHostGlobalOnly(t *testing.T) {
 }
 
 func TestMergeConfigsOpenCmdGlobalOnly(t *testing.T) {
+	t.Parallel()
+
 	global := Config{OpenCmd: "/usr/local/bin/crit-open"}
 	project := Config{OpenCmd: "/tmp/untrusted-open"}
 	merged := mergeConfigs(global, project, ConfigPresence{})
@@ -229,6 +247,8 @@ func TestBaseBranchConfig(t *testing.T) {
 }
 
 func TestMergeConfigsZeroValues(t *testing.T) {
+	t.Parallel()
+
 	global := Config{Port: 3000, NoOpen: true, Quiet: true}
 	project := Config{} // all zero — should not override
 
@@ -245,6 +265,8 @@ func TestMergeConfigsZeroValues(t *testing.T) {
 }
 
 func TestMergeConfigsBoolOverride(t *testing.T) {
+	t.Parallel()
+
 	// Project explicitly sets no_open: false to override global no_open: true
 	global := Config{NoOpen: true, Quiet: true}
 	project := Config{NoOpen: false, Quiet: false}
@@ -284,6 +306,8 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestMatchPattern(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		pattern string
 		path    string
@@ -330,6 +354,8 @@ func TestMatchPattern(t *testing.T) {
 }
 
 func TestFilterIgnored(t *testing.T) {
+	t.Parallel()
+
 	files := []vcs.FileChange{
 		{Path: "main.go", Status: "modified"},
 		{Path: "go.sum.lock", Status: "modified"},
@@ -351,6 +377,8 @@ func TestFilterIgnored(t *testing.T) {
 }
 
 func TestFilterIgnoredEmpty(t *testing.T) {
+	t.Parallel()
+
 	files := []vcs.FileChange{{Path: "main.go", Status: "modified"}}
 	filtered := FilterIgnored(files, nil)
 	if len(filtered) != 1 {
@@ -359,6 +387,8 @@ func TestFilterIgnoredEmpty(t *testing.T) {
 }
 
 func TestFilterPathsIgnored(t *testing.T) {
+	t.Parallel()
+
 	paths := []string{
 		"src/main.go",
 		"src/generated/types.go",
@@ -372,6 +402,8 @@ func TestFilterPathsIgnored(t *testing.T) {
 }
 
 func TestConfigString(t *testing.T) {
+	t.Parallel()
+
 	cfg := Config{Port: 3456, IgnorePatterns: []string{"*.lock"}}
 	s := cfg.String()
 	if s == "{}" {
@@ -458,6 +490,8 @@ func TestLoadConfigSameFileNoDuplicatePatterns(t *testing.T) {
 }
 
 func TestMergeConfigs_AgentCmd(t *testing.T) {
+	t.Parallel()
+
 	global := Config{AgentCmd: "claude -p"}
 	project := Config{}
 	merged := mergeConfigs(global, project, ConfigPresence{})
@@ -474,6 +508,8 @@ func TestMergeConfigs_AgentCmd(t *testing.T) {
 }
 
 func TestNoIntegrationCheckConfig(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	if err := os.WriteFile(configPath, []byte(`{"no_integration_check": true}`), 0o644); err != nil {
@@ -489,6 +525,8 @@ func TestNoIntegrationCheckConfig(t *testing.T) {
 }
 
 func TestNoIntegrationCheckMerge(t *testing.T) {
+	t.Parallel()
+
 	global := Config{NoIntegrationCheck: false}
 	project := Config{NoIntegrationCheck: true}
 	presence := ConfigPresence{NoIntegrationCheck: true}
@@ -499,6 +537,8 @@ func TestNoIntegrationCheckMerge(t *testing.T) {
 }
 
 func TestNoUpdateCheckConfig(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	if err := os.WriteFile(configPath, []byte(`{"no_update_check": true}`), 0o644); err != nil {
@@ -514,6 +554,8 @@ func TestNoUpdateCheckConfig(t *testing.T) {
 }
 
 func TestNoUpdateCheckMerge(t *testing.T) {
+	t.Parallel()
+
 	global := Config{NoUpdateCheck: false}
 	project := Config{NoUpdateCheck: true}
 	presence := ConfigPresence{NoUpdateCheck: true}
@@ -585,6 +627,8 @@ func TestSaveGlobalConfig_PreservesExistingKeys(t *testing.T) {
 }
 
 func TestMergeConfigs_AgentCmdProjectIgnored(t *testing.T) {
+	t.Parallel()
+
 	// Even if project config has agent_cmd, it must be ignored for security
 	global := Config{}
 	project := Config{AgentCmd: "malicious-command"}
@@ -636,6 +680,8 @@ func TestLoadConfig_PlanApproveModeProjectCannotEnable(t *testing.T) {
 }
 
 func TestMergeConfigs_IgnorePatternsUnion(t *testing.T) {
+	t.Parallel()
+
 	global := Config{IgnorePatterns: []string{"*.lock", "vendor/"}}
 	project := Config{IgnorePatterns: []string{"*.pb.go"}}
 	merged := mergeConfigs(global, project, ConfigPresence{})
@@ -673,6 +719,8 @@ func TestLoadConfig_OutputField(t *testing.T) {
 }
 
 func TestCleanupOnApproveEnabled(t *testing.T) {
+	t.Parallel()
+
 	trueVal := true
 	falseVal := false
 
@@ -699,6 +747,8 @@ func TestCleanupOnApproveEnabled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := tt.cfg.CleanupOnApproveEnabled()
 			if got != tt.want {
 				t.Errorf("CleanupOnApproveEnabled() = %v, want %v", got, tt.want)
@@ -708,6 +758,8 @@ func TestCleanupOnApproveEnabled(t *testing.T) {
 }
 
 func TestNotifyOnRoundReadyEnabled(t *testing.T) {
+	t.Parallel()
+
 	trueVal := true
 	falseVal := false
 
@@ -734,6 +786,8 @@ func TestNotifyOnRoundReadyEnabled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := tt.cfg.NotifyOnRoundReadyEnabled()
 			if got != tt.want {
 				t.Errorf("NotifyOnRoundReadyEnabled() = %v, want %v", got, tt.want)
@@ -743,6 +797,8 @@ func TestNotifyOnRoundReadyEnabled(t *testing.T) {
 }
 
 func TestDefaultConfig(t *testing.T) {
+	t.Parallel()
+
 	cfg := defaultConfig()
 
 	if cfg.Port != 0 {
@@ -781,6 +837,8 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestLoadConfigFile_AutoViewedPatterns(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	os.WriteFile(configPath, []byte(`{"auto_viewed_patterns": ["*.lock", "generated/", "PLAN.md"]}`), 0644)
@@ -801,6 +859,8 @@ func TestLoadConfigFile_AutoViewedPatterns(t *testing.T) {
 }
 
 func TestLoadConfigFile_AutoViewedPatternsPresenceEmpty(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	os.WriteFile(configPath, []byte(`{"auto_viewed_patterns": []}`), 0644)
@@ -818,6 +878,8 @@ func TestLoadConfigFile_AutoViewedPatternsPresenceEmpty(t *testing.T) {
 }
 
 func TestMergeConfigs_AutoViewedPatternsUnion(t *testing.T) {
+	t.Parallel()
+
 	global := Config{AutoViewedPatterns: []string{"*.lock"}}
 	project := Config{AutoViewedPatterns: []string{"PLAN.md"}}
 	merged := mergeConfigs(global, project, ConfigPresence{})
@@ -861,6 +923,8 @@ func TestLoadHookMaps(t *testing.T) {
 }
 
 func TestMergeConfigs_ProjectHooksOverride(t *testing.T) {
+	t.Parallel()
+
 	global := Config{Hooks: map[string]string{"on_finish_approved": "inline:global"}}
 	project := Config{Hooks: map[string]string{"on_finish_approved": "inline:project"}}
 	merged := mergeConfigs(global, project, ConfigPresence{})
@@ -870,6 +934,8 @@ func TestMergeConfigs_ProjectHooksOverride(t *testing.T) {
 }
 
 func TestCloseOnApproveAfterMsEnabled(t *testing.T) {
+	t.Parallel()
+
 	ms500 := 500
 	msZero := 0
 	msNegative := -1
@@ -887,6 +953,8 @@ func TestCloseOnApproveAfterMsEnabled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			gotMs, gotEnabled := tt.cfg.CloseOnApproveAfterMsEnabled()
 			if gotEnabled != tt.wantEnable || gotMs != tt.wantMs {
 				t.Errorf("CloseOnApproveAfterMsEnabled() = (%d, %v), want (%d, %v)", gotMs, gotEnabled, tt.wantMs, tt.wantEnable)
@@ -896,6 +964,8 @@ func TestCloseOnApproveAfterMsEnabled(t *testing.T) {
 }
 
 func TestLoadConfigFile_CloseOnApproveAfterMs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".crit.config.json")
 	if err := os.WriteFile(configPath, []byte(`{"close_on_approve_after_ms": 3000}`), 0o644); err != nil {
@@ -911,6 +981,8 @@ func TestLoadConfigFile_CloseOnApproveAfterMs(t *testing.T) {
 }
 
 func TestMergeConfigs_CloseOnApproveAfterMsGlobalOnly(t *testing.T) {
+	t.Parallel()
+
 	// Project config must not be able to force a reviewer's tab to auto-close.
 	globalMs := 2000
 	projectMs := 0
@@ -956,6 +1028,8 @@ func TestLoadConfig_CloseOnApproveAfterMs_GlobalWorks(t *testing.T) {
 }
 
 func TestDefaultConfig_DoesNotIncludeCloseOnApproveAfterMs(t *testing.T) {
+	t.Parallel()
+
 	// Scaffolding (`crit config --generate`) must not accidentally enable
 	// auto-close — the generated template omits this key entirely.
 	s := DefaultConfigString()

@@ -10,6 +10,8 @@ import (
 // JJTopicChainRevset format depends on whether a default base resolves. We test
 // the literal output for both shapes (with-base / fallback) without driving jj.
 func TestJJTopicChainRevset_FallbackToRoot(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir() // not a jj repo — base resolution will fail
 	got := JJTopicChainRevset(dir, 0)
 	if got != "ancestors(@) ~ root()" {
@@ -23,6 +25,8 @@ func TestJJTopicChainRevset_FallbackToRoot(t *testing.T) {
 }
 
 func TestJJTopicChainRevset_WithBase(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	got := JJTopicChainRevset(dir, 0)
 	// Sanity: must reference `ancestors(@)` and exclude ancestors of the base
@@ -41,6 +45,8 @@ func TestJJTopicChainRevset_WithBase(t *testing.T) {
 }
 
 func TestJJCommitSubject(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	// Add a known subject to look up.
 	if err := os.WriteFile(filepath.Join(dir, "subj.txt"), []byte("x\n"), 0o644); err != nil {
@@ -61,6 +67,8 @@ func TestJJCommitSubject(t *testing.T) {
 }
 
 func TestCommitSubjectFor_JJ(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	if err := os.WriteFile(filepath.Join(dir, "p.txt"), []byte("x\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -76,6 +84,8 @@ func TestCommitSubjectFor_JJ(t *testing.T) {
 }
 
 func TestTopicChainSHAs_JJ_OnlyTopicCommits(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	mainSHA := runJJ(t, dir, "log", "-r", "bookmarks(exact:\"main\")", "--no-graph", "-T", "commit_id")
 

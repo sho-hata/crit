@@ -10,6 +10,8 @@ import (
 )
 
 func TestHandleRoundComplete_RejectedInRange(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newTestServer(t)
 	sess.Focus = Focus{Kind: FocusRange, BaseSHA: "b", HeadSHA: "h", DiffScope: session.DiffScopeLayer}
 	s.StoreSessionForTest(sess)
@@ -31,6 +33,8 @@ func TestHandleRoundComplete_RejectedInRange(t *testing.T) {
 }
 
 func TestHandleFocus_FullStackRejectedWithoutDefaultSHA(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	body := `{"kind":"range","base_sha":"b","head_sha":"h","diff_scope":"full_stack"}`
 	req := httptest.NewRequest("POST", "/api/focus", strings.NewReader(body))
@@ -43,6 +47,8 @@ func TestHandleFocus_FullStackRejectedWithoutDefaultSHA(t *testing.T) {
 }
 
 func TestHandleFocus_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/focus", nil)
 	w := httptest.NewRecorder()
@@ -53,6 +59,8 @@ func TestHandleFocus_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleFocus_BadJSON(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/focus", strings.NewReader(`not json`))
 	w := httptest.NewRecorder()
@@ -63,6 +71,8 @@ func TestHandleFocus_BadJSON(t *testing.T) {
 }
 
 func TestSessionInfo_IncludesFocus(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newTestServer(t)
 	sess.Focus = Focus{Kind: FocusRange, BaseSHA: "b", HeadSHA: "h", DiffScope: DiffScopeLayer, IsStacked: true}
 	s.StoreSessionForTest(sess)

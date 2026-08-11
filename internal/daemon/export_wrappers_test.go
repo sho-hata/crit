@@ -6,6 +6,8 @@ import (
 )
 
 func TestSessionsDir(t *testing.T) {
+	t.Parallel()
+
 	dir, err := SessionsDir()
 	if err != nil {
 		t.Fatal(err)
@@ -16,6 +18,8 @@ func TestSessionsDir(t *testing.T) {
 }
 
 func TestTerminationSignals(t *testing.T) {
+	t.Parallel()
+
 	sigs := TerminationSignals()
 	if len(sigs) == 0 {
 		t.Fatal("expected at least one termination signal")
@@ -23,6 +27,8 @@ func TestTerminationSignals(t *testing.T) {
 }
 
 func TestFindSessionForCWDBranch_NoSessions(t *testing.T) {
+	t.Parallel()
+
 	_, _, n := FindSessionForCWDBranch(t.TempDir(), "main")
 	if n != 0 {
 		t.Errorf("expected 0 sessions, got %d", n)
@@ -30,16 +36,22 @@ func TestFindSessionForCWDBranch_NoSessions(t *testing.T) {
 }
 
 func TestIsDaemonAlive_DeadPort(t *testing.T) {
+	t.Parallel()
+
 	if IsDaemonAlive(SessionEntry{Port: 1}) {
 		t.Error("port 1 should not be a live daemon")
 	}
 }
 
 func TestCleanOrphanedSessions_NoPanic(t *testing.T) {
+	t.Parallel()
+
 	CleanOrphanedSessions()
 }
 
 func TestTerminateProcess_NilSafe(t *testing.T) {
+	t.Parallel()
+
 	// terminateProcess with nil is undefined; skip. Just verify export exists via SessionsDir.
 	_ = os.Getenv
 }

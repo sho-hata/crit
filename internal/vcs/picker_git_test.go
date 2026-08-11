@@ -6,6 +6,8 @@ import (
 )
 
 func TestTopicChainSHAs_Git_ExcludesDefaultTip(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	mainSHA := GitRun(t, dir, "rev-parse", "HEAD")
 	GitRun(t, dir, "checkout", "-b", "feat")
@@ -21,6 +23,8 @@ func TestTopicChainSHAs_Git_ExcludesDefaultTip(t *testing.T) {
 }
 
 func TestTopicChainSHAs_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	out := TopicChainSHAs(nil, t.TempDir())
 	if len(out) != 0 {
 		t.Errorf("nil vcs should return empty map, got %v", out)
@@ -28,6 +32,8 @@ func TestTopicChainSHAs_NilVCS(t *testing.T) {
 }
 
 func TestCommitSubjectFor_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	sha := CommitAtForTest(t, dir, "subj.txt", "x", "picker subject line")
 	got := CommitSubjectFor(&GitVCS{}, dir, sha)
@@ -37,6 +43,8 @@ func TestCommitSubjectFor_Git(t *testing.T) {
 }
 
 func TestCommitSubjectFor_Git_TruncatesLongSubject(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	long := strings.Repeat("a", 70)
 	sha := CommitAtForTest(t, dir, "long.txt", "x", long)
@@ -50,12 +58,16 @@ func TestCommitSubjectFor_Git_TruncatesLongSubject(t *testing.T) {
 }
 
 func TestCommitSubjectFor_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	if got := CommitSubjectFor(nil, "", "abc"); got != "" {
 		t.Errorf("nil vcs should return empty, got %q", got)
 	}
 }
 
 func TestCommitSubjectFor_Git_UnknownSHA(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	if got := CommitSubjectFor(&GitVCS{}, dir, "deadbeef"); got != "" {
 		t.Errorf("unknown sha should return empty, got %q", got)

@@ -7,6 +7,8 @@ import (
 )
 
 func TestExtractJSON(t *testing.T) {
+	t.Parallel()
+
 	obj := `{"prologue":{"title":"t","overview":"s"},"chapters":[]}`
 
 	tests := []struct {
@@ -26,6 +28,8 @@ func TestExtractJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := ExtractJSON(tt.in)
 			if got != tt.want {
 				t.Fatalf("ExtractJSON(%q) = %q, want %q", tt.in, got, tt.want)
@@ -42,6 +46,8 @@ func TestExtractJSON(t *testing.T) {
 // TestExtractJSON_FenceAndStrayProse is the self-review case: a response with
 // BOTH a fence and stray prose around it must still extract the inner JSON.
 func TestExtractJSON_FenceAndStrayProse(t *testing.T) {
+	t.Parallel()
+
 	obj := `{"prologue":{"title":"t","overview":"ok"}}`
 	in := "Let me think...\n\n```json\n" + obj + "\n```\n\nHope that helps!"
 	got := ExtractJSON(in)
@@ -51,6 +57,8 @@ func TestExtractJSON_FenceAndStrayProse(t *testing.T) {
 }
 
 func TestBuildStoryPrompt(t *testing.T) {
+	t.Parallel()
+
 	guide := "Author a story.\n"
 	schema := `{"prologue":{}}`
 

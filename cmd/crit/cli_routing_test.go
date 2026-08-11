@@ -7,6 +7,8 @@ import (
 )
 
 func TestRoutePositionalArgs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	htmlFile := filepath.Join(dir, "page.html")
 	if err := os.WriteFile(htmlFile, []byte("<html></html>"), 0o644); err != nil {
@@ -28,6 +30,8 @@ func TestRoutePositionalArgs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := routePositionalArgs(c.args); got != c.want {
 				t.Errorf("routePositionalArgs(%v) = %v, want %v", c.args, got, c.want)
 			}
@@ -36,6 +40,8 @@ func TestRoutePositionalArgs(t *testing.T) {
 }
 
 func TestPRReviewArgs(t *testing.T) {
+	t.Parallel()
+
 	args, ok := prReviewArgs([]string{"https://github.com/a/b/pull/42"})
 	if !ok {
 		t.Fatal("expected ok=true for PR URL")

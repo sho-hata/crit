@@ -5,6 +5,8 @@ import (
 )
 
 func TestSplitCommitRange_Invalid(t *testing.T) {
+	t.Parallel()
+
 	_, _, ok := SplitCommitRange("not-a-range")
 	if ok {
 		t.Error("expected false for invalid range")
@@ -16,6 +18,8 @@ func TestSplitCommitRange_Invalid(t *testing.T) {
 }
 
 func TestWalkAncestors_JJWithoutBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	shas, err := WalkAncestors(&JJVCS{}, dir, 3)
 	if err != nil {
@@ -26,6 +30,8 @@ func TestWalkAncestors_JJWithoutBinary(t *testing.T) {
 }
 
 func TestWalkAncestors_SaplingWithoutBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	shas, err := WalkAncestors(&SaplingVCS{}, dir, 3)
 	if err != nil {
@@ -35,6 +41,8 @@ func TestWalkAncestors_SaplingWithoutBinary(t *testing.T) {
 }
 
 func TestLocalBranchTips_JJWithoutBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	got, err := LocalBranchTips(&JJVCS{}, dir)
 	if err != nil {
@@ -45,6 +53,8 @@ func TestLocalBranchTips_JJWithoutBinary(t *testing.T) {
 }
 
 func TestRemoteBranchTips_JJWithoutBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	got, err := RemoteBranchTips(&JJVCS{}, dir, "main")
 	if err != nil {
@@ -54,6 +64,8 @@ func TestRemoteBranchTips_JJWithoutBinary(t *testing.T) {
 }
 
 func TestChangedFilesOnDefaultInDir_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	writeFileForTest(t, dir+"/dirty.txt", "uncommitted")
 	files, err := (&GitVCS{}).ChangedFilesOnDefaultInDir(dir)
@@ -66,6 +78,8 @@ func TestChangedFilesOnDefaultInDir_Git(t *testing.T) {
 }
 
 func TestFileStatusInRepo_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	writeFileForTest(t, dir+"/new.txt", "x")
 	base := GitRun(t, dir, "rev-parse", "HEAD")

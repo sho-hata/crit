@@ -6,6 +6,8 @@ import (
 )
 
 func TestCompareTargetsFor_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	got, err := CompareTargetsFor(nil, "")
 	if err != nil {
 		t.Fatal(err)
@@ -16,6 +18,8 @@ func TestCompareTargetsFor_NilVCS(t *testing.T) {
 }
 
 func TestLocalBranches_GitRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	branches, err := LocalBranches(dir)
 	if err != nil {
@@ -27,6 +31,8 @@ func TestLocalBranches_GitRepo(t *testing.T) {
 }
 
 func TestCompareTargetsFor_GitRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	got, err := CompareTargetsFor(&GitVCS{}, dir)
 	if err != nil {
@@ -41,6 +47,8 @@ func TestCompareTargetsFor_GitRepo(t *testing.T) {
 }
 
 func TestCompareTargetsFor_JJRepo(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("jj"); err != nil {
 		t.Skip("jj not installed")
 	}

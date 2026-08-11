@@ -7,6 +7,8 @@ import (
 )
 
 func TestReplyResolveStampsResolvedRound_CLI(t *testing.T) {
+	t.Parallel()
+
 	cj := session.CritJSON{
 		ReviewRound: 5,
 		Files: map[string]session.CritJSONFile{
@@ -34,6 +36,8 @@ func TestReplyResolveStampsResolvedRound_CLI(t *testing.T) {
 }
 
 func TestReplyResolveReviewLevel_CLI(t *testing.T) {
+	t.Parallel()
+
 	cj := session.CritJSON{
 		ReviewRound: 7,
 		ReviewComments: []session.Comment{
@@ -51,7 +55,11 @@ func TestReplyResolveReviewLevel_CLI(t *testing.T) {
 }
 
 func TestAppendReply_NonResolvingClearsResolved(t *testing.T) {
+	t.Parallel()
+
 	t.Run("file_comment", func(t *testing.T) {
+		t.Parallel()
+
 		cj := session.CritJSON{
 			ReviewRound: 4,
 			Files: map[string]session.CritJSONFile{
@@ -82,6 +90,8 @@ func TestAppendReply_NonResolvingClearsResolved(t *testing.T) {
 	})
 
 	t.Run("review_comment", func(t *testing.T) {
+		t.Parallel()
+
 		cj := session.CritJSON{
 			ReviewRound: 4,
 			ReviewComments: []session.Comment{

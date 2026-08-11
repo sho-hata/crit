@@ -11,6 +11,8 @@ import (
 )
 
 func TestComputeFileHash(t *testing.T) {
+	t.Parallel()
+
 	h1 := computeFileHash([]byte("hello world"))
 	h2 := computeFileHash([]byte("hello world"))
 	h3 := computeFileHash([]byte("different content"))
@@ -27,6 +29,8 @@ func TestComputeFileHash(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_StaleFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// Write a file at the claude-code skill destination with different content
@@ -56,6 +60,8 @@ func TestCheckInstalledIntegrations_StaleFile(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_UpToDate(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// Read the actual embedded content and write it to the destination
@@ -81,6 +87,8 @@ func TestCheckInstalledIntegrations_UpToDate(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_MissingFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	stale := checkInstalledIntegrations(dir, dir)
 	if len(stale) != 0 {
@@ -89,6 +97,8 @@ func TestCheckInstalledIntegrations_MissingFile(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_HomeDirStale(t *testing.T) {
+	t.Parallel()
+
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -111,6 +121,8 @@ func TestCheckInstalledIntegrations_HomeDirStale(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_MarketplaceStale(t *testing.T) {
+	t.Parallel()
+
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -144,6 +156,8 @@ func TestCheckInstalledIntegrations_MarketplaceStale(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CacheStale(t *testing.T) {
+	t.Parallel()
+
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -177,7 +191,11 @@ func TestCheckInstalledIntegrations_CacheStale(t *testing.T) {
 }
 
 func TestLatestCacheDir(t *testing.T) {
+	t.Parallel()
+
 	t.Run("picks lexicographically last dir", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 		os.Mkdir(filepath.Join(dir, "1.0.0"), 0o755)
 		os.Mkdir(filepath.Join(dir, "1.0.2"), 0o755)
@@ -187,6 +205,8 @@ func TestLatestCacheDir(t *testing.T) {
 		}
 	})
 	t.Run("ignores files", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "zzz"), nil, 0o644)
 		os.Mkdir(filepath.Join(dir, "1.0.0"), 0o755)
@@ -195,11 +215,15 @@ func TestLatestCacheDir(t *testing.T) {
 		}
 	})
 	t.Run("returns empty for nonexistent dir", func(t *testing.T) {
+		t.Parallel()
+
 		if got := latestCacheDir("/no/such/path"); got != "" {
 			t.Errorf("got %q, want empty", got)
 		}
 	})
 	t.Run("returns empty for empty dir", func(t *testing.T) {
+		t.Parallel()
+
 		if got := latestCacheDir(t.TempDir()); got != "" {
 			t.Errorf("got %q, want empty", got)
 		}
@@ -207,6 +231,8 @@ func TestLatestCacheDir(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CacheSkipsOldVersions(t *testing.T) {
+	t.Parallel()
+
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -239,6 +265,8 @@ func TestCheckInstalledIntegrations_CacheSkipsOldVersions(t *testing.T) {
 }
 
 func TestPrintStaleWarnings_NoStale(t *testing.T) {
+	t.Parallel()
+
 	count := printStaleWarnings(nil)
 	if count != 0 {
 		t.Errorf("expected 0 warnings for nil slice, got %d", count)
@@ -246,6 +274,8 @@ func TestPrintStaleWarnings_NoStale(t *testing.T) {
 }
 
 func TestPrintStaleWarnings_WithStale(t *testing.T) {
+	t.Parallel()
+
 	stale := []staleFile{
 		{agent: "claude-code", file: "SKILL.md", dest: "/tmp/test/.claude/skills/crit/SKILL.md", location: locationProject},
 	}
@@ -256,6 +286,8 @@ func TestPrintStaleWarnings_WithStale(t *testing.T) {
 }
 
 func TestDetectInstalledIntegrations(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -310,6 +342,8 @@ func TestDetectInstalledIntegrations(t *testing.T) {
 }
 
 func TestDetectInstalledIntegrations_DedupsPerAgent(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -344,6 +378,8 @@ func TestDetectInstalledIntegrations_DedupsPerAgent(t *testing.T) {
 }
 
 func TestDetectInstalledIntegrations_CodexPluginRequiresPluginFile(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -376,6 +412,8 @@ func TestDetectInstalledIntegrations_CodexPluginRequiresPluginFile(t *testing.T)
 }
 
 func TestDetectInstalledIntegrations_CodexPluginGlobalUsesGlobalDest(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -408,6 +446,8 @@ func TestDetectInstalledIntegrations_CodexPluginGlobalUsesGlobalDest(t *testing.
 }
 
 func TestCheckInstalledIntegrations_CodexPluginCacheStale(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -433,6 +473,8 @@ func TestCheckInstalledIntegrations_CodexPluginCacheStale(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CodexPluginCacheUsesMarketplaceName(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -468,6 +510,8 @@ func TestCheckInstalledIntegrations_CodexPluginCacheUsesMarketplaceName(t *testi
 }
 
 func TestCodexPluginMarketplaceNamesRejectsInvalidName(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -491,6 +535,8 @@ func TestCodexPluginMarketplaceNamesRejectsInvalidName(t *testing.T) {
 }
 
 func TestCodexPluginMarketplaceNamesAcceptsShorthandSource(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -514,6 +560,8 @@ func TestCodexPluginMarketplaceNamesAcceptsShorthandSource(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CodexPluginMissingMarketplaceConfigAndCache(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -550,6 +598,8 @@ func TestCheckInstalledIntegrations_CodexPluginMissingMarketplaceConfigAndCache(
 }
 
 func TestCodexPluginConfigReadyRaw(t *testing.T) {
+	t.Parallel()
+
 	raw := strings.Join([]string{
 		"model = \"gpt-5.1\"",
 		"",
@@ -612,6 +662,8 @@ func TestRunCheck_NoStale(t *testing.T) {
 }
 
 func TestDetectPresentAgents_BinaryOnPath(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 
 	// detectPresentAgents should find agents whose binaries are on PATH.
@@ -623,6 +675,8 @@ func TestDetectPresentAgents_BinaryOnPath(t *testing.T) {
 }
 
 func TestDetectPresentAgents_ConfigDir(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 
 	// Create a .claude directory to simulate claude-code presence
@@ -642,6 +696,8 @@ func TestDetectPresentAgents_ConfigDir(t *testing.T) {
 }
 
 func TestDetectPresentAgents_NoDuplicates(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 
 	// Create multiple probe dirs for same agent — should only appear once
@@ -701,6 +757,8 @@ func TestConfirmBinaryVersion(t *testing.T) {
 }
 
 func TestCheckMissingIntegrations(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -722,6 +780,8 @@ func TestCheckMissingIntegrations(t *testing.T) {
 }
 
 func TestCheckMissingIntegrations_Installed(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -744,6 +804,8 @@ func TestCheckMissingIntegrations_Installed(t *testing.T) {
 }
 
 func TestCheckMissingIntegrations_NoAgentsPresent(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -754,6 +816,8 @@ func TestCheckMissingIntegrations_NoAgentsPresent(t *testing.T) {
 }
 
 func TestHintMissingIntegrationsFor_SkipsWhenInstalled(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -772,6 +836,8 @@ func TestHintMissingIntegrationsFor_SkipsWhenInstalled(t *testing.T) {
 }
 
 func TestHintMissingIntegrationsFor_PrintsWhenNoneInstalled(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -789,6 +855,8 @@ func TestHintMissingIntegrations_EnvDisable(t *testing.T) {
 }
 
 func TestInstalledAgents(t *testing.T) {
+	t.Parallel()
+
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -812,17 +880,25 @@ func TestInstalledAgents(t *testing.T) {
 }
 
 func TestPrintMissingHints(t *testing.T) {
+	t.Parallel()
+
 	t.Run("empty", func(t *testing.T) {
+		t.Parallel()
+
 		if n := printMissingHints(nil); n != 0 {
 			t.Errorf("expected 0, got %d", n)
 		}
 	})
 	t.Run("single", func(t *testing.T) {
+		t.Parallel()
+
 		if n := printMissingHints([]string{"claude-code"}); n != 1 {
 			t.Errorf("expected 1, got %d", n)
 		}
 	})
 	t.Run("multiple", func(t *testing.T) {
+		t.Parallel()
+
 		if n := printMissingHints([]string{"claude-code", "cursor"}); n != 2 {
 			t.Errorf("expected 2, got %d", n)
 		}

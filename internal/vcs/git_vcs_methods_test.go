@@ -10,6 +10,8 @@ import (
 // TestGitVCS_Methods exercises GitVCS interface methods so coverage counts
 // toward this package (cross-package calls from session tests do not).
 func TestGitVCS_Methods(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	g := &GitVCS{}
 
@@ -188,6 +190,8 @@ func TestGitVCS_Methods(t *testing.T) {
 }
 
 func TestResolveDefaultBranchSHA_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	want := GitRun(t, dir, "rev-parse", "HEAD")
 	got, err := ResolveDefaultBranchSHA(&GitVCS{}, dir, "main")
@@ -200,12 +204,16 @@ func TestResolveDefaultBranchSHA_Git(t *testing.T) {
 }
 
 func TestResolveDefaultBranchSHA_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	if _, err := ResolveDefaultBranchSHA(nil, "", "main"); err == nil {
 		t.Fatal("expected error for nil vcs")
 	}
 }
 
 func TestIsCommitish(t *testing.T) {
+	t.Parallel()
+
 	if !IsCommitish("abc1234") {
 		t.Error("expected true for hex sha")
 	}
@@ -218,6 +226,8 @@ func TestIsCommitish(t *testing.T) {
 }
 
 func TestSplitCommitRange_Valid(t *testing.T) {
+	t.Parallel()
+
 	base, head, ok := SplitCommitRange("abc1234..def5678")
 	if !ok || base != "abc1234" || head != "def5678" {
 		t.Errorf("got %q, %q, %v", base, head, ok)
@@ -225,6 +235,8 @@ func TestSplitCommitRange_Valid(t *testing.T) {
 }
 
 func TestWalkAncestors_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	CommitAtForTest(t, dir, "a.txt", "1", "a")
 	shas, err := WalkAncestors(&GitVCS{}, dir, 5)
@@ -237,6 +249,8 @@ func TestWalkAncestors_Git(t *testing.T) {
 }
 
 func TestLocalBranchTips_Git(t *testing.T) {
+	t.Parallel()
+
 	dir := InitTestRepo(t)
 	CommitAtForTest(t, dir, "a.txt", "x", "a")
 	GitRun(t, dir, "checkout", "-b", "feat-x")

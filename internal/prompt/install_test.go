@@ -9,6 +9,8 @@ import (
 )
 
 func TestInstallPrompts(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := prompt.InstallPrompts(dir, false); err != nil {
 		t.Fatal(err)
@@ -25,6 +27,8 @@ func TestInstallPrompts(t *testing.T) {
 }
 
 func TestLoadStockTemplate(t *testing.T) {
+	t.Parallel()
+
 	text, source, ok := prompt.LoadStockTemplate(prompt.HookFinishUnresolved, "files")
 	if !ok || text == "" || source != "stock:on_finish_unresolved.md" {
 		t.Fatalf("LoadStockTemplate = %q %q %v", text, source, ok)
@@ -32,6 +36,8 @@ func TestLoadStockTemplate(t *testing.T) {
 }
 
 func TestInstallStoryPrompt(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := prompt.InstallStoryPrompt(dir, false); err != nil {
 		t.Fatal(err)
@@ -46,6 +52,8 @@ func TestInstallStoryPrompt(t *testing.T) {
 }
 
 func TestLoadStockTemplate_StoryGenerate(t *testing.T) {
+	t.Parallel()
+
 	text, source, ok := prompt.LoadStockTemplate(prompt.HookStoryGenerate, "")
 	if !ok || text == "" || source != "stock:on_story_generate.md" {
 		t.Fatalf("LoadStockTemplate = %q %q %v", text, source, ok)

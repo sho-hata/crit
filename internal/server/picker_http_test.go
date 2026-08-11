@@ -10,6 +10,8 @@ import (
 )
 
 func TestHandlePicker_BasicShape(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newTestServer(t)
 	dir := vcs.InitTestRepo(t)
 	sess.RepoRoot = dir
@@ -33,6 +35,8 @@ func TestHandlePicker_BasicShape(t *testing.T) {
 }
 
 func TestHandlePicker_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/picker", strings.NewReader(""))
 	w := httptest.NewRecorder()
@@ -43,6 +47,8 @@ func TestHandlePicker_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandlePicker_StackEntriesIncludeDefaultSHA(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newTestServer(t)
 	dir := vcs.InitTestRepo(t)
 	defaultSHA := vcs.GitRun(t, dir, "rev-parse", "HEAD")
@@ -79,6 +85,8 @@ func TestHandlePicker_StackEntriesIncludeDefaultSHA(t *testing.T) {
 }
 
 func TestHandlePicker_DefaultSHAIsLiteralDefaultBranch(t *testing.T) {
+	t.Parallel()
+
 	s, sess := newTestServer(t)
 	dir := vcs.InitTestRepo(t)
 

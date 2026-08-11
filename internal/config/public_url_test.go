@@ -6,6 +6,8 @@ import (
 )
 
 func TestNormalizePublicURL(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		raw     string
 		want    string
@@ -43,6 +45,8 @@ func TestNormalizePublicURL(t *testing.T) {
 }
 
 func TestPublicURLHost(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		url  string
 		want string

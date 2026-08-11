@@ -7,6 +7,8 @@ import (
 )
 
 func TestResolveLiveCookies_FlagsOnly(t *testing.T) {
+	t.Parallel()
+
 	got, err := resolveLiveCookies([]string{"session=abc", "other=def"}, "", Config{}, "")
 	if err != nil {
 		t.Fatalf("resolveLiveCookies: %v", err)
@@ -18,6 +20,8 @@ func TestResolveLiveCookies_FlagsOnly(t *testing.T) {
 }
 
 func TestResolveLiveCookies_ConfigAndFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cookies.txt")
 	if err := os.WriteFile(path, []byte("from_file=1\n"), 0o600); err != nil {
@@ -35,6 +39,8 @@ func TestResolveLiveCookies_ConfigAndFile(t *testing.T) {
 }
 
 func TestResolveLiveCookies_FlagFileOverridesConfigFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	flagPath := filepath.Join(dir, "flag.txt")
 	cfgPath := filepath.Join(dir, "cfg.txt")
@@ -55,6 +61,8 @@ func TestResolveLiveCookies_FlagFileOverridesConfigFile(t *testing.T) {
 }
 
 func TestReadLiveCookieFile_Netscape(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "jar.txt")
 	content := "# Netscape HTTP Cookie File\n" +
@@ -72,6 +80,8 @@ func TestReadLiveCookieFile_Netscape(t *testing.T) {
 }
 
 func TestResolveLiveCookies_ProjectRelativeCookieFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cookiePath := filepath.Join(dir, ".crit", "live-cookies.txt")
 	if err := os.MkdirAll(filepath.Dir(cookiePath), 0o700); err != nil {
@@ -91,7 +101,11 @@ func TestResolveLiveCookies_ProjectRelativeCookieFile(t *testing.T) {
 }
 
 func TestResolveCookieFilePath(t *testing.T) {
+	t.Parallel()
+
 	t.Run("absolute unchanged", func(t *testing.T) {
+		t.Parallel()
+
 		abs := filepath.Join(t.TempDir(), "cookies.txt")
 		got := resolveCookieFilePath(abs, filepath.Join(t.TempDir(), "repo"))
 		if got != abs {
@@ -99,6 +113,8 @@ func TestResolveCookieFilePath(t *testing.T) {
 		}
 	})
 	t.Run("relative joins config dir", func(t *testing.T) {
+		t.Parallel()
+
 		got := resolveCookieFilePath(".crit/live-cookies.txt", "/repo")
 		want := filepath.Join("/repo", ".crit/live-cookies.txt")
 		if got != want {
@@ -106,6 +122,8 @@ func TestResolveCookieFilePath(t *testing.T) {
 		}
 	})
 	t.Run("empty config dir leaves relative", func(t *testing.T) {
+		t.Parallel()
+
 		got := resolveCookieFilePath("cookies.txt", "")
 		if got != "cookies.txt" {
 			t.Fatalf("got %q", got)
@@ -114,6 +132,8 @@ func TestResolveCookieFilePath(t *testing.T) {
 }
 
 func TestJoinCookieHeader_SkipsEmptyParts(t *testing.T) {
+	t.Parallel()
+
 	got := joinCookieHeader([]string{" a=1 ", "", "  ", "b=2"})
 	if got != "a=1; b=2" {
 		t.Fatalf("got %q", got)
@@ -121,6 +141,8 @@ func TestJoinCookieHeader_SkipsEmptyParts(t *testing.T) {
 }
 
 func TestReadLiveCookieFile_Missing(t *testing.T) {
+	t.Parallel()
+
 	_, err := readLiveCookieFile(filepath.Join(t.TempDir(), "nope.txt"))
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -128,6 +150,8 @@ func TestReadLiveCookieFile_Missing(t *testing.T) {
 }
 
 func TestReadLiveCookieFile_RawMultiLine(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "cookies.txt")
 	if err := os.WriteFile(path, []byte("a=1\nb=2\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -142,6 +166,8 @@ func TestReadLiveCookieFile_RawMultiLine(t *testing.T) {
 }
 
 func TestParseNetscapeCookieLine_Invalid(t *testing.T) {
+	t.Parallel()
+
 	if _, _, ok := parseNetscapeCookieLine("not-a-jar-line"); ok {
 		t.Fatal("expected false for non-netscape line")
 	}
@@ -151,6 +177,8 @@ func TestParseNetscapeCookieLine_Invalid(t *testing.T) {
 }
 
 func TestStringSliceFlag_SetAndString(t *testing.T) {
+	t.Parallel()
+
 	var f stringSliceFlag
 	if err := f.Set("a=1"); err != nil {
 		t.Fatal(err)
@@ -164,6 +192,8 @@ func TestStringSliceFlag_SetAndString(t *testing.T) {
 }
 
 func TestResolveLiveCookies_MissingFile(t *testing.T) {
+	t.Parallel()
+
 	_, err := resolveLiveCookies(nil, filepath.Join(t.TempDir(), "missing.txt"), Config{}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected error")

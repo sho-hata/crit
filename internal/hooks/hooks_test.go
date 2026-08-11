@@ -14,6 +14,8 @@ import (
 )
 
 func TestFilenames(t *testing.T) {
+	t.Parallel()
+
 	got := hooks.Filenames(prompt.HookFinishUnresolved, "diff")
 	want := []string{"on_finish_unresolved.diff.sh", "on_finish_unresolved.sh"}
 	if len(got) != len(want) {
@@ -27,6 +29,8 @@ func TestFilenames(t *testing.T) {
 }
 
 func TestLoadCommand_Inline(t *testing.T) {
+	t.Parallel()
+
 	ec, err := hooks.LoadCommand("inline:echo hi", "/tmp")
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +41,8 @@ func TestLoadCommand_Inline(t *testing.T) {
 }
 
 func TestLoadCommand_FileRelative(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	script := filepath.Join(dir, "myhook.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -52,18 +58,24 @@ func TestLoadCommand_FileRelative(t *testing.T) {
 }
 
 func TestLoadCommand_BadPrefix(t *testing.T) {
+	t.Parallel()
+
 	if _, err := hooks.LoadCommand("echo hi", "/tmp"); err == nil {
 		t.Fatal("expected error for missing prefix")
 	}
 }
 
 func TestLoadCommand_FileMissing(t *testing.T) {
+	t.Parallel()
+
 	if _, err := hooks.LoadCommand("file:nope.sh", t.TempDir()); err == nil {
 		t.Fatal("expected error for missing script")
 	}
 }
 
 func TestResolveFinishCommand_GlobalConfig(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	global := map[string]string{"on_finish_approved": "inline:echo approved"}
 	ec, err := hooks.ResolveFinishCommand(global, nil, "/unused", home, prompt.HookFinishApproved, "diff", true)
@@ -82,6 +94,8 @@ func TestResolveFinishCommand_GlobalConfig(t *testing.T) {
 }
 
 func TestResolveFinishCommand_ProjectOverridesGlobal(t *testing.T) {
+	t.Parallel()
+
 	global := map[string]string{"on_finish_approved": "inline:global"}
 	project := map[string]string{"on_finish_approved": "inline:project"}
 	ec, err := hooks.ResolveFinishCommand(global, project, "/unused", t.TempDir(), prompt.HookFinishApproved, "", true)
@@ -94,6 +108,8 @@ func TestResolveFinishCommand_ProjectOverridesGlobal(t *testing.T) {
 }
 
 func TestResolveFinishCommand_ModeSpecificKey(t *testing.T) {
+	t.Parallel()
+
 	global := map[string]string{
 		"on_finish_unresolved":      "inline:generic",
 		"on_finish_unresolved:diff": "inline:diff",
@@ -108,6 +124,8 @@ func TestResolveFinishCommand_ModeSpecificKey(t *testing.T) {
 }
 
 func TestResolveFinishCommand_DiscoveredFileProject(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	hooksDir := filepath.Join(dir, ".crit", "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
@@ -130,6 +148,8 @@ func TestResolveFinishCommand_DiscoveredFileProject(t *testing.T) {
 }
 
 func TestResolveFinishCommand_ProjectBlockedWhenUntrusted(t *testing.T) {
+	t.Parallel()
+
 	project := map[string]string{"on_finish_approved": "inline:project"}
 	ec, err := hooks.ResolveFinishCommand(nil, project, "/unused", t.TempDir(), prompt.HookFinishApproved, "", false)
 	if err != nil {
@@ -141,6 +161,8 @@ func TestResolveFinishCommand_ProjectBlockedWhenUntrusted(t *testing.T) {
 }
 
 func TestResolveFinishCommand_None(t *testing.T) {
+	t.Parallel()
+
 	ec, err := hooks.ResolveFinishCommand(nil, nil, t.TempDir(), t.TempDir(), prompt.HookFinishApproved, "", true)
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +173,8 @@ func TestResolveFinishCommand_None(t *testing.T) {
 }
 
 func TestRun_InlineWritesStdoutStdinEnv(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("inline sh -c hook tested on unix")
 	}
@@ -180,6 +204,8 @@ func TestRun_InlineWritesStdoutStdinEnv(t *testing.T) {
 }
 
 func TestRun_FileHookShebang(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("file shebang hook tested on unix")
 	}
@@ -207,6 +233,8 @@ func TestRun_FileHookShebang(t *testing.T) {
 }
 
 func TestRun_NonZeroExitReturnsError(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("non-zero exit hook tested on unix")
 	}
@@ -221,6 +249,8 @@ func TestRun_NonZeroExitReturnsError(t *testing.T) {
 }
 
 func TestRun_Timeout(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("timeout hook tested on unix")
 	}
@@ -235,6 +265,8 @@ func TestRun_Timeout(t *testing.T) {
 }
 
 func TestEnvMapAndJSONPayload(t *testing.T) {
+	t.Parallel()
+
 	ctx := prompt.Context{
 		ReviewPath:        "/tmp/r.json",
 		SessionKey:        "sk1",
@@ -265,6 +297,8 @@ func TestEnvMapAndJSONPayload(t *testing.T) {
 }
 
 func TestEnvMapAndJSONPayload_WithSessionStats(t *testing.T) {
+	t.Parallel()
+
 	ctx := prompt.Context{
 		ReviewPath: "/tmp/r.json",
 		SessionKey: "sk1",
@@ -299,6 +333,8 @@ func TestEnvMapAndJSONPayload_WithSessionStats(t *testing.T) {
 }
 
 func TestResolveFinishCommand_GlobalDiscoveredFile(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	hooksDir := filepath.Join(home, ".crit", "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
@@ -321,6 +357,8 @@ func TestResolveFinishCommand_GlobalDiscoveredFile(t *testing.T) {
 }
 
 func TestResolveFinishCommand_ModeSpecificDiscoveredWins(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	hooksDir := filepath.Join(dir, ".crit", "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
@@ -346,6 +384,8 @@ func TestResolveFinishCommand_ModeSpecificDiscoveredWins(t *testing.T) {
 }
 
 func TestResolveFinishCommand_ProjectBlockedFallsBackToGlobal(t *testing.T) {
+	t.Parallel()
+
 	global := map[string]string{"on_finish_approved": "inline:global"}
 	project := map[string]string{"on_finish_approved": "inline:project"}
 	ec, err := hooks.ResolveFinishCommand(global, project, "/unused", t.TempDir(), prompt.HookFinishApproved, "", false)
@@ -358,6 +398,8 @@ func TestResolveFinishCommand_ProjectBlockedFallsBackToGlobal(t *testing.T) {
 }
 
 func TestResolveFinishCommand_LoadCommandError(t *testing.T) {
+	t.Parallel()
+
 	project := map[string]string{"on_finish_approved": "file:missing.sh"}
 	_, err := hooks.ResolveFinishCommand(nil, project, t.TempDir(), t.TempDir(), prompt.HookFinishApproved, "", true)
 	if err == nil {

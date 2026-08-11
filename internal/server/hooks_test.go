@@ -286,6 +286,8 @@ func TestHandleFinish_HookFailureStillReturns200(t *testing.T) {
 // TestHandleConfig_ProjectHookSources lists hook config and discovered scripts
 // in the trust payload shown before the user trusts a project.
 func TestHandleConfig_ProjectHookSources(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	dir := session.RepoRoot
 	hooksDir := filepath.Join(dir, ".crit", "hooks")

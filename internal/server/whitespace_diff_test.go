@@ -14,6 +14,8 @@ import (
 // returns the whitespace-ignored hunks for a code file while the default
 // (no ?w) path returns the raw cached diff.
 func TestHandleFileDiff_IgnoreWhitespace(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestGitRepo(t)
 	writeGitFile(t, filepath.Join(dir, "code.go"), "func main() {\nreturn\n}\n")
 	gitCommit(t, dir, "add", "code.go")

@@ -42,6 +42,8 @@ func TestPrintConfigHelp(t *testing.T) {
 }
 
 func TestRunConfig_HelpFlagIsNoOp(t *testing.T) {
+	t.Parallel()
+
 	// Help is handled by the command registry helpFn, not RunConfig.
 	if err := RunConfig([]string{"--help"}); err != nil {
 		t.Fatal(err)

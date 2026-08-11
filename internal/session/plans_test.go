@@ -11,6 +11,8 @@ import (
 )
 
 func TestResolveSlug_FromHeading(t *testing.T) {
+	t.Parallel()
+
 	content := []byte("# Auth Flow Design\n\nSome content here")
 	slug := resolveSlug(content)
 	date := time.Now().Format("2006-01-02")
@@ -21,6 +23,8 @@ func TestResolveSlug_FromHeading(t *testing.T) {
 }
 
 func TestResolveSlug_NoHeading(t *testing.T) {
+	t.Parallel()
+
 	content := []byte("No heading here, just text")
 	slug := resolveSlug(content)
 	if !strings.HasPrefix(slug, "plan-") {
@@ -29,6 +33,8 @@ func TestResolveSlug_NoHeading(t *testing.T) {
 }
 
 func TestResolveSlug_SameHeadingSameDay(t *testing.T) {
+	t.Parallel()
+
 	content := []byte("# My Plan\n\nv1")
 	slug1 := resolveSlug(content)
 	slug2 := resolveSlug([]byte("# My Plan\n\nv2 with changes"))
@@ -38,6 +44,8 @@ func TestResolveSlug_SameHeadingSameDay(t *testing.T) {
 }
 
 func TestPlanMode_RoundTrip(t *testing.T) {
+	t.Parallel()
+
 	storageDir := t.TempDir()
 
 	// 1. Save initial plan
@@ -100,6 +108,8 @@ func TestPlanMode_RoundTrip(t *testing.T) {
 }
 
 func TestPlanStorageDir(t *testing.T) {
+	t.Parallel()
+
 	dir, err := planStorageDir("auth-flow")
 	if err != nil {
 		t.Fatalf("planStorageDir: %v", err)
@@ -128,6 +138,8 @@ func TestPlanSessionsFile_NoHome(t *testing.T) {
 }
 
 func TestSavePlanVersion_FirstVersion(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	content := []byte("# My Plan\n\nStep 1: Do the thing")
 
@@ -157,6 +169,8 @@ func TestSavePlanVersion_FirstVersion(t *testing.T) {
 }
 
 func TestSavePlanVersion_MultipleVersions(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	ver1, _ := savePlanVersion(dir, []byte("version 1"))
@@ -186,6 +200,8 @@ func TestSavePlanVersion_MultipleVersions(t *testing.T) {
 }
 
 func TestSavePlanVersion_DuplicateContent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	ver1, _ := savePlanVersion(dir, []byte("same content"))
@@ -197,6 +213,8 @@ func TestSavePlanVersion_DuplicateContent(t *testing.T) {
 }
 
 func TestLatestPlanVersion_EmptyDir(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	ver := latestPlanVersion(dir)
 	if ver != 0 {
@@ -205,6 +223,8 @@ func TestLatestPlanVersion_EmptyDir(t *testing.T) {
 }
 
 func TestPlanSessionKey(t *testing.T) {
+	t.Parallel()
+
 	key1 := planSessionKey("/home/user/project", "auth-flow")
 	key2 := planSessionKey("/home/user/project", "auth-flow")
 	key3 := planSessionKey("/home/user/project", "other")
@@ -225,6 +245,8 @@ func TestPlanSessionKey(t *testing.T) {
 }
 
 func TestBuildPlanDaemonArgs(t *testing.T) {
+	t.Parallel()
+
 	args := BuildPlanDaemonArgs("/tmp/plans/auth-flow/current.md", "/tmp/plans/auth-flow", "auth-flow", PlanDaemonFlags{Port: 3000})
 
 	found := false
@@ -249,6 +271,8 @@ func TestBuildPlanDaemonArgs(t *testing.T) {
 }
 
 func TestBuildPlanDaemonArgs_PublicURL(t *testing.T) {
+	t.Parallel()
+
 	args := BuildPlanDaemonArgs("/tmp/current.md", "/tmp/plans", "slug", PlanDaemonFlags{
 		PublicURL: "https://mymac.ts.net",
 	})
@@ -268,6 +292,8 @@ func TestBuildPlanDaemonArgs_PublicURL(t *testing.T) {
 }
 
 func TestApplyPlanOverrides(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	content := "# My Plan\n\nDo things"
 	path := filepath.Join(dir, "current.md")
@@ -443,6 +469,8 @@ func TestSavePlanSlug_ConcurrentWrites(t *testing.T) {
 }
 
 func TestSlugify(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input string
 		want  string
@@ -455,6 +483,8 @@ func TestSlugify(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+
 			got := slugify(tt.input)
 			if got != tt.want {
 				t.Errorf("slugify(%q) = %q, want %q", tt.input, got, tt.want)

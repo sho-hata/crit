@@ -62,6 +62,8 @@ func newTestServer(t *testing.T) (*Server, *Session) {
 }
 
 func TestGetSession(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/session", nil)
 	w := httptest.NewRecorder()
@@ -86,6 +88,8 @@ func TestGetSession(t *testing.T) {
 }
 
 func TestHostCheck(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		listenHost string
@@ -112,6 +116,8 @@ func TestHostCheck(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			s, _ := newTestServer(t)
 			s.SetListenHost(tt.listenHost)
 			if strings.Contains(tt.name, "tailscale") {
@@ -134,7 +140,11 @@ func TestHostCheck(t *testing.T) {
 // the offending Host and point at --public-url (or say it isn't set), so a
 // reverse-proxy misconfig doesn't look like a silent networking failure.
 func TestHostCheckForbiddenMessage(t *testing.T) {
+	t.Parallel()
+
 	t.Run("no public-url configured", func(t *testing.T) {
+		t.Parallel()
+
 		s, _ := newTestServer(t)
 		s.SetListenHost("127.0.0.1")
 		req := httptest.NewRequest("GET", "/api/session", nil)
@@ -156,6 +166,8 @@ func TestHostCheckForbiddenMessage(t *testing.T) {
 		}
 	})
 	t.Run("public-url set but Host mismatches", func(t *testing.T) {
+		t.Parallel()
+
 		s, _ := newTestServer(t)
 		s.SetListenHost("127.0.0.1")
 		s.SetPublicURL("https://correct.ts.net")
@@ -179,6 +191,8 @@ func TestHostCheckForbiddenMessage(t *testing.T) {
 // TestSecFetchSiteForbiddenMessage pins #788 for the CSRF gate: rejected
 // cross-site POSTs must name Sec-Fetch-Site rather than a bare "Forbidden".
 func TestSecFetchSiteForbiddenMessage(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	s.SetListenHost("127.0.0.1")
 	req := httptest.NewRequest(http.MethodPost, "/api/file/comments?path=test.md", strings.NewReader(`{}`))
@@ -202,6 +216,8 @@ func TestSecFetchSiteForbiddenMessage(t *testing.T) {
 }
 
 func TestIsLoopbackHost(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		host string
 		want bool
@@ -226,6 +242,8 @@ func TestIsLoopbackHost(t *testing.T) {
 // arms the DNS-rebinding guard. This catches regressions where the SetListenHost
 // call is dropped from the production wiring path.
 func TestHostCheckDefaultWiring(t *testing.T) {
+	t.Parallel()
+
 	// Simulate the production path: no --host flag, no CRIT_HOST env, default config.
 	// resolveHost("", "127.0.0.1") is what applyConfigDefaults produces.
 	effectiveHost := resolveHost("", "127.0.0.1")
@@ -254,6 +272,8 @@ func TestHostCheckDefaultWiring(t *testing.T) {
 }
 
 func TestCheckSecFetchSite(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		method string
@@ -278,6 +298,8 @@ func TestCheckSecFetchSite(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			req := httptest.NewRequest(tt.method, "/api/finish", nil)
 			if tt.site != "" {
 				req.Header.Set("Sec-Fetch-Site", tt.site)
@@ -294,6 +316,8 @@ func TestCheckSecFetchSite(t *testing.T) {
 // still be rejected when Sec-Fetch-Site is cross-site. The comment must not
 // be written.
 func TestSecFetchSiteCSRF_RejectsCrossSiteCommentPOST(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	s.SetListenHost("127.0.0.1")
 	before := len(session.GetComments("test.md"))
@@ -314,6 +338,8 @@ func TestSecFetchSiteCSRF_RejectsCrossSiteCommentPOST(t *testing.T) {
 }
 
 func TestSecFetchSiteCSRF_AllowsSameOriginAndCLI(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	s.SetListenHost("127.0.0.1")
 
@@ -342,6 +368,8 @@ func TestSecFetchSiteCSRF_AllowsSameOriginAndCLI(t *testing.T) {
 }
 
 func TestSetPublicURL(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	s.SetPublicURL("https://mymac.ts.net/design")
 	s.SetListenHost("127.0.0.1")
@@ -365,6 +393,8 @@ func TestSetPublicURL(t *testing.T) {
 }
 
 func TestGetSession_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/session", nil)
 	w := httptest.NewRecorder()
@@ -375,6 +405,8 @@ func TestGetSession_MethodNotAllowed(t *testing.T) {
 }
 
 func TestGetFile(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -396,6 +428,8 @@ func TestGetFile(t *testing.T) {
 }
 
 func TestGetFile_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file?path=nonexistent.go", nil)
 	w := httptest.NewRecorder()
@@ -406,6 +440,8 @@ func TestGetFile_NotFound(t *testing.T) {
 }
 
 func TestGetFile_MissingPath(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file", nil)
 	w := httptest.NewRecorder()
@@ -416,6 +452,8 @@ func TestGetFile_MissingPath(t *testing.T) {
 }
 
 func TestPostFileComment(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	body := `{"start_line":1,"end_line":2,"body":"Fix this"}`
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", strings.NewReader(body))
@@ -447,6 +485,8 @@ func TestPostFileComment(t *testing.T) {
 // the issue where Instance 5 (range mode) seeded comments rendered with the
 // "outdated" badge on first page load.
 func TestPostFileComment_NormalizesSide(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -461,6 +501,8 @@ func TestPostFileComment_NormalizesSide(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			s, session := newTestServer(t)
 			body := `{"start_line":1,"end_line":1,"side":"` + tc.input + `","body":"x"}`
 			req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", strings.NewReader(body))
@@ -489,6 +531,8 @@ func TestPostFileComment_NormalizesSide(t *testing.T) {
 }
 
 func TestPostFileComment_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	body := `{"start_line":1,"end_line":1,"body":""}`
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", strings.NewReader(body))
@@ -500,6 +544,8 @@ func TestPostFileComment_EmptyBody(t *testing.T) {
 }
 
 func TestPostFileComment_InvalidLineRange(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	tests := []struct {
 		name string
@@ -521,6 +567,8 @@ func TestPostFileComment_InvalidLineRange(t *testing.T) {
 }
 
 func TestPostFileComment_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", strings.NewReader("not json"))
 	w := httptest.NewRecorder()
@@ -531,6 +579,8 @@ func TestPostFileComment_InvalidJSON(t *testing.T) {
 }
 
 func TestPostFileComment_FileNotFound(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	body := `{"start_line":1,"end_line":1,"body":"test"}`
 	req := httptest.NewRequest("POST", "/api/file/comments?path=nonexistent.go", strings.NewReader(body))
@@ -542,6 +592,8 @@ func TestPostFileComment_FileNotFound(t *testing.T) {
 }
 
 func TestGetFileComments(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.AddComment("test.md", 1, 1, "", "one", "", "", "")
 	session.AddComment("test.md", 2, 2, "", "two", "", "", "")
@@ -563,6 +615,8 @@ func TestGetFileComments(t *testing.T) {
 }
 
 func TestAPIUpdateComment(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -580,6 +634,8 @@ func TestAPIUpdateComment(t *testing.T) {
 }
 
 func TestAPIUpdateComment_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	body := `{"body":"x"}`
 	req := httptest.NewRequest("PUT", "/api/comment/nonexistent?path=test.md", strings.NewReader(body))
@@ -591,6 +647,8 @@ func TestAPIUpdateComment_NotFound(t *testing.T) {
 }
 
 func TestAPIDeleteComment(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "to delete", "", "", "")
 
@@ -607,6 +665,8 @@ func TestAPIDeleteComment(t *testing.T) {
 }
 
 func TestAPIDeleteComment_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("DELETE", "/api/comment/nonexistent?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -617,6 +677,8 @@ func TestAPIDeleteComment_NotFound(t *testing.T) {
 }
 
 func TestClearAllComments(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.AddComment("test.md", 1, 1, "", "comment 1", "", "", "")
 	session.AddComment("test.md", 2, 2, "", "comment 2", "", "", "")
@@ -638,6 +700,8 @@ func TestClearAllComments(t *testing.T) {
 }
 
 func TestReviewComments_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("PATCH", "/api/comments", nil)
 	w := httptest.NewRecorder()
@@ -648,6 +712,8 @@ func TestReviewComments_MethodNotAllowed(t *testing.T) {
 }
 
 func TestFinish(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.AddComment("test.md", 1, 1, "", "note", "", "", "")
 
@@ -674,6 +740,8 @@ func TestFinish(t *testing.T) {
 }
 
 func TestFinish_NoComments(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/finish", nil)
 	w := httptest.NewRecorder()
@@ -692,6 +760,8 @@ func TestFinish_NoComments(t *testing.T) {
 }
 
 func TestFinish_IncludesStructuredComments(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 
@@ -747,6 +817,8 @@ func TestFinish_IncludesStructuredComments(t *testing.T) {
 }
 
 func TestFinish_PromptApproved(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	s.cliArgs = []string{"preview", "/tmp/page.html"}
 
@@ -771,6 +843,8 @@ func TestFinish_PromptApproved(t *testing.T) {
 }
 
 func TestFinish_PromptIncludesFileArgs(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.CLIArgs = []string{"test.md"}
 	session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
@@ -793,6 +867,8 @@ func TestFinish_PromptIncludesFileArgs(t *testing.T) {
 }
 
 func TestFinish_PromptBareGitMode(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.Mode = "git"
 	session.SessionKey = ""
@@ -814,6 +890,8 @@ func TestFinish_PromptBareGitMode(t *testing.T) {
 }
 
 func TestFinish_UnresolvedReturnsPromptWithInstructions(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 
@@ -955,6 +1033,8 @@ func TestReviewCycle_NextCommand(t *testing.T) {
 // ===== Path Traversal Tests =====
 
 func TestHandleFiles_PathTraversal(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	tests := []struct {
 		name string
@@ -978,6 +1058,8 @@ func TestHandleFiles_PathTraversal(t *testing.T) {
 }
 
 func TestHandleFiles_SymlinkTraversal(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 
 	// Create a file outside the repo root
@@ -1003,6 +1085,8 @@ func TestHandleFiles_SymlinkTraversal(t *testing.T) {
 }
 
 func TestHandleFiles_Subdirectory(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 
 	subdir := filepath.Join(session.RepoRoot, "images")
@@ -1027,6 +1111,8 @@ func TestHandleFiles_Subdirectory(t *testing.T) {
 }
 
 func TestHandleFiles_ValidFile(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 
 	imgPath := filepath.Join(session.RepoRoot, "image.png")
@@ -1047,6 +1133,8 @@ func TestHandleFiles_ValidFile(t *testing.T) {
 }
 
 func TestHandleFiles_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/files/test.md", nil)
 	w := httptest.NewRecorder()
@@ -1057,6 +1145,8 @@ func TestHandleFiles_MethodNotAllowed(t *testing.T) {
 }
 
 func TestGetConfig(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	s.currentVersion = "v1.2.3"
 
@@ -1080,6 +1170,8 @@ func TestGetConfig(t *testing.T) {
 }
 
 func TestCheckForUpdates(t *testing.T) {
+	t.Parallel()
+
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/sho-hata/crit/releases/latest" {
 			http.NotFound(w, r)
@@ -1117,6 +1209,8 @@ func TestCheckForUpdates(t *testing.T) {
 }
 
 func TestCheckForUpdates_SkipsDevVersion(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	s.currentVersion = "dev"
 	s.CheckForUpdates()
@@ -1130,6 +1224,8 @@ func TestCheckForUpdates_SkipsDevVersion(t *testing.T) {
 }
 
 func TestCheckForUpdates_HandlesServerError(t *testing.T) {
+	t.Parallel()
+
 	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -1149,6 +1245,8 @@ func TestCheckForUpdates_HandlesServerError(t *testing.T) {
 }
 
 func TestGetConfig_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -1159,6 +1257,8 @@ func TestGetConfig_MethodNotAllowed(t *testing.T) {
 }
 
 func TestRoundComplete(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 
 	req := httptest.NewRequest("POST", "/api/round-complete", nil)
@@ -1178,6 +1278,8 @@ func TestRoundComplete(t *testing.T) {
 }
 
 func TestRoundComplete_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/round-complete", nil)
 	w := httptest.NewRecorder()
@@ -1188,6 +1290,8 @@ func TestRoundComplete_MethodNotAllowed(t *testing.T) {
 }
 
 func TestGetFileDiff_CodeFile(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	// Add a code file with diff hunks
 	session.Lock()
@@ -1223,6 +1327,8 @@ func TestGetFileDiff_CodeFile(t *testing.T) {
 }
 
 func TestGetFileDiff_MarkdownFilesMode(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	// Set previous content for the markdown file
 	session.Lock()
@@ -1249,6 +1355,8 @@ func TestGetFileDiff_MarkdownFilesMode(t *testing.T) {
 }
 
 func TestGetFileDiff_NotFound(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/diff?path=nonexistent.go", nil)
 	w := httptest.NewRecorder()
@@ -1259,6 +1367,8 @@ func TestGetFileDiff_NotFound(t *testing.T) {
 }
 
 func TestGetFileDiff_MissingPath(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/diff", nil)
 	w := httptest.NewRecorder()
@@ -1269,6 +1379,8 @@ func TestGetFileDiff_MissingPath(t *testing.T) {
 }
 
 func TestCommentByID_MissingPath(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("PUT", "/api/comment/c1", strings.NewReader(`{"body":"x"}`))
 	w := httptest.NewRecorder()
@@ -1281,6 +1393,8 @@ func TestCommentByID_MissingPath(t *testing.T) {
 // ===== Scope Query Parameter Tests =====
 
 func TestGetSession_IncludesAvailableScopes(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/session", nil)
 	w := httptest.NewRecorder()
@@ -1312,6 +1426,8 @@ func TestGetSession_IncludesAvailableScopes(t *testing.T) {
 }
 
 func TestGetSession_ScopeAll_SameAsNoScope(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 
 	// No scope
@@ -1344,6 +1460,8 @@ func TestGetSession_ScopeAll_SameAsNoScope(t *testing.T) {
 }
 
 func TestGetFileDiff_ScopeAll_SameAsNoScope(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	// Add a code file with diff hunks
 	session.Lock()
@@ -1379,6 +1497,8 @@ func TestGetFileDiff_ScopeAll_SameAsNoScope(t *testing.T) {
 }
 
 func TestGetFileDiff_ScopeStaged_ValidResponse(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	// Add a code file with diff hunks to the session
 	session.Lock()
@@ -1417,6 +1537,8 @@ func TestGetFileDiff_ScopeStaged_ValidResponse(t *testing.T) {
 }
 
 func TestGetFileDiff_ScopeNotFound(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/diff?path=nonexistent.go&scope=staged", nil)
 	w := httptest.NewRecorder()
@@ -1431,6 +1553,8 @@ func TestGetFileDiff_ScopeNotFound(t *testing.T) {
 // session's original file list. The /api/file endpoint should fall back to
 // reading from disk instead of returning 404 (which caused the frontend to hang).
 func TestGetFile_NotInSession_FallbackToDisk(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 
 	// Create a file on disk that is NOT in session.Files
@@ -1474,6 +1598,8 @@ func TestGetFile_NotInSession_FallbackToDisk(t *testing.T) {
 // TestGetFile_NotInSession_PathTraversal verifies the disk fallback
 // still blocks path traversal attempts.
 func TestGetFile_NotInSession_PathTraversal(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 
 	for _, path := range []string{"../etc/passwd", "foo/../../etc/passwd"} {
@@ -1490,6 +1616,8 @@ func TestGetFile_NotInSession_PathTraversal(t *testing.T) {
 // TestGetFile_NotInSession_SymlinkTraversal verifies the disk fallback
 // resolves symlinks and refuses paths that escape the repo root.
 func TestGetFile_NotInSession_SymlinkTraversal(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 
 	outsideDir := t.TempDir()
@@ -1513,6 +1641,8 @@ func TestGetFile_NotInSession_SymlinkTraversal(t *testing.T) {
 }
 
 func TestHandleFinish_PromptIncludesAuthor(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	session.AddComment(session.Files[0].Path, 1, 1, "", "fix this", "", "", "")
 
@@ -1624,6 +1754,8 @@ func TestWaitForEventIgnoresOtherEvents(t *testing.T) {
 }
 
 func TestWaitForEventRespectsCancel(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -1639,6 +1771,8 @@ func TestWaitForEventRespectsCancel(t *testing.T) {
 }
 
 func TestWaitForEvent_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/wait-for-event", nil)
 	w := httptest.NewRecorder()
@@ -1651,6 +1785,8 @@ func TestWaitForEvent_MethodNotAllowed(t *testing.T) {
 // TestGetFile_NotInSession_NotOnDisk verifies that files not in session
 // AND not on disk still return 404.
 func TestGetFile_NotInSession_NotOnDisk(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 
 	req := httptest.NewRequest("GET", "/api/file?path=doesnotexist.go", nil)
@@ -1665,6 +1801,8 @@ func TestGetFile_NotInSession_NotOnDisk(t *testing.T) {
 // ===== File List Endpoint Tests =====
 
 func TestGetFilesList(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.WriteFile(t, filepath.Join(dir, "src/main.go"), "package main")
 	testutil.Git(t, dir, "add", ".")
@@ -1726,6 +1864,8 @@ func TestGetFilesList(t *testing.T) {
 }
 
 func TestGetFilesList_RespectsIgnorePatterns(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main")
 	testutil.WriteFile(t, filepath.Join(dir, "debug.log"), "log data")
@@ -1760,6 +1900,8 @@ func TestGetFilesList_RespectsIgnorePatterns(t *testing.T) {
 }
 
 func TestGetFilesList_FilesMode(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(dir, "app.js"), "console.log('hi')")
 	testutil.WriteFile(t, filepath.Join(dir, "lib/util.js"), "module.exports = {}")
@@ -1804,6 +1946,8 @@ func TestGetFilesList_FilesMode(t *testing.T) {
 }
 
 func TestHealthEndpoint(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 
 	req := httptest.NewRequest("GET", "/api/health", nil)
@@ -1820,6 +1964,8 @@ func TestHealthEndpoint(t *testing.T) {
 // review_round from /api/session instead. Lock the contract so future
 // frontend pulls on the wrong verb fail loudly.
 func TestReviewCycle_GETMethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/api/review-cycle", nil)
@@ -1856,6 +2002,8 @@ func TestReviewCycleFirstRound(t *testing.T) {
 }
 
 func TestGetFilesList_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	session := &Session{
 		Files: []*FileEntry{},
 	}
@@ -1871,6 +2019,8 @@ func TestGetFilesList_MethodNotAllowed(t *testing.T) {
 }
 
 func TestSessionIncludesReviewComments(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newTestServer(t)
 	sess.AddReviewComment("general note", "", "")
 	req := httptest.NewRequest("GET", "/api/session", nil)
@@ -1888,6 +2038,8 @@ func TestSessionIncludesReviewComments(t *testing.T) {
 }
 
 func TestFinishPromptIncludesAllScopesInComments(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newTestServer(t)
 	sess.AddReviewComment("address all issues", "", "")
 	if _, ok := sess.AddFileComment("test.md", "restructure this file", "", ""); !ok {
@@ -1928,6 +2080,8 @@ func contains(ss []string, want string) bool {
 }
 
 func TestReviewCommentsAPI(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 
 	// POST — create review comment
@@ -1985,6 +2139,8 @@ func TestReviewCommentsAPI(t *testing.T) {
 }
 
 func TestReviewCommentRepliesAPI(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 
 	// Create a review comment first
@@ -2048,6 +2204,8 @@ func TestReviewCommentRepliesAPI(t *testing.T) {
 }
 
 func TestReviewCommentReplyNotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 
 	// POST reply to nonexistent comment
@@ -2061,6 +2219,8 @@ func TestReviewCommentReplyNotFound(t *testing.T) {
 }
 
 func TestPostFileScopedComment(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "this file needs restructuring", "scope": "file"}`)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", body)
@@ -2080,6 +2240,8 @@ func TestPostFileScopedComment(t *testing.T) {
 }
 
 func TestPostFileScopedCommentRequiresBody(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"scope": "file"}`)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", body)
@@ -2091,6 +2253,8 @@ func TestPostFileScopedCommentRequiresBody(t *testing.T) {
 }
 
 func TestResolveReviewCommentAPI(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 
 	// Create a review comment
@@ -2143,6 +2307,8 @@ func TestResolveReviewCommentAPI(t *testing.T) {
 }
 
 func TestHandleConfig_AgentCmdEnabled(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -2162,6 +2328,8 @@ func TestHandleConfig_AgentCmdEnabled(t *testing.T) {
 }
 
 func TestHandleConfig_CloseOnApproveAfterMs_OmittedWhenUnset(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	// s.cfg.CloseOnApproveAfterMs is nil by default (zero value Config).
 
@@ -2179,6 +2347,8 @@ func TestHandleConfig_CloseOnApproveAfterMs_OmittedWhenUnset(t *testing.T) {
 }
 
 func TestHandleConfig_CloseOnApproveAfterMs_IncludedWhenSet(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	ms := 2500
 	s.cfg = Config{CloseOnApproveAfterMs: &ms}
@@ -2198,6 +2368,8 @@ func TestHandleConfig_CloseOnApproveAfterMs_IncludedWhenSet(t *testing.T) {
 }
 
 func TestHandleConfig_CloseOnApproveAfterMs_OmittedWhenNegative(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	ms := -1
 	s.cfg = Config{CloseOnApproveAfterMs: &ms}
@@ -2216,6 +2388,8 @@ func TestHandleConfig_CloseOnApproveAfterMs_OmittedWhenNegative(t *testing.T) {
 }
 
 func TestHandleConfig_NoIntegrationCheck(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	s.cfg = Config{NoIntegrationCheck: true}
 
@@ -2242,6 +2416,8 @@ func TestHandleConfig_NoIntegrationCheck(t *testing.T) {
 }
 
 func TestFuzzyScore(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		query   string
@@ -2261,6 +2437,8 @@ func TestFuzzyScore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			score := fuzzyScore(tt.query, tt.text)
 			gotHit := score >= 0
 			if gotHit != tt.wantHit {
@@ -2271,6 +2449,8 @@ func TestFuzzyScore(t *testing.T) {
 }
 
 func TestFuzzyScore_Ranking(t *testing.T) {
+	t.Parallel()
+
 	// Exact prefix match should score higher than scattered match
 	exactScore := fuzzyScore("main", "main.go")
 	scatteredScore := fuzzyScore("main", "middleware/auth_interceptor.go")
@@ -2287,6 +2467,8 @@ func TestFuzzyScore_Ranking(t *testing.T) {
 }
 
 func TestFuzzyFilterPaths(t *testing.T) {
+	t.Parallel()
+
 	paths := []string{
 		"main.go",
 		"server.go",
@@ -2341,6 +2523,8 @@ func TestFuzzyFilterPaths(t *testing.T) {
 	})
 
 	t.Run("nil paths returns empty", func(t *testing.T) {
+		t.Parallel()
+
 		results := fuzzyFilterPaths(nil, "test", 10)
 		if len(results) != 0 {
 			t.Errorf("got %d results, want 0", len(results))
@@ -2349,6 +2533,8 @@ func TestFuzzyFilterPaths(t *testing.T) {
 }
 
 func TestHandleSession_PlanMode(t *testing.T) {
+	t.Parallel()
+
 	session := &Session{
 		Mode:    "plan",
 		PlanDir: "/tmp/test-plan",
@@ -2372,6 +2558,8 @@ func TestHandleSession_PlanMode(t *testing.T) {
 }
 
 func TestReadinessGate_Returns503WhenNotReady(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2398,6 +2586,8 @@ func TestReadinessGate_Returns503WhenNotReady(t *testing.T) {
 }
 
 func TestReadinessGate_HealthAlwaysOK(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2411,6 +2601,8 @@ func TestReadinessGate_HealthAlwaysOK(t *testing.T) {
 }
 
 func TestReadinessGate_Returns200AfterSetSession(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2450,6 +2642,8 @@ func TestReadinessGate_Returns200AfterSetSession(t *testing.T) {
 }
 
 func TestRouteCommentByID(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		trimmed string
@@ -2464,6 +2658,8 @@ func TestRouteCommentByID(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, ok := routeCommentByID(tt.trimmed)
 			if ok != tt.ok {
 				t.Fatalf("ok = %v, want %v", ok, tt.ok)
@@ -2476,6 +2672,8 @@ func TestRouteCommentByID(t *testing.T) {
 }
 
 func TestReadinessGate_Returns500OnInitError(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -2500,6 +2698,8 @@ func TestReadinessGate_Returns500OnInitError(t *testing.T) {
 }
 
 func TestSetPRInfo_AppearsInConfig(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 
 	// Config should have no PR fields before SetPRInfo.
@@ -2545,6 +2745,8 @@ func TestSetPRInfo_AppearsInConfig(t *testing.T) {
 }
 
 func TestSetPRInfo_ConcurrentSafe(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 
 	// Simulate the async pattern: SetSession makes server ready,
@@ -2574,6 +2776,8 @@ func TestSetPRInfo_ConcurrentSafe(t *testing.T) {
 // TestAgentName is in server_agent_test.go (TestAgentName_Codex covers all cases).
 
 func TestFileCommentResolveAPI(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 
@@ -2615,6 +2819,8 @@ func TestFileCommentResolveAPI(t *testing.T) {
 }
 
 func TestFileCommentReplyAPI(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 
@@ -2665,6 +2871,8 @@ func TestFileCommentReplyAPI(t *testing.T) {
 }
 
 func TestFileCommentReplyNotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "reply", "author": "agent"}`)
 	req := httptest.NewRequest("POST", "/api/comment/nonexistent/replies?path=test.md", body)
@@ -2676,6 +2884,8 @@ func TestFileCommentReplyNotFound(t *testing.T) {
 }
 
 func TestAPIUpdateComment_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -2689,6 +2899,8 @@ func TestAPIUpdateComment_EmptyBody(t *testing.T) {
 }
 
 func TestHandleAgentRequest_NotConfigured(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 
@@ -2703,6 +2915,8 @@ func TestHandleAgentRequest_NotConfigured(t *testing.T) {
 }
 
 func TestHandleAgentRequest_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/agent/request", nil)
 	w := httptest.NewRecorder()
@@ -2715,6 +2929,8 @@ func TestHandleAgentRequest_MethodNotAllowed(t *testing.T) {
 // --- handleCommits tests ---
 
 func TestHandleCommits_GET(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 
 	// Session with Mode "files" and no VCS — returns null/nil.
@@ -2737,6 +2953,8 @@ func TestHandleCommits_GET(t *testing.T) {
 }
 
 func TestHandleCommits_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/commits", nil)
 	w := httptest.NewRecorder()
@@ -2747,6 +2965,8 @@ func TestHandleCommits_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleCommits_GitMode(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	// Create a feature branch with a commit.
 	testutil.Git(t, dir, "checkout", "-b", "feature")
@@ -2789,6 +3009,8 @@ func TestHandleCommits_GitMode(t *testing.T) {
 // --- handleBranches tests ---
 
 func TestHandleBranches_NoVCS(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	// Ensure VCS is nil (files mode).
 	session.Lock()
@@ -2812,6 +3034,8 @@ func TestHandleBranches_NoVCS(t *testing.T) {
 }
 
 func TestHandleBranches_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/branches", nil)
 	w := httptest.NewRecorder()
@@ -2822,6 +3046,8 @@ func TestHandleBranches_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleBranches_WithGitVCS(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 
 	session := &Session{
@@ -2861,6 +3087,8 @@ func TestHandleBranches_WithGitVCS(t *testing.T) {
 // --- handleBaseBranch tests ---
 
 func TestHandleBaseBranch_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/base-branch", nil)
 	w := httptest.NewRecorder()
@@ -2871,6 +3099,8 @@ func TestHandleBaseBranch_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleBaseBranch_EmptyBranch(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"branch": ""}`)
 	req := httptest.NewRequest("POST", "/api/base-branch", body)
@@ -2882,6 +3112,8 @@ func TestHandleBaseBranch_EmptyBranch(t *testing.T) {
 }
 
 func TestHandleBaseBranch_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`not json`)
 	req := httptest.NewRequest("POST", "/api/base-branch", body)
@@ -2893,6 +3125,8 @@ func TestHandleBaseBranch_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleEvents_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/events", nil)
 	w := httptest.NewRecorder()
@@ -2946,6 +3180,8 @@ func TestHandleEvents_SSEHeaders(t *testing.T) {
 // --- buildPlanFeedback tests ---
 
 func TestFinish_PlanModeNextCommand(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.Mode = "plan"
 	session.PlanDir = "/tmp/plans/my-feature"
@@ -2975,6 +3211,8 @@ func TestFinish_PlanModeNextCommand(t *testing.T) {
 // --- handleFileCommentResolve tests ---
 
 func TestHandleFileCommentResolve(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "fix this bug", "", "", "")
 
@@ -3005,6 +3243,8 @@ func TestHandleFileCommentResolve(t *testing.T) {
 }
 
 func TestHandleFileCommentResolve_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"resolved": true}`)
 	req := httptest.NewRequest("PUT", "/api/comment/nonexistent/resolve?path=test.md", body)
@@ -3016,6 +3256,8 @@ func TestHandleFileCommentResolve_NotFound(t *testing.T) {
 }
 
 func TestHandleFileCommentResolve_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/comment/c1/resolve?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -3026,6 +3268,8 @@ func TestHandleFileCommentResolve_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleFileCommentResolve_InvalidBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 
@@ -3040,6 +3284,8 @@ func TestHandleFileCommentResolve_InvalidBody(t *testing.T) {
 // --- handleReviewCommentResolve tests ---
 
 func TestHandleReviewCommentResolve(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("general note", "", "")
 
@@ -3069,6 +3315,8 @@ func TestHandleReviewCommentResolve(t *testing.T) {
 }
 
 func TestHandleReviewCommentResolve_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"resolved": true}`)
 	req := httptest.NewRequest("PUT", "/api/review-comment/nonexistent/resolve", body)
@@ -3080,6 +3328,8 @@ func TestHandleReviewCommentResolve_NotFound(t *testing.T) {
 }
 
 func TestHandleReviewCommentResolve_InvalidBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("note", "", "")
 
@@ -3092,6 +3342,8 @@ func TestHandleReviewCommentResolve_InvalidBody(t *testing.T) {
 }
 
 func TestHandleReviewCommentResolve_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/review-comment/c1/resolve", nil)
 	w := httptest.NewRecorder()
@@ -3104,6 +3356,8 @@ func TestHandleReviewCommentResolve_MethodNotAllowed(t *testing.T) {
 // --- handleReviewCommentUpdate tests ---
 
 func TestHandleReviewCommentUpdate_DELETE(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("delete me", "", "")
 
@@ -3122,6 +3376,8 @@ func TestHandleReviewCommentUpdate_DELETE(t *testing.T) {
 }
 
 func TestHandleReviewCommentUpdate_DELETE_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("DELETE", "/api/review-comment/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -3132,6 +3388,8 @@ func TestHandleReviewCommentUpdate_DELETE_NotFound(t *testing.T) {
 }
 
 func TestHandleReviewCommentUpdate_PUT_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "updated"}`)
 	req := httptest.NewRequest("PUT", "/api/review-comment/nonexistent", body)
@@ -3143,6 +3401,8 @@ func TestHandleReviewCommentUpdate_PUT_NotFound(t *testing.T) {
 }
 
 func TestHandleReviewCommentUpdate_PUT_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("original", "", "")
 
@@ -3156,6 +3416,8 @@ func TestHandleReviewCommentUpdate_PUT_EmptyBody(t *testing.T) {
 }
 
 func TestHandleReviewCommentUpdate_PUT_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("original", "", "")
 
@@ -3168,6 +3430,8 @@ func TestHandleReviewCommentUpdate_PUT_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleReviewCommentUpdate_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/review-comment/c1", nil)
 	w := httptest.NewRecorder()
@@ -3180,6 +3444,8 @@ func TestHandleReviewCommentUpdate_MethodNotAllowed(t *testing.T) {
 // --- handleReplyCRUD additional tests ---
 
 func TestHandleReplyCRUD_PUT_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 	reply, _ := session.AddReply("test.md", c.ID, "first reply", "agent", "")
@@ -3194,6 +3460,8 @@ func TestHandleReplyCRUD_PUT_EmptyBody(t *testing.T) {
 }
 
 func TestHandleReplyCRUD_PUT_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 	reply, _ := session.AddReply("test.md", c.ID, "first reply", "agent", "")
@@ -3207,6 +3475,8 @@ func TestHandleReplyCRUD_PUT_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleReplyCRUD_PUT_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -3220,6 +3490,8 @@ func TestHandleReplyCRUD_PUT_NotFound(t *testing.T) {
 }
 
 func TestHandleReplyCRUD_DELETE_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -3232,6 +3504,8 @@ func TestHandleReplyCRUD_DELETE_NotFound(t *testing.T) {
 }
 
 func TestHandleReplyCRUD_POST_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -3245,6 +3519,8 @@ func TestHandleReplyCRUD_POST_EmptyBody(t *testing.T) {
 }
 
 func TestHandleReplyCRUD_POST_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -3257,6 +3533,8 @@ func TestHandleReplyCRUD_POST_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleReplyCRUD_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -3271,6 +3549,8 @@ func TestHandleReplyCRUD_MethodNotAllowed(t *testing.T) {
 // --- Review comment reply CRUD additional tests ---
 
 func TestReviewCommentReplyCRUD_PUT_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("note", "", "")
 	reply, _ := session.AddReviewCommentReply(c.ID, "reply text", "agent", "")
@@ -3285,6 +3565,8 @@ func TestReviewCommentReplyCRUD_PUT_EmptyBody(t *testing.T) {
 }
 
 func TestReviewCommentReplyCRUD_PUT_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("note", "", "")
 
@@ -3298,6 +3580,8 @@ func TestReviewCommentReplyCRUD_PUT_NotFound(t *testing.T) {
 }
 
 func TestReviewCommentReplyCRUD_DELETE_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("note", "", "")
 
@@ -3310,6 +3594,8 @@ func TestReviewCommentReplyCRUD_DELETE_NotFound(t *testing.T) {
 }
 
 func TestReviewCommentReplyCRUD_POST_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("note", "", "")
 
@@ -3323,6 +3609,8 @@ func TestReviewCommentReplyCRUD_POST_EmptyBody(t *testing.T) {
 }
 
 func TestReviewCommentReplyCRUD_POST_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c := session.AddReviewComment("note", "", "")
 
@@ -3337,6 +3625,8 @@ func TestReviewCommentReplyCRUD_POST_InvalidJSON(t *testing.T) {
 // --- handleFileCommentUpdate additional tests ---
 
 func TestHandleFileCommentUpdate_DELETE(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "delete me", "", "", "")
 
@@ -3354,6 +3644,8 @@ func TestHandleFileCommentUpdate_DELETE(t *testing.T) {
 }
 
 func TestHandleFileCommentUpdate_DELETE_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("DELETE", "/api/comment/nonexistent?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -3364,6 +3656,8 @@ func TestHandleFileCommentUpdate_DELETE_NotFound(t *testing.T) {
 }
 
 func TestHandleFileCommentUpdate_PUT_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "updated"}`)
 	req := httptest.NewRequest("PUT", "/api/comment/nonexistent?path=test.md", body)
@@ -3375,6 +3669,8 @@ func TestHandleFileCommentUpdate_PUT_NotFound(t *testing.T) {
 }
 
 func TestHandleFileCommentUpdate_PUT_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "original", "", "", "")
 
@@ -3387,6 +3683,8 @@ func TestHandleFileCommentUpdate_PUT_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleFileCommentUpdate_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("PATCH", "/api/comment/c1?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -3399,6 +3697,8 @@ func TestHandleFileCommentUpdate_MethodNotAllowed(t *testing.T) {
 // --- handleHealth additional tests ---
 
 func TestHandleHealth_WithBrowserClients(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	session.BrowserConnect()
 	defer session.BrowserDisconnect()
@@ -3418,6 +3718,8 @@ func TestHandleHealth_WithBrowserClients(t *testing.T) {
 }
 
 func TestHandleHealth_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/health", nil)
 	w := httptest.NewRecorder()
@@ -3430,6 +3732,8 @@ func TestHandleHealth_MethodNotAllowed(t *testing.T) {
 // --- handleFinish additional tests ---
 
 func TestHandleFinish_AllResolved(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	c, _ := session.AddComment("test.md", 1, 1, "", "fix this", "", "", "")
 	session.SetCommentResolved("test.md", c.ID, true)
@@ -3453,6 +3757,8 @@ func TestHandleFinish_AllResolved(t *testing.T) {
 }
 
 func TestHandleFinish_PlanMode(t *testing.T) {
+	t.Parallel()
+
 	session := &Session{
 		Mode:        "plan",
 		PlanDir:     "/tmp/plans/test-plan",
@@ -3491,6 +3797,8 @@ func TestHandleFinish_PlanMode(t *testing.T) {
 }
 
 func TestHandleFinish_WithStatus(t *testing.T) {
+	t.Parallel()
+
 	var buf strings.Builder
 	session := &Session{
 		Mode:        "files",
@@ -3529,6 +3837,8 @@ func TestHandleFinish_WithStatus(t *testing.T) {
 }
 
 func TestHandleFinish_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/finish", nil)
 	w := httptest.NewRecorder()
@@ -3541,6 +3851,8 @@ func TestHandleFinish_MethodNotAllowed(t *testing.T) {
 // --- handleFileComments additional tests ---
 
 func TestHandleFileComments_POST_FileScope(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "file-level note", "scope": "file"}`)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", body)
@@ -3558,6 +3870,8 @@ func TestHandleFileComments_POST_FileScope(t *testing.T) {
 }
 
 func TestHandleFileComments_POST_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "", "start_line": 1, "end_line": 1}`)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", body)
@@ -3569,6 +3883,8 @@ func TestHandleFileComments_POST_EmptyBody(t *testing.T) {
 }
 
 func TestHandleFileComments_POST_InvalidLineRange(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "test", "start_line": 0, "end_line": 1}`)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", body)
@@ -3580,6 +3896,8 @@ func TestHandleFileComments_POST_InvalidLineRange(t *testing.T) {
 }
 
 func TestHandleFileComments_POST_EndBeforeStart(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": "test", "start_line": 5, "end_line": 2}`)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", body)
@@ -3591,6 +3909,8 @@ func TestHandleFileComments_POST_EndBeforeStart(t *testing.T) {
 }
 
 func TestHandleFileComments_POST_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", strings.NewReader("bad"))
 	w := httptest.NewRecorder()
@@ -3601,6 +3921,8 @@ func TestHandleFileComments_POST_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleFileComments_MissingPath(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/api/file/comments", nil)
 	w := httptest.NewRecorder()
@@ -3611,6 +3933,8 @@ func TestHandleFileComments_MissingPath(t *testing.T) {
 }
 
 func TestHandleFileComments_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("DELETE", "/api/file/comments?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -3623,6 +3947,8 @@ func TestHandleFileComments_MethodNotAllowed(t *testing.T) {
 // --- handleConfig additional tests ---
 
 func TestHandleSession_WithScope(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.Git(t, dir, "checkout", "-b", "feature")
 	testutil.WriteFile(t, filepath.Join(dir, "new.go"), "package main\n")
@@ -3662,6 +3988,8 @@ func TestHandleSession_WithScope(t *testing.T) {
 // --- handleReviewComments additional tests ---
 
 func TestHandleReviewComments_POST_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	body := strings.NewReader(`{"body": ""}`)
 	req := httptest.NewRequest("POST", "/api/comments", body)
@@ -3673,6 +4001,8 @@ func TestHandleReviewComments_POST_EmptyBody(t *testing.T) {
 }
 
 func TestHandleReviewComments_POST_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/comments", strings.NewReader("bad"))
 	w := httptest.NewRecorder()
@@ -3683,6 +4013,8 @@ func TestHandleReviewComments_POST_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleReviewComments_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("PUT", "/api/comments", nil)
 	w := httptest.NewRecorder()
@@ -3695,6 +4027,8 @@ func TestHandleReviewComments_MethodNotAllowed(t *testing.T) {
 // --- handleCommentByID additional tests ---
 
 func TestHandleCommentByID_EmptyID(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("PUT", "/api/comment/", strings.NewReader(`{"body": "test"}`))
 	w := httptest.NewRecorder()
@@ -3707,6 +4041,8 @@ func TestHandleCommentByID_EmptyID(t *testing.T) {
 // --- handleReviewCommentByID additional tests ---
 
 func TestHandleReviewCommentByID_EmptyID(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("PUT", "/api/review-comment/", strings.NewReader(`{"body": "test"}`))
 	w := httptest.NewRecorder()
@@ -3719,6 +4055,8 @@ func TestHandleReviewCommentByID_EmptyID(t *testing.T) {
 // --- handleFileDiff additional tests ---
 
 func TestHandleFileDiff_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/file/diff?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -3731,6 +4069,8 @@ func TestHandleFileDiff_MethodNotAllowed(t *testing.T) {
 // --- handleFile additional tests ---
 
 func TestHandleFile_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/file?path=test.md", nil)
 	w := httptest.NewRecorder()
@@ -3743,6 +4083,8 @@ func TestHandleFile_MethodNotAllowed(t *testing.T) {
 // --- handleSession with commit parameter ---
 
 func TestHandleSession_WithCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := testutil.InitTestRepo(t)
 	testutil.Git(t, dir, "checkout", "-b", "feature")
 	testutil.WriteFile(t, filepath.Join(dir, "new.go"), "package main\n")
@@ -3785,6 +4127,8 @@ func TestHandleSession_WithCommit(t *testing.T) {
 }
 
 func TestHandleSession_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("POST", "/api/session", nil)
 	w := httptest.NewRecorder()
@@ -3797,6 +4141,8 @@ func TestHandleSession_MethodNotAllowed(t *testing.T) {
 // --- handleFiles additional tests ---
 
 func TestHandleFiles_EmptyPath(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/files/", nil)
 	w := httptest.NewRecorder()
@@ -3807,6 +4153,8 @@ func TestHandleFiles_EmptyPath(t *testing.T) {
 }
 
 func TestHandleFiles_PathTraversal_DotDot(t *testing.T) {
+	t.Parallel()
+
 	srv, _ := newTestServer(t)
 	req := httptest.NewRequest("GET", "/files/../../../etc/passwd", nil)
 	w := httptest.NewRecorder()
@@ -3869,6 +4217,8 @@ func TestEvents_SafariCompat(t *testing.T) {
 }
 
 func TestLiveRoutes_NotGatedByWithReady(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -3893,6 +4243,8 @@ func TestLiveRoutes_NotGatedByWithReady(t *testing.T) {
 }
 
 func TestLive_ProtocolAndUtilsServedUnguarded(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -3916,6 +4268,8 @@ func TestLive_ProtocolAndUtilsServedUnguarded(t *testing.T) {
 }
 
 func TestAgentMarkerCSS_ServedUnguarded(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -3944,6 +4298,8 @@ func TestAgentMarkerCSS_ServedUnguarded(t *testing.T) {
 }
 
 func TestLiveAssets_CORSHeader(t *testing.T) {
+	t.Parallel()
+
 	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -3964,6 +4320,8 @@ func TestLiveAssets_CORSHeader(t *testing.T) {
 }
 
 func TestHandleSession_LiveFields(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.ReviewType = "live"
 	session.Origin = "http://localhost:3000"
@@ -3989,6 +4347,8 @@ func TestHandleSession_LiveFields(t *testing.T) {
 }
 
 func TestHandleFileComments_AcceptsDOMAnchor_AutoRegistersRoute(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.ReviewType = "live"
 	session.Origin = "http://localhost:3000"
@@ -4026,6 +4386,8 @@ func TestHandleFileComments_AcceptsDOMAnchor_AutoRegistersRoute(t *testing.T) {
 }
 
 func TestLive_PostFileCommentsWithDOMAnchor(t *testing.T) {
+	t.Parallel()
+
 	s, session := newTestServer(t)
 	session.ReviewType = "live"
 	session.Origin = "http://localhost:3000"
@@ -4070,6 +4432,8 @@ func TestLive_PostFileCommentsWithDOMAnchor(t *testing.T) {
 }
 
 func TestHandleFileComments_CodeComment_LineValidationUnchanged(t *testing.T) {
+	t.Parallel()
+
 	s, _ := newTestServer(t)
 	body := `{"start_line":0,"end_line":0,"body":"code comment"}`
 	req := httptest.NewRequest("POST", "/api/file/comments?path=test.md", strings.NewReader(body))
@@ -4082,6 +4446,8 @@ func TestHandleFileComments_CodeComment_LineValidationUnchanged(t *testing.T) {
 }
 
 func TestHandleFileCommentUpdate_AcceptsDOMAnchor(t *testing.T) {
+	t.Parallel()
+
 	type tc struct {
 		name       string
 		seedAnchor *DOMAnchor
@@ -4114,6 +4480,8 @@ func TestHandleFileCommentUpdate_AcceptsDOMAnchor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			s, session := newTestServer(t)
 			session.ReviewType = "live"
 			session.Origin = "http://localhost:3000"
@@ -4245,6 +4613,8 @@ func readSSEUntil(t *testing.T, ctx context.Context, r io.Reader, eventName stri
 }
 
 func TestPUTComment_AcceptsDriftedOnRound(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	session.ReviewType = "live"
 	c, _ := session.AddComment("test.md", 1, 1, "", "live pin", "", "", "")
@@ -4315,6 +4685,8 @@ func TestAPIDeleteComment_FansOutSSE(t *testing.T) {
 // from crit-web live under index.html but the client sends the iframe route
 // as ?path= when resolving.
 func TestAPIResolveComment_WrongPathHint(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newTestServer(t)
 	sess.Files = append(sess.Files, &FileEntry{
 		Path: "index.html",
@@ -4421,6 +4793,8 @@ func TestAPIResolveComment_FansOutSSE(t *testing.T) {
 }
 
 func TestAPIDeleteComment_CascadesReplies(t *testing.T) {
+	t.Parallel()
+
 	srv, sess := newTestServer(t)
 	c, _ := sess.AddComment("test.md", 1, 1, "", "parent", "", "alice", "")
 	if _, ok := sess.AddReply("test.md", c.ID, "reply 1", "bob", ""); !ok {
@@ -4442,6 +4816,8 @@ func TestAPIDeleteComment_CascadesReplies(t *testing.T) {
 }
 
 func TestHandleFileCommentsGitHubID(t *testing.T) {
+	t.Parallel()
+
 	srv, session := newTestServer(t)
 	session.Files[0].Comments = []Comment{
 		{

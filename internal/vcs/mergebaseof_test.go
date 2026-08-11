@@ -55,6 +55,8 @@ func TestMergeBaseOf_Git(t *testing.T) {
 // two siblings off main must resolve to their common ancestor (the fork point),
 // not the divergent base-branch tip. This is the jj path of the `crit --pr` fix.
 func TestJJVCS_MergeBaseOf(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestJJRepoWithLocalMain(t)
 	j := &JJVCS{}
 
@@ -88,6 +90,8 @@ func TestJJVCS_MergeBaseOf(t *testing.T) {
 // siblings off the seed must resolve to their common ancestor, not the drifted
 // base tip. ancestor() is symmetric, so order does not matter.
 func TestSaplingVCS_MergeBaseOf(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestSaplingRepo(t)
 	s := &SaplingVCS{}
 

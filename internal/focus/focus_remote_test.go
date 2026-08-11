@@ -35,6 +35,8 @@ func (f *fakeStackVCS) HasObject(_, _ string) bool {
 }
 
 func TestResolveFocus_RangeRemoteSkipsHasObject(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeStackVCS{name: "git", hasSeq: nil}
 	f, err := ResolveFocus("", "abc..def", "", true, v, t.TempDir())
 	if err != nil {
@@ -46,6 +48,8 @@ func TestResolveFocus_RangeRemoteSkipsHasObject(t *testing.T) {
 }
 
 func TestResolveFocus_RangeNonRemoteEnforcesHasObject(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeStackVCS{name: "git", hasSeq: nil}
 	_, err := ResolveFocus("", "abc..def", "", false, v, t.TempDir())
 	if err == nil {

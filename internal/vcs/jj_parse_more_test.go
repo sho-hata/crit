@@ -5,6 +5,8 @@ import "testing"
 // Pure-parser edge cases for parseJJDiffSummary that complement the contributor's
 // jj_parse_test.go without overlapping its existing cases.
 func TestParseJJDiffSummary_EdgeCases(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		input string
@@ -84,6 +86,8 @@ func TestParseJJDiffSummary_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := parseJJDiffSummary(tt.input)
 			assertFileChangesEqual(t, got, tt.want)
 		})
@@ -91,6 +95,8 @@ func TestParseJJDiffSummary_EdgeCases(t *testing.T) {
 }
 
 func TestParseJJDiffStat_Empty(t *testing.T) {
+	t.Parallel()
+
 	got := parseSaplingDiffStat("")
 	if len(got) != 0 {
 		t.Errorf("expected empty map, got %v", got)

@@ -10,6 +10,8 @@ import (
 )
 
 func TestStoryScopeRangeIncludesIgnoredHunks(t *testing.T) {
+	t.Parallel()
+
 	dir := initTestRepo(t)
 	base := gitT(t, dir, "rev-parse", "HEAD")
 	commitAt(t, dir, "visible.go", "package visible\n", "add visible")
@@ -34,6 +36,8 @@ func TestStoryScopeRangeIncludesIgnoredHunks(t *testing.T) {
 // Story is a field on CritJSON and buildCritJSON only overwrites known
 // daemon-managed fields.
 func TestBuildCritJSONPreservesStory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	critPath := filepath.Join(dir, "review")
 	reviewPath := ReviewPathsFor(critPath).Review
@@ -102,6 +106,8 @@ func TestBuildCritJSONPreservesStory(t *testing.T) {
 // TestBuildCritJSONPreservesStory above, which only exercises the passive
 // preserve-across-unrelated-writes case.
 func TestSyncWriteFilesPersistsNewStory(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 
 	st := &Story{
@@ -135,6 +141,8 @@ func TestSyncWriteFilesPersistsNewStory(t *testing.T) {
 // review.json entirely (existing B1 empty-file behavior) rather than writing
 // an empty object — so "cleared" means either absent or story-less.
 func TestSyncWriteFilesPersistsClearedStory(t *testing.T) {
+	t.Parallel()
+
 	s := newTestSession(t)
 	s.AddComment("plan.md", 1, 1, "", "test", "", "", "") // keep the file non-empty so this exercises Story specifically, not the B1 delete-on-empty path
 	s.SetStory(&Story{Version: 1, Chapters: []StoryChapter{{ID: "ch1", Title: "T"}}})
@@ -163,6 +171,8 @@ func TestSyncWriteFilesPersistsClearedStory(t *testing.T) {
 // TestStorySchemaJSONRoundTrip verifies the schema marshals and unmarshals
 // losslessly, including omitempty behavior on the optional field.
 func TestStorySchemaJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	// No story -> "story" key absent (omitempty).
 	empty := CritJSON{Files: map[string]CritJSONFile{}}
 	b, err := json.Marshal(empty)

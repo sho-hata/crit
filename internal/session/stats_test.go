@@ -112,6 +112,8 @@ func TestLoadStats_CorruptFile(t *testing.T) {
 }
 
 func TestFormatTotalsLine(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name   string
 		totals statsTotals
@@ -140,6 +142,8 @@ func TestFormatTotalsLine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := formatTotalsLine(tt.totals)
 			if got != tt.want {
 				t.Errorf("got  %q\nwant %q", got, tt.want)
@@ -149,6 +153,8 @@ func TestFormatTotalsLine(t *testing.T) {
 }
 
 func TestFormatDuration(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		seconds int
 		want    string
@@ -171,6 +177,8 @@ func TestFormatDuration(t *testing.T) {
 }
 
 func TestBusiestDay(t *testing.T) {
+	t.Parallel()
+
 	sessions := []sessionRecord{
 		{StartedAt: "2026-05-25T10:00:00Z"}, // Monday
 		{StartedAt: "2026-05-25T14:00:00Z"}, // Monday
@@ -184,6 +192,8 @@ func TestBusiestDay(t *testing.T) {
 }
 
 func TestBusiestDay_Empty(t *testing.T) {
+	t.Parallel()
+
 	got := busiestDay(nil)
 	if got != "" {
 		t.Errorf("expected empty string, got %s", got)
@@ -191,6 +201,8 @@ func TestBusiestDay_Empty(t *testing.T) {
 }
 
 func TestLongestSession(t *testing.T) {
+	t.Parallel()
+
 	sessions := []sessionRecord{
 		{Duration: 300, Branch: "fix/bug"},
 		{Duration: 4320, Branch: "feat/auth"},
@@ -206,6 +218,8 @@ func TestLongestSession(t *testing.T) {
 }
 
 func TestLongestSession_NoBranch(t *testing.T) {
+	t.Parallel()
+
 	sessions := []sessionRecord{
 		{Duration: 300, Mode: "files"},
 		{Duration: 600, Mode: "files"},
@@ -220,6 +234,8 @@ func TestLongestSession_NoBranch(t *testing.T) {
 }
 
 func TestComputeInsights_TooFewSessions(t *testing.T) {
+	t.Parallel()
+
 	insights := computeInsights([]sessionRecord{{StartedAt: "2026-05-27T10:00:00Z"}})
 	if len(insights) != 0 {
 		t.Errorf("expected no insights for single session, got %v", insights)
@@ -227,6 +243,8 @@ func TestComputeInsights_TooFewSessions(t *testing.T) {
 }
 
 func TestComputeInsights_MultipleSessions(t *testing.T) {
+	t.Parallel()
+
 	sessions := []sessionRecord{
 		{StartedAt: "2026-05-25T10:00:00Z", Duration: 300, Branch: "fix/bug"},
 		{StartedAt: "2026-05-25T14:00:00Z", Duration: 4320, Branch: "feat/auth"},
@@ -245,6 +263,8 @@ func TestComputeInsights_MultipleSessions(t *testing.T) {
 }
 
 func TestSessionActivity(t *testing.T) {
+	t.Parallel()
+
 	sess := &Session{
 		Files: []*FileEntry{
 			{

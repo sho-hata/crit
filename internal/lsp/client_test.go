@@ -133,6 +133,8 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 func TestClientInitializeAndHover(t *testing.T) {
+	t.Parallel()
+
 	fs := startFake(func(method string, params json.RawMessage) any {
 		if method == "textDocument/hover" {
 			var p struct {
@@ -176,6 +178,8 @@ func TestClientInitializeAndHover(t *testing.T) {
 }
 
 func TestClientDefinition(t *testing.T) {
+	t.Parallel()
+
 	fs := startFake(func(method string, params json.RawMessage) any {
 		if method == "textDocument/definition" {
 			return []map[string]any{
@@ -206,6 +210,8 @@ func TestClientDefinition(t *testing.T) {
 }
 
 func TestClientReferences(t *testing.T) {
+	t.Parallel()
+
 	fs := startFake(func(method string, params json.RawMessage) any {
 		if method == "textDocument/references" {
 			var p struct {
@@ -253,6 +259,8 @@ func TestClientReferences(t *testing.T) {
 }
 
 func TestClientAnswersServerRequests(t *testing.T) {
+	t.Parallel()
+
 	fs := startFake(nil)
 	defer fs.client.Close()
 
@@ -281,6 +289,8 @@ func TestClientAnswersServerRequests(t *testing.T) {
 }
 
 func TestClientDeadAfterTransportClose(t *testing.T) {
+	t.Parallel()
+
 	fs := startFake(nil)
 	fs.kill()
 	waitFor(t, "client dead", fs.client.Dead)
@@ -290,6 +300,8 @@ func TestClientDeadAfterTransportClose(t *testing.T) {
 }
 
 func TestHoverContentsToMarkdown(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		raw  string
@@ -304,6 +316,8 @@ func TestHoverContentsToMarkdown(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := hoverContentsToMarkdown(json.RawMessage(tt.raw)); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
@@ -312,6 +326,8 @@ func TestHoverContentsToMarkdown(t *testing.T) {
 }
 
 func TestParseLocations(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		raw  string
@@ -336,6 +352,8 @@ func TestParseLocations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := parseLocations(json.RawMessage(tt.raw))
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d locations, want %d", len(got), len(tt.want))
@@ -353,6 +371,8 @@ func TestParseLocations(t *testing.T) {
 // exercise the drive-letter branches, elsewhere the POSIX ones, and both cover
 // the URI-shape invariants gopls relies on.
 func TestPathToURI(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		path string
@@ -364,6 +384,8 @@ func TestPathToURI(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := PathToURI(tt.path); got != tt.want {
 				t.Errorf("PathToURI(%q) = %q, want %q", tt.path, got, tt.want)
 			}
@@ -372,6 +394,8 @@ func TestPathToURI(t *testing.T) {
 }
 
 func TestURIToPath(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		uri  string
@@ -385,6 +409,8 @@ func TestURIToPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := URIToPath(tt.uri); got != tt.want {
 				t.Errorf("URIToPath(%q) = %q, want %q", tt.uri, got, tt.want)
 			}
@@ -393,6 +419,8 @@ func TestURIToPath(t *testing.T) {
 }
 
 func TestPathURIRoundtrip(t *testing.T) {
+	t.Parallel()
+
 	paths := []string{
 		nativePath("/tmp/repo/main.go"),
 		nativePath("/tmp/repo/sub dir/file.go"),

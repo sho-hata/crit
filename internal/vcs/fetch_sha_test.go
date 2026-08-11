@@ -82,6 +82,8 @@ func (f *fakeFetchVCS) HasStagingArea() bool                                 { r
 func (f *fakeFetchVCS) SkipDirNames() []string                               { return nil }
 
 func TestEnsureSHAFetched_AlreadyPresent(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeFetchVCS{name: "git", hasSeq: []bool{true}}
 	if err := ensureSHAFetched(v, "abc", t.TempDir(), ""); err != nil {
 		t.Fatal(err)
@@ -89,6 +91,8 @@ func TestEnsureSHAFetched_AlreadyPresent(t *testing.T) {
 }
 
 func TestEnsureSHAFetched_StillMissingAfterFetch(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeFetchVCS{name: "git"}
 	if err := ensureSHAFetched(v, "deadbeef", t.TempDir(), ""); err == nil {
 		t.Fatal("expected error")
@@ -96,12 +100,16 @@ func TestEnsureSHAFetched_StillMissingAfterFetch(t *testing.T) {
 }
 
 func TestEnsureSHAFetched_NilVCS(t *testing.T) {
+	t.Parallel()
+
 	if err := ensureSHAFetched(nil, "abc", "", ""); err != nil {
 		t.Errorf("nil vcs should no-op, got %v", err)
 	}
 }
 
 func TestEnsureSHAFetched_UnsupportedVCS(t *testing.T) {
+	t.Parallel()
+
 	v := &fakeFetchVCS{name: "fossil"}
 	if err := ensureSHAFetched(v, "abc", t.TempDir(), ""); err == nil {
 		t.Fatal("expected error for unsupported vcs")

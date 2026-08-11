@@ -506,6 +506,8 @@ func TestStoryLLM_HomeIsolated(t *testing.T) {
 // TestPostStoryToDaemon_BodyShape verifies postStoryToDaemon sends the exact
 // {"story": ...} body that the daemon's handleStoryPost expects, to /api/story.
 func TestPostStoryToDaemon_BodyShape(t *testing.T) {
+	t.Parallel()
+
 	var gotPath string
 	var gotBody struct {
 		Story *session.Story `json:"story"`
@@ -538,6 +540,8 @@ func TestPostStoryToDaemon_BodyShape(t *testing.T) {
 // the daemon 503s on /api/session N times (session init not done), and
 // postStoryToDaemon must NOT POST the story until /api/session stops 503ing.
 func TestPostStoryToDaemon_PollsReadinessThenPosts(t *testing.T) {
+	t.Parallel()
+
 	const notReadyTimes = 3
 	var sessionHits int
 	var posted bool
@@ -579,6 +583,8 @@ func TestPostStoryToDaemon_PollsReadinessThenPosts(t *testing.T) {
 }
 
 func TestPostStoryToDaemon_RejectsNonReadinessError(t *testing.T) {
+	t.Parallel()
+
 	posted := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/session" {
@@ -601,6 +607,8 @@ func TestPostStoryToDaemon_RejectsNonReadinessError(t *testing.T) {
 }
 
 func TestDeleteStoryFromDaemon(t *testing.T) {
+	t.Parallel()
+
 	deleted := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -628,6 +636,8 @@ func TestDeleteStoryFromDaemon(t *testing.T) {
 }
 
 func TestDeleteStoryFromDaemonRejectsError(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/session" {
 			w.WriteHeader(http.StatusOK)
@@ -648,6 +658,8 @@ func TestDeleteStoryFromDaemonRejectsError(t *testing.T) {
 // returned error (so postIngest logs it as a note rather than silently
 // succeeding).
 func TestPostStoryToDaemon_ErrorOnNon2xx(t *testing.T) {
+	t.Parallel()
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "coverage rejected", http.StatusUnprocessableEntity)
 	}))

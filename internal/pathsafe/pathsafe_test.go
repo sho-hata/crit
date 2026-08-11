@@ -8,6 +8,8 @@ import (
 )
 
 func TestResolveUnder(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	inside := filepath.Join(root, "file.txt")
 	if err := os.WriteFile(inside, []byte("x"), 0o644); err != nil {
@@ -38,6 +40,8 @@ func TestResolveUnder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			resolved, err := ResolveUnder(tt.path, tt.root)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
