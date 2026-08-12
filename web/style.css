@@ -4391,6 +4391,30 @@ body.sidebar-resizing * {
 .diff-split-side.deletion .diff-gutter-num { background: var(--crit-diff-del-gutter); }
 .diff-split-side.addition .diff-gutter-num { background: var(--crit-diff-add-gutter); }
 .diff-split-side.has-comment .diff-gutter-num { background: transparent; }
+/* `.diff-content` is `pre-wrap`, so every width change re-wraps the whole
+   diff (~120ms of layout per resize event on a 12k-line diff — the pointer
+   visibly outruns the UI while dragging). While a resize is in flight, skip
+   layout for rows far outside the viewport; app.js drops `.diff-resizing`
+   once the drag settles, and `.sidebar-resizing` (shared resize helper)
+   covers the panel handles, which change the diff's width without firing a
+   window resize.
+   Scoped to the drag rather than left on: `content-visibility` estimates
+   unrendered rows, so page height — and with it scroll offsets, anchors and
+   the scrollbar — is wrong until every wrapped row has been scrolled past
+   once. `contain-intrinsic-size` stays unscoped so `auto` keeps recording
+   each row's real height while it renders normally; by the time the flag
+   flips on, the estimates are the measured heights. */
+.diff-container.unified .diff-line,
+.diff-split-row {
+  contain-intrinsic-size: auto 20px;
+}
+body.diff-resizing .diff-container.unified .diff-line,
+body.diff-resizing .diff-split-row,
+body.sidebar-resizing .diff-container.unified .diff-line,
+body.sidebar-resizing .diff-split-row {
+  content-visibility: auto;
+}
+
 .diff-container.split .comment-block { padding-left: 48px; width: 50%; max-width: none; margin: 0; }
 .diff-container.split .comment-form-wrapper { padding-left: 48px; width: 50%; max-width: none; margin: 0; }
 .diff-container.split .comment-block.diff-comment-right,
