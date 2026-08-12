@@ -826,6 +826,7 @@
     }
     updateHeaderHeight();
     window.addEventListener('resize', updateHeaderHeight);
+    window.addEventListener('resize', markDiffResizing);
 
     document.getElementById('filesContainer').innerHTML =
       '<div class="loading" style="padding: 40px; text-align: center; color: var(--crit-editor-fg-muted);">Loading...</div>';
@@ -7952,6 +7953,54 @@
     if (choice === 'compact') document.documentElement.setAttribute('data-width', 'compact');
     else if (choice === 'wide') document.documentElement.setAttribute('data-width', 'wide');
     else document.documentElement.setAttribute('data-width', 'default');
+  }
+
+  // ===== Resize Relayout Guard =====
+  // Diff content wraps (`pre-wrap`), so a width change re-lays out every row
+  // in the document — on a large diff that is ~120ms per resize event, and
+  // resize fires at frame rate while a window edge is dragged. `body.diff-resizing`
+  // lets style.css skip layout for rows far outside the viewport for the
+  // duration of the drag. The flag is dropped once resize events stop, because
+  // skipped rows are only size-estimated: leaving it on makes page height,
+  // scroll offsets and anchor targets drift until every row has rendered once.
+  // Panel drags go through the shared resize helper, which already sets
+  // `body.sidebar-resizing` — style.css keys off both.
+  //
+  // The drag is measured in frames, not milliseconds. Raising the flag costs a
+  // style recalc over every diff row (~1s on a 6.5k-row diff), and a wall-clock
+  // settle shorter than that recalc expires while the recalc is still running:
+  // the flag drops, the next resize event raises it again, and the drag spends
+  // its whole length re-engaging (measured far worse than doing nothing at
+  // all). Counting frames with no resize event can't outrun the browser that
+  // way — a slow frame is one frame — and it scales with how heavy the diff is.
+  const DIFF_RESIZE_SETTLE_FRAMES = 15;
+  let diffResizeRaf = null;
+  let diffResizeSeen = false;
+  let diffResizeIdleFrames = 0;
+
+  function markDiffResizing() {
+    diffResizeSeen = true;
+    if (diffResizeRaf !== null) return;
+    document.body.classList.add('diff-resizing');
+    diffResizeIdleFrames = 0;
+    diffResizeRaf = requestAnimationFrame(watchDiffResize);
+  }
+
+  function watchDiffResize() {
+    if (diffResizeSeen) {
+      diffResizeSeen = false;
+      diffResizeIdleFrames = 0;
+    } else {
+      diffResizeIdleFrames++;
+    }
+    if (diffResizeIdleFrames >= DIFF_RESIZE_SETTLE_FRAMES) {
+      diffResizeRaf = null;
+      // Rows re-measure at the new width, so scroll geometry — page height,
+      // anchor offsets, the scrollbar — is exact again from here on.
+      document.body.classList.remove('diff-resizing');
+      return;
+    }
+    diffResizeRaf = requestAnimationFrame(watchDiffResize);
   }
 
   // ===== Sidebar Resize =====
