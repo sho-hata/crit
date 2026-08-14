@@ -9141,7 +9141,6 @@
     // Update card (shown only when an update is available)
     if (cfg.latest_version && cfg.version && cfg.latest_version !== cfg.version && !cfg.no_update_check) {
       const upgradeCmd = 'brew update && brew upgrade fcrit';
-      // latest_version is the raw tag name, which already carries the "v" prefix.
       const releaseUrl = 'https://github.com/sho-hata/crit/releases/tag/' + escapeHtml(cfg.latest_version);
       const alreadyDismissed = getSetting('updatesDismissed', '') === cfg.latest_version;
       html += '<div class="config-card config-card--orange"><div class="config-card-header">';
