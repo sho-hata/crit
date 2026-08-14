@@ -34,8 +34,10 @@ Everything runs locally via one single binary.
 ### 1. Install Crit binary
 Brew:
 ```bash
-brew install crit
+brew install sho-hata/tap/fcrit
 ```
+> The formula is `fcrit` (this fork), not `crit` (upstream, in homebrew-core) — but it still installs a binary named `crit`. The two conflict, so uninstall or `brew unlink crit` first if you have upstream installed. Upgrades: `brew update && brew upgrade fcrit`.
+
 <details>
 <summary>Also available via Go, Nix, Windows</summary>
 

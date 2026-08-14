@@ -354,4 +354,5 @@ func printVersion() {
 	}
 	fmt.Println(line)
 	fmt.Println("Inline code review for AI agent workflows")
+	fmt.Println("github.com/sho-hata/crit — fork of tomasz-tomczyk/crit")
 }

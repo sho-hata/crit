@@ -126,13 +126,17 @@ test('renderSettingsTab: update card appears when latest_version > version', () 
   const pane = makePane();
   sp.renderSettingsTab(pane, {
     mode: 'code-review',
-    cfg: { version: '1.0.0', latest_version: '1.1.0' },
+    // Tag names, as the release workflow produces them — the "v" is part of
+    // the value, so the renderer must not prepend another one.
+    cfg: { version: 'v1.0.0', latest_version: 'v1.1.0' },
     hooks: { applyTheme: () => {}, applyWidth: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
   });
 
   assert.match(pane.innerHTML, /Update available/);
   assert.match(pane.innerHTML, /v1\.1\.0/);
-  assert.match(pane.innerHTML, /brew update &amp;&amp; brew upgrade crit/);
+  assert.match(pane.innerHTML, /brew update &amp;&amp; brew upgrade fcrit\b/);
+  assert.match(pane.innerHTML, /releases\/tag\/v1\.1\.0/);
+  assert.doesNotMatch(pane.innerHTML, /vv1\.1\.0/);
 });
 
 test('renderSettingsTab: no update card when no_update_check', () => {

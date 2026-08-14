@@ -345,13 +345,13 @@
 
       // Update card
       if (show.update && cfg.latest_version && cfg.version && cfg.latest_version !== cfg.version && !cfg.no_update_check) {
-        var upgradeCmd = 'brew update && brew upgrade crit';
-        var releaseUrl = 'https://github.com/sho-hata/crit/releases/tag/v' + esc(cfg.latest_version);
+        var upgradeCmd = 'brew update && brew upgrade fcrit';
+        var releaseUrl = 'https://github.com/sho-hata/crit/releases/tag/' + esc(cfg.latest_version);
         var alreadyDismissed = getSetting('updatesDismissed', '') === cfg.latest_version;
         html += '<div class="config-card config-card--orange"><div class="config-card-header">';
         html += '<span class="config-card-icon" style="color:var(--crit-yellow)">&#11014;</span>';
         html += '<span class="config-card-title">Update available</span>';
-        html += '<span class="config-card-value">v' + esc(cfg.latest_version) + '</span>';
+        html += '<span class="config-card-value">' + esc(cfg.latest_version) + '</span>';
         html += '</div>';
         html += '<div class="config-card-cmd"><span>$ ' + esc(upgradeCmd) + '</span><button class="config-card-copy" data-copy="' + esc(upgradeCmd) + '">Copy</button></div>';
         html += '<div class="config-card-body" id="updateCardBody">';
