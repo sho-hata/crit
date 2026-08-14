@@ -101,12 +101,15 @@ jobs:
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/sho-hata/homebrew-tap.git" homebrew-tap
           mkdir -p homebrew-tap/Formula
 
-          cat > homebrew-tap/Formula/crit.rb <<FORMULA
-          class Crit < Formula
-            desc "Browser-based markdown review tool with inline commenting"
+          cat > homebrew-tap/Formula/fcrit.rb <<FORMULA
+          class Fcrit < Formula
+            desc "Fork of crit with Go LSP code intelligence in diffs"
             homepage "https://github.com/sho-hata/crit"
             version "${VERSION}"
             license "MIT"
+
+            # Installs the same \`crit\` binary as homebrew-core's upstream formula.
+            conflicts_with "crit", because: "both install a \`crit\` binary"
 
             on_macos do
               on_arm do
@@ -136,14 +139,17 @@ jobs:
             end
 
             test do
-              assert_match "${VERSION}", shell_output("#{bin}/crit --version").strip
+              output = shell_output("#{bin}/crit --version").strip
+              assert_match "${VERSION}", output
+              # Guards against the upstream homebrew-core binary being picked up.
+              assert_match "sho-hata/crit", output
             end
           end
           FORMULA
 
           cd homebrew-tap
-          git add Formula/crit.rb
+          git add Formula/fcrit.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update crit to ${TAG}"
+          git commit -m "Update fcrit to ${TAG}"
           git push origin main

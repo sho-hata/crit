@@ -879,8 +879,8 @@
         kind: 'brew',
         version: configRes.latest_version,
         label: 'Crit ' + configRes.latest_version + ' available',
-        labelUrl: 'https://github.com/sho-hata/crit/releases/tag/v' + configRes.latest_version,
-        hint: 'brew update && brew upgrade crit'
+        labelUrl: 'https://github.com/sho-hata/crit/releases/tag/' + configRes.latest_version,
+        hint: 'brew update && brew upgrade fcrit'
       });
     }
     if (configRes.stale_integrations) {
@@ -9140,13 +9140,14 @@
 
     // Update card (shown only when an update is available)
     if (cfg.latest_version && cfg.version && cfg.latest_version !== cfg.version && !cfg.no_update_check) {
-      const upgradeCmd = 'brew update && brew upgrade crit';
-      const releaseUrl = 'https://github.com/sho-hata/crit/releases/tag/v' + escapeHtml(cfg.latest_version);
+      const upgradeCmd = 'brew update && brew upgrade fcrit';
+      // latest_version is the raw tag name, which already carries the "v" prefix.
+      const releaseUrl = 'https://github.com/sho-hata/crit/releases/tag/' + escapeHtml(cfg.latest_version);
       const alreadyDismissed = getSetting('updatesDismissed', '') === cfg.latest_version;
       html += '<div class="config-card config-card--orange"><div class="config-card-header">';
       html += '<span class="config-card-icon" style="color:var(--crit-yellow)">&#11014;</span>';
       html += '<span class="config-card-title">Update available</span>';
-      html += '<span class="config-card-value">v' + escapeHtml(cfg.latest_version) + '</span>';
+      html += '<span class="config-card-value">' + escapeHtml(cfg.latest_version) + '</span>';
       html += '</div>';
       html += '<div class="config-card-cmd"><span>$ ' + escapeHtml(upgradeCmd) + '</span><button class="config-card-copy" data-copy="' + escapeHtml(upgradeCmd) + '">Copy</button></div>';
       html += '<div class="config-card-body" id="updateCardBody">';
