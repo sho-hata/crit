@@ -642,7 +642,10 @@ body {
 .document-wrapper {
   max-width: var(--content-width);
   margin: 0 auto;
-  padding: 32px 0 120px 0;
+  /* The end-of-page breathing room this used to carry (120px) now comes from
+     `#filesContainer`'s bottom padding — inside a bordered file card it read as
+     a large empty box under the last line. */
+  padding: 32px 0;
 }
 
 /* ===== Line Blocks ===== */
@@ -3741,6 +3744,41 @@ body.sidebar-resizing * {
 .file-section {
   scroll-margin-top: calc(var(--header-height, 49px) + 8px); /* accounts for sticky app header + gap */
 }
+
+/* GitHub-style gutter: the file list is inset from the tree sidebar and the
+   right edge instead of running edge-to-edge, and each file becomes its own
+   bordered card. Lines up with `.review-conversation`'s 24px margin above it,
+   and mirrors the story view's per-file card (`.crit-story-file-group`).
+   Scoped to `#filesContainer` so the story pane keeps its own chrome. */
+#filesContainer {
+  padding: 16px 24px 96px;
+}
+#filesContainer > .file-section {
+  margin-bottom: 16px;
+  border: 1px solid var(--crit-border);
+  border-radius: var(--crit-r-md);
+}
+/* The card draws the outer edges, so the header only keeps the divider under
+   itself and rounds with the card's top corners. */
+#filesContainer > .file-section > .file-header {
+  border-top: none;
+  border-radius: var(--crit-r-md) var(--crit-r-md) 0 0;
+}
+/* Collapsed: the header IS the card, so it owns all four corners and the
+   section border already draws the bottom edge. */
+#filesContainer > .file-section:not([open]) > .file-header {
+  border-bottom: none;
+  border-radius: var(--crit-r-md);
+}
+/* Bottom edge comes from the card border. Round the diff surface and clip it,
+   or the last row's addition/deletion background paints square over the
+   corner. `clip` rather than `hidden` so this never becomes a scroll container
+   (scrollIntoView for comment navigation walks ancestor scrollports). */
+#filesContainer > .file-section > .file-body > .diff-container {
+  border-bottom: none;
+  border-radius: 0 0 var(--crit-r-md) var(--crit-r-md);
+  overflow: clip;
+}
 .file-header {
   /* stylelint-disable-next-line declaration-block-no-duplicate-properties */
   position: -webkit-sticky;
@@ -5516,6 +5554,29 @@ body.sidebar-resizing .diff-split-row {
   .diff-container.split .comment-block.diff-comment-right,
   .diff-container.split .comment-form-wrapper.diff-comment-right {
     margin-left: 0;
+  }
+
+  /* No file-tree sidebar to sit beside on mobile — drop the desktop gutter and
+     flatten the per-file cards back to full-bleed so narrow viewports keep
+     every pixel for the diff itself. */
+  #filesContainer { padding: 0 0 96px; }
+  #filesContainer > .file-section {
+    margin-bottom: 0;
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+  #filesContainer > .file-section > .file-header,
+  #filesContainer > .file-section:not([open]) > .file-header,
+  #filesContainer > .file-section > .file-body > .diff-container {
+    border-radius: 0;
+  }
+  #filesContainer > .file-section:not([open]) > .file-header { border-bottom: none; }
+  /* Square corners need no clipping, and this selector outranks the
+     `.diff-container { overflow-x: auto }` rule above that gives long lines
+     their horizontal scroll — hand it back explicitly. */
+  #filesContainer > .file-section > .file-body > .diff-container {
+    overflow-x: auto;
+    overflow-y: visible;
   }
 }
 
