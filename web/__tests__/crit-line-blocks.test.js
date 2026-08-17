@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const markdownit = require('markdown-it');
 
 // Load crit-line-blocks.js in a fake-browser shim.
 const src = fs.readFileSync(path.join(__dirname, '..', 'crit-line-blocks.js'), 'utf8');
@@ -213,6 +214,28 @@ test('addGapLineBlocks marks empty lines as isEmpty', () => {
   assert.equal(blocks[1].isEmpty, true);
   assert.equal(blocks[2].isEmpty, true);
   assert.equal(blocks[3].isEmpty, false);
+});
+
+// --- rendered tables ---
+
+test('buildLineBlocks groups table rows for native table rendering', () => {
+  const md = markdownit();
+  const source = '| Label | Status |\n' +
+    '| --- | --- |\n' +
+    '| [x](https://example.com/a/very/long/hidden/path) | available |';
+  const blocks = lineBlocks.buildLineBlocks(md.parse(source, {}), md, source);
+
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[0].tableId, blocks[1].tableId);
+  assert.equal(blocks[1].tableId, blocks[2].tableId);
+  assert.equal(blocks[0].tableSection, 'thead');
+  assert.equal(blocks[1].cssClass, 'table-separator');
+  assert.equal(blocks[2].tableSection, 'tbody');
+  assert.match(blocks[0].nativeRowHtml, /^<tr>/);
+  assert.doesNotMatch(blocks[0].nativeRowHtml, /<table|<colgroup/);
+  assert.match(blocks[0].html, /^<table class="split-table" data-table-id="table-0">/);
+  assert.match(blocks[0].html, /<col style="width:35\.71%"><col style="width:64\.29%">/);
+  assert.match(blocks[2].html, /<col style="width:35\.71%"><col style="width:64\.29%">/);
 });
 
 // --- buildLineBlocks ---

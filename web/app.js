@@ -2350,7 +2350,9 @@
     const prevAnchor = changeNavAnchorFromIdx(currentChangeIdx);
     changeGroups = [];
     // Document view: color-coded change blocks + deletion markers
-    const docEls = document.querySelectorAll('.line-block-added, .line-block-modified, .deletion-marker');
+    const docEls = Array.from(document.querySelectorAll('.line-block-added, .line-block-modified, .deletion-marker'))
+      .map(function(el) { return el.closest('.native-table-annotation') || el; })
+      .filter(function(el, index, elements) { return elements.indexOf(el) === index; });
     // Diff view: diff-added and diff-removed blocks in rendered diff (file mode)
     const diffEls = document.querySelectorAll('.diff-view .line-block.diff-added, .diff-view .line-block.diff-removed, .diff-view-unified .line-block.diff-added, .diff-view-unified .line-block.diff-removed');
     const all = docEls.length > 0 ? docEls : diffEls;
@@ -2373,7 +2375,7 @@
 
   function isConsecutiveSibling(a, b) {
     // Check if b immediately follows a, skipping comment elements between them
-    let node = a.nextElementSibling;
+    let node = nextLogicalTableSibling(a);
     while (node && node !== b) {
       // A non-changed line-block in between breaks the group
       if (node.classList.contains('line-block') &&
@@ -2382,10 +2384,18 @@
           !node.classList.contains('diff-added') &&
           !node.classList.contains('diff-removed')) return false;
       // Deletion markers don't break the group
-      if (node.classList.contains('deletion-marker')) { node = node.nextElementSibling; continue; }
-      node = node.nextElementSibling;
+      if (node.classList.contains('deletion-marker')) { node = nextLogicalTableSibling(node); continue; }
+      node = nextLogicalTableSibling(node);
     }
     return node === b;
+  }
+
+  function nextLogicalTableSibling(node) {
+    if (node.nextElementSibling) return node.nextElementSibling;
+    const section = node.parentElement;
+    if (!section || section.tagName !== 'THEAD') return null;
+    const table = section.closest('table.native-table');
+    return table && table.tBodies.length ? table.tBodies[0].firstElementChild : null;
   }
 
   function navigateToChange(dir, _mountedPath) {
@@ -3284,11 +3294,53 @@
       }
     }
 
+    let activeTableId = null;
+    let activeTableHead = null;
+    let activeTableBody = null;
+
+    function appendTableAnnotation(section, element) {
+      const row = document.createElement('tr');
+      row.className = 'native-table-annotation';
+      if (element.dataset.filePath) row.dataset.filePath = element.dataset.filePath;
+      const cell = document.createElement('td');
+      cell.colSpan = 100;
+      cell.appendChild(element);
+      row.appendChild(cell);
+      section.appendChild(row);
+    }
+
     for (let bi = 0; bi < file.lineBlocks.length; bi++) {
       const block = file.lineBlocks[bi];
+      const isTableBlock = !!block.tableId;
 
-      const lineBlockEl = document.createElement('div');
+      if (isTableBlock && block.tableId !== activeTableId) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'native-table-wrapper';
+        const table = document.createElement('table');
+        table.className = 'native-table';
+        activeTableHead = document.createElement('thead');
+        activeTableBody = document.createElement('tbody');
+        table.appendChild(activeTableHead);
+        table.appendChild(activeTableBody);
+        wrapper.appendChild(table);
+        container.appendChild(wrapper);
+        activeTableId = block.tableId;
+      } else if (!isTableBlock) {
+        activeTableId = null;
+        activeTableHead = null;
+        activeTableBody = null;
+      }
+      const tableSection = isTableBlock && block.tableSection === 'thead'
+        ? activeTableHead
+        : activeTableBody;
+
+      const lineBlockEl = document.createElement(isTableBlock ? 'tr' : 'div');
       lineBlockEl.className = 'line-block kb-nav';
+      if (isTableBlock && block.cssClass) {
+        block.cssClass.split(/\s+/).forEach(function(className) {
+          if (className) lineBlockEl.classList.add(className);
+        });
+      }
       lineBlockEl.dataset.blockIndex = bi;
       lineBlockEl.dataset.startLine = block.startLine;
       lineBlockEl.dataset.endLine = block.endLine;
@@ -3349,17 +3401,42 @@
       commentGutter.appendChild(lineAdd);
       commentGutter.addEventListener('mousedown', handleGutterMouseDown);
 
-      // Content
-      const content = document.createElement('div');
-      content.className = buildContentClasses(block);
-      let html = block.html;
-      html = processTaskLists(html);
-      html = rewriteImageSrcs(html, file.path);
-      content.innerHTML = html;
-
       gutter.appendChild(commentGutter);
-      lineBlockEl.appendChild(gutter);
-      lineBlockEl.appendChild(content);
+      if (isTableBlock) {
+        const gutterCell = document.createElement('td');
+        gutterCell.className = 'native-table-gutter';
+        gutterCell.appendChild(gutter);
+        lineBlockEl.appendChild(gutterCell);
+
+        if (block.cssClass && block.cssClass.indexOf('table-separator') !== -1) {
+          lineBlockEl.classList.add('native-table-separator');
+          const separatorCell = document.createElement('td');
+          separatorCell.colSpan = 100;
+          lineBlockEl.appendChild(separatorCell);
+        } else {
+          let html = processTaskLists(block.nativeRowHtml || block.html);
+          html = rewriteImageSrcs(html, file.path);
+          const scratch = document.createElement('table');
+          scratch.innerHTML = '<tbody>' + html + '</tbody>';
+          const renderedRow = scratch.querySelector('tr');
+          if (renderedRow) {
+            while (renderedRow.firstChild) {
+              const cell = renderedRow.firstChild;
+              cell.className = buildContentClasses(block) + (cell.className ? ' ' + cell.className : '');
+              lineBlockEl.appendChild(cell);
+            }
+          }
+        }
+      } else {
+        const content = document.createElement('div');
+        content.className = buildContentClasses(block);
+        let html = block.html;
+        html = processTaskLists(html);
+        html = rewriteImageSrcs(html, file.path);
+        content.innerHTML = html;
+        lineBlockEl.appendChild(gutter);
+        lineBlockEl.appendChild(content);
+      }
 
       // Insert deletion marker before this block if deletions occurred before it
       if (changeInfo && bi === 0 && deletionMarkerMap[0]) {
@@ -3367,10 +3444,12 @@
         marker0.className = 'deletion-marker';
         marker0.dataset.filePath = file.path;
         marker0.textContent = '\u2212' + deletionMarkerMap[0].count + ' line' + (deletionMarkerMap[0].count !== 1 ? 's' : '');
-        container.appendChild(marker0);
+        if (isTableBlock) appendTableAnnotation(tableSection, marker0);
+        else container.appendChild(marker0);
       }
 
-      container.appendChild(lineBlockEl);
+      if (isTableBlock) tableSection.appendChild(lineBlockEl);
+      else container.appendChild(lineBlockEl);
 
       // Insert deletion marker after this block if deletions occurred after it
       if (changeInfo && deletionMarkerMap[block.endLine]) {
@@ -3378,15 +3457,20 @@
         marker.className = 'deletion-marker';
         marker.dataset.filePath = file.path;
         marker.textContent = '\u2212' + deletionMarkerMap[block.endLine].count + ' line' + (deletionMarkerMap[block.endLine].count !== 1 ? 's' : '');
-        container.appendChild(marker);
+        if (isTableBlock) appendTableAnnotation(tableSection, marker);
+        else container.appendChild(marker);
       }
 
       // Comments after block
       for (const comment of blockComments) {
         if (comment.resolved) {
-          container.appendChild(createResolvedElement(comment, file.path));
+          const commentEl = createResolvedElement(comment, file.path);
+          if (isTableBlock) appendTableAnnotation(tableSection, commentEl);
+          else container.appendChild(commentEl);
         } else {
-          container.appendChild(createCommentElement(comment, file.path));
+          const commentEl = createCommentElement(comment, file.path);
+          if (isTableBlock) appendTableAnnotation(tableSection, commentEl);
+          else container.appendChild(commentEl);
         }
       }
 
@@ -3394,7 +3478,9 @@
       const fileForms = getFormsForFile(file.path);
       for (let fi = 0; fi < fileForms.length; fi++) {
         if (!fileForms[fi].editingId && fileForms[fi].afterBlockIndex === bi) {
-          container.appendChild(createCommentForm(fileForms[fi]));
+          const formEl = createCommentForm(fileForms[fi]);
+          if (isTableBlock) appendTableAnnotation(tableSection, formEl);
+          else container.appendChild(formEl);
         }
       }
     }
@@ -6102,9 +6188,11 @@
           const s = parseInt(el.dataset.startLine);
           const e = parseInt(el.dataset.endLine);
           if (s <= ln && e >= ln) {
-            // Get the content div (skip gutter)
-            const content = el.querySelector('.line-content');
-            if (content && contentEls.indexOf(content) === -1) contentEls.push(content);
+            // Native table rows have one content element per cell. Other
+            // blocks have one content div.
+            el.querySelectorAll('.line-content').forEach(function(content) {
+              if (contentEls.indexOf(content) === -1) contentEls.push(content);
+            });
           }
         });
         // Diff view: diff lines with data-diff-line-num
@@ -6120,21 +6208,26 @@
 
       if (contentEls.length === 0) return;
 
-      // Collect all text nodes across the content elements
-      const textNodes = [];
-      contentEls.forEach(function(el) {
+      // Preserve a whitespace boundary between cells/line blocks while retaining
+      // each real text node's offsets for DOM highlighting.
+      const nodeRanges = [];
+      let fullText = '';
+      contentEls.forEach(function(el, contentIndex) {
+        if (contentIndex > 0) fullText += ' ';
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
         let node;
         while ((node = walker.nextNode())) {
-          if (node.textContent.length > 0) textNodes.push(node);
+          if (node.textContent.length === 0) continue;
+          const start = fullText.length;
+          fullText += node.textContent;
+          nodeRanges.push({ node: node, start: start, end: fullText.length });
         }
       });
 
-      if (textNodes.length === 0) return;
+      if (nodeRanges.length === 0) return;
 
       // Build concatenated text and find the quote within it.
       // Normalize the quote: collapse whitespace/newlines so cross-line selections match.
-      const fullText = textNodes.map(function(n) { return n.textContent; }).join('');
       const normalizedQuote = comment.quote.replace(/\s+/g, ' ');
       const normalizedFull = fullText.replace(/\s+/g, ' ');
       let quoteIdx = -1;
@@ -6181,20 +6274,19 @@
 
       // Walk text nodes to find which ones overlap with the quote range
       const quoteEnd = quoteIdx + matchLen;
-      let pos = 0;
-      for (let i = 0; i < textNodes.length; i++) {
-        const node = textNodes[i];
-        const nodeEnd = pos + node.textContent.length;
-        if (nodeEnd <= quoteIdx) { pos = nodeEnd; continue; }
-        if (pos >= quoteEnd) break;
+      for (let i = 0; i < nodeRanges.length; i++) {
+        const nodeRange = nodeRanges[i];
+        const node = nodeRange.node;
+        if (nodeRange.end <= quoteIdx) continue;
+        if (nodeRange.start >= quoteEnd) break;
 
         // This node overlaps with the quote range
-        const startInNode = Math.max(0, quoteIdx - pos);
-        const endInNode = Math.min(node.textContent.length, quoteEnd - pos);
+        const startInNode = Math.max(0, quoteIdx - nodeRange.start);
+        const endInNode = Math.min(node.textContent.length, quoteEnd - nodeRange.start);
 
         // Skip wrapping whitespace-only matches (e.g. newlines between blocks)
         const matchText = node.textContent.slice(startInNode, endInNode);
-        if (!matchText.trim()) { pos = nodeEnd; continue; }
+        if (!matchText.trim()) continue;
 
         if (startInNode === 0 && endInNode === node.textContent.length) {
           // Wrap entire text node
@@ -6218,7 +6310,6 @@
           if (after) frag.appendChild(document.createTextNode(after));
           node.parentNode.replaceChild(frag, node);
         }
-        pos = nodeEnd;
       }
     });
   }
@@ -9875,11 +9966,12 @@
             if (el.dataset.filePath !== range.filePath) return;
             const s = parseInt(el.dataset.startLine), endLn = parseInt(el.dataset.endLine);
             if (s <= ln && endLn >= ln) {
-              const content = el.querySelector('.line-content');
-              if (content && contentEls.indexOf(content) === -1) {
-                fullText += (fullText ? '\n' : '') + content.textContent.trim();
-                contentEls.push(content);
-              }
+              el.querySelectorAll('.line-content').forEach(function(content) {
+                if (contentEls.indexOf(content) === -1) {
+                  fullText += (fullText ? '\n' : '') + content.textContent.trim();
+                  contentEls.push(content);
+                }
+              });
             }
           });
           const selSide = range.side || '';
@@ -9908,6 +10000,7 @@
             let charsBefore = 0;
             let foundEl = false;
             for (let ci = 0; ci < contentEls.length; ci++) {
+              if (ci > 0) charsBefore++;
               if (contentEls[ci].contains(startContainer)) {
                 const walker = document.createTreeWalker(contentEls[ci], NodeFilter.SHOW_TEXT, null);
                 let tn;
@@ -9925,13 +10018,8 @@
             }
 
             if (foundEl) {
-              let rawAll = '';
-              const rawUpTo = charsBefore;
-              for (let ri = 0; ri < contentEls.length; ri++) {
-                rawAll += contentEls[ri].textContent;
-                if (contentEls[ri].contains(startContainer)) break;
-              }
-              const textBefore = rawAll.slice(0, rawUpTo);
+              const rawAll = contentEls.map(function(el) { return el.textContent; }).join(' ');
+              const textBefore = rawAll.slice(0, charsBefore);
               quoteOffset = textBefore.replace(/\s+/g, ' ').trimStart().length;
             }
           } catch { /* offset is a nice-to-have */ }
