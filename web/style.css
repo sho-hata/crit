@@ -41,12 +41,22 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Narrow windows: the compare rail truncates first (see the header
+     responsive block below). flex-wrap is the last-resort valve — when even
+     the compacted clusters don't fit on one line, header-right drops to a
+     second row instead of overflowing the document (which pushed Approve
+     off-screen and gave the page a horizontal scrollbar). --header-height is
+     re-measured on resize, so sticky offsets follow the taller header. */
+  flex-wrap: wrap;
+  row-gap: 8px;
+  column-gap: 16px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .header-title {
@@ -319,24 +329,42 @@ body {
   font-size: 12px;
   font-weight: 500;
 }
-@media (max-width: 860px) {
-  .update-btn-label { display: none; }
-  .update-btn { padding: 5px; }
-}
-
 .header-right {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .viewed-count {
   font-size: 12px;
   color: var(--crit-editor-fg-muted);
   font-weight: 500;
+  white-space: nowrap;
 }
 .viewed-count.all-viewed {
   color: var(--crit-green);
+}
+
+/* ===== Header responsive compaction ===== */
+@media (max-width: 1320px) {
+  .compare-target-prefix { display: none; }
+  .update-btn-label { display: none; }
+  .update-btn { padding: 5px; }
+  .viewed-count-label { display: none; }
+  .header-chip.header-context #branchName { max-width: 20ch; }
+  .base-branch-label { max-width: 14ch; }
+  .resume-pr-pill { max-width: 16ch; }
+}
+@media (max-width: 1040px) {
+  .header { padding: 12px 16px; }
+  .header-chip.header-context #branchName { max-width: 12ch; }
+  .base-branch-label { max-width: 9ch; }
+  .resume-pr-pill { max-width: 10ch; }
+  .header-right { gap: 8px; }
+  .header-right .scope-toggle .toggle-btn,
+  .header-right .diff-mode-toggle .toggle-btn { padding: 3px 7px; }
 }
 
 .comment-count-btn {
