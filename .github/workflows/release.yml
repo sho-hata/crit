@@ -153,3 +153,28 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -m "Update fcrit to ${TAG}"
           git push origin main
+
+      - name: Sync Claude Code plugin version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          PLUGIN=integrations/claude-code/.claude-plugin/plugin.json
+
+          git fetch origin main
+          git checkout -B main origin/main
+
+          if [ "$(jq -r .version "$PLUGIN")" = "$VERSION" ]; then
+            echo "plugin.json already at ${VERSION}"
+            exit 0
+          fi
+
+          tmp=$(mktemp)
+          jq --arg v "$VERSION" '.version = $v' "$PLUGIN" > "$tmp"
+          mv "$tmp" "$PLUGIN"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$PLUGIN"
+          git commit -m "chore(plugin): sync Claude Code plugin version to ${TAG}"
+          git push origin main

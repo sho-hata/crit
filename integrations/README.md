@@ -44,6 +44,16 @@ claude plugin install crit@crit
 
 The marketplace manifest lives at the repo root (`.claude-plugin/marketplace.json`) and points to the plugin files in `integrations/claude-code/`.
 
+Claude Code keys marketplaces by the `name` field in that manifest, and `claude plugin marketplace add` has no rename option. This fork keeps the name `crit`, so it cannot coexist with upstream's `tomasz-tomczyk/crit` marketplace (both would install as `crit@crit`, and both ship the same `crit` binary anyway). If upstream's is already registered, remove it first:
+
+```
+claude plugin marketplace remove crit
+claude plugin marketplace add sho-hata/crit
+claude plugin install crit@crit
+```
+
+To pick up later releases: `claude plugin marketplace update crit && claude plugin update crit@crit`. The plugin version in `integrations/claude-code/.claude-plugin/plugin.json` is synced to the release tag by `.github/workflows/release.yml`.
+
 ### `crit install` vs plugin marketplace
 
 | | `crit install` | Plugin marketplace |

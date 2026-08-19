@@ -67,6 +67,7 @@ Claude Code:
 claude plugin marketplace add sho-hata/crit
 claude plugin install crit@crit
 ```
+> Already using upstream's crit plugin? Its marketplace is also named `crit`, and Claude Code keys marketplaces by name, so run `claude plugin marketplace remove crit` before the commands above. Updates: `claude plugin marketplace update crit && claude plugin update crit@crit`.
 
 Crit also works with Cursor, GitHub Copilot, OpenCode, Codex, Gemini, Qwen, Hermes, Windsurf, Cline, Grok, Aider, and Pi — any agent that can read a file and run a command. See [`integrations/`](integrations/) for all install methods and details.
 

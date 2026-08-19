@@ -2,14 +2,14 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "crit",
   "owner": {
-    "name": "Tomasz Tomczyk"
+    "name": "sho-hata"
   },
   "plugins": [
     {
       "name": "crit",
-      "description": "Close the feedback loop on AI coding: review plans and code changes with GitHub-style inline comments, then let the agent address them.",
+      "description": "Fork of crit with Go code intelligence (gopls hover / go-to-definition) in diffs: review plans and code changes with GitHub-style inline comments, then let the agent address them.",
       "source": "./integrations/claude-code",
-      "homepage": "https://crit.md",
+      "homepage": "https://github.com/sho-hata/crit",
       "category": "development"
     }
   ]
