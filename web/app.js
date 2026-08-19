@@ -7298,7 +7298,14 @@
     }
     const el = document.getElementById('viewedCount');
     if (files.length <= 1) { el.textContent = ''; return; }
-    el.textContent = viewed + ' / ' + files.length + ' files viewed';
+    el.textContent = '';
+    const num = document.createElement('span');
+    num.textContent = viewed + ' / ' + files.length;
+    const label = document.createElement('span');
+    label.className = 'viewed-count-label';
+    label.textContent = ' files viewed';
+    el.appendChild(num);
+    el.appendChild(label);
     el.classList.toggle('all-viewed', viewed === files.length);
   }
 
