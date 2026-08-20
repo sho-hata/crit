@@ -40,9 +40,9 @@ func newLiveProxy(upstreamOrigin string, apiPort int, upstreamCookies string) (h
 	}
 
 	// Use a transport with DisableCompression=true so http.Transport does
-	// not silently re-add Accept-Encoding: gzip after the rewrite hook
-	// strips it. Stripping matters because we need the upstream body
-	// uncompressed in order to inject scripts.
+	// not silently re-add Accept-Encoding: gzip after our Rewrite strips
+	// it. Stripping matters because we need the upstream body uncompressed
+	// in order to inject scripts.
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          100,
@@ -53,16 +53,11 @@ func newLiveProxy(upstreamOrigin string, apiPort int, upstreamCookies string) (h
 	}
 
 	rp := &httputil.ReverseProxy{
-		// Rewrite, not the deprecated Director: only the origin is
-		// retargeted, never the path — upstreamOrigin's own path prefix is
-		// handled by the caller, so httputil.ProxyRequest.SetURL (which
-		// joins paths) is deliberately not used. SetXForwarded restores the
-		// X-Forwarded-For that the Director path used to add on its own.
 		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			// SetURL does not add X-Forwarded-*; ReverseProxy only did that
+			// under the deprecated Director hook.
 			pr.SetXForwarded()
-			pr.Out.URL.Scheme = target.Scheme
-			pr.Out.URL.Host = target.Host
-			pr.Out.Host = target.Host
 			pr.Out.Header.Del("Accept-Encoding")
 			pr.Out.Header.Del("If-None-Match")
 			pr.Out.Header.Del("If-Modified-Since")
