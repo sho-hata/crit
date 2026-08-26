@@ -85,6 +85,21 @@ func (s *Server) lspAvailable() bool {
 	return lsp.GoplsAvailable()
 }
 
+// lspRoot returns the directory LSP features operate on: the workspace the
+// language server is anchored at, the base for repo-relative request paths,
+// the root peek reads are authorized against, and the base used to map
+// server result paths back to repo-relative paths for the frontend. Every
+// LSP code path must go through this rather than sess.RepoRoot so that the
+// workspace can be pointed somewhere other than the working tree (a checkout
+// of Focus.HeadSHA for range/PR focus) without the pieces drifting apart.
+func (s *Server) lspRoot() string {
+	sess := s.session.Load()
+	if sess == nil {
+		return ""
+	}
+	return sess.RepoRoot
+}
+
 // lspManager returns the shared LSP provider, creating it on first call.
 // gopls itself is spawned even later — on the first LSP request inside the
 // manager (lazy start keeps parallel worktree daemons cheap).
@@ -97,7 +112,7 @@ func (s *Server) lspManager() lspProvider {
 		} else {
 			// shutdownCtx bounds the gopls subprocess: SIGINT/SIGTERM on the
 			// daemon kills it instead of leaking.
-			s.lsp.prov = lsp.NewManager(s.session.Load().RepoRoot, s.shutdownCtx)
+			s.lsp.prov = lsp.NewManager(s.lspRoot(), s.shutdownCtx)
 		}
 	}
 	return s.lsp.prov
@@ -143,7 +158,7 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		http.Error(w, "char must be a non-negative integer", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
-	repoRoot := s.session.Load().RepoRoot
+	root := s.lspRoot()
 
 	if filepath.IsAbs(reqPath) {
 		// Absolute paths support chained jumps from the peek popup. They are
@@ -151,7 +166,7 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		// root / GOROOT / GOMODCACHE) — this endpoint must not become a
 		// general filesystem probe.
 		absPath = filepath.Clean(reqPath)
-		if !s.lspPathAllowed(absPath, repoRoot) {
+		if !s.lspPathAllowed(absPath, root) {
 			http.Error(w, "Access denied", http.StatusForbidden)
 			return "", 0, 0, false
 		}
@@ -163,8 +178,8 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		http.Error(w, "Invalid file path", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
-	absPath = filepath.Join(repoRoot, filepath.FromSlash(cleaned))
-	if !pathWithinRoot(absPath, repoRoot) {
+	absPath = filepath.Join(root, filepath.FromSlash(cleaned))
+	if !pathWithinRoot(absPath, root) {
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return "", 0, 0, false
 	}
@@ -185,34 +200,44 @@ const (
 // return many locations concentrated in few files, and each classification
 // resolves symlinks against up to three roots.
 type rootCache struct {
-	repoRoot, goroot, gomodcache string
-	seen                         map[string]rootKind
+	root, goroot, gomodcache string
+	seen                     map[string]rootKind
 }
 
-func newRootCache(repoRoot, goroot, gomodcache string) *rootCache {
+func newRootCache(root, goroot, gomodcache string) *rootCache {
 	return &rootCache{
-		repoRoot:   repoRoot,
+		root:       root,
 		goroot:     goroot,
 		gomodcache: gomodcache,
 		seen:       make(map[string]rootKind),
 	}
 }
 
+// relPath maps an absolute path under the LSP root to the slash-separated
+// repo-relative form the frontend and Session.FileByPath use.
+func (c *rootCache) relPath(absPath string) (string, bool) {
+	rel, err := filepath.Rel(c.root, absPath)
+	if err != nil {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
 func (c *rootCache) classify(absPath string) rootKind {
 	if kind, ok := c.seen[absPath]; ok {
 		return kind
 	}
-	kind := classifyRoot(absPath, c.repoRoot, c.goroot, c.gomodcache)
+	kind := classifyRoot(absPath, c.root, c.goroot, c.gomodcache)
 	c.seen[absPath] = kind
 	return kind
 }
 
 // classifyRoot resolves absPath against the three roots LSP features may
-// touch and reports which one contains it. This is the single source of
+// touch (LSP root, GOROOT, GOMODCACHE) and reports which one contains it. This is the single source of
 // truth for authorization (lspPathAllowed), peek readability, and display
 // formatting — the classification must never drift between those uses.
-func classifyRoot(absPath, repoRoot, goroot, gomodcache string) rootKind {
-	if pathWithinRoot(absPath, repoRoot) {
+func classifyRoot(absPath, root, goroot, gomodcache string) rootKind {
+	if pathWithinRoot(absPath, root) {
 		return rootRepo
 	}
 	if goroot != "" && pathWithinRoot(absPath, goroot) {
@@ -225,10 +250,10 @@ func classifyRoot(absPath, repoRoot, goroot, gomodcache string) rootKind {
 }
 
 // lspPathAllowed reports whether an absolute path lies under one of the
-// roots LSP features may touch: repo root, GOROOT, or GOMODCACHE.
-func (s *Server) lspPathAllowed(absPath, repoRoot string) bool {
+// roots LSP features may touch: the LSP root, GOROOT, or GOMODCACHE.
+func (s *Server) lspPathAllowed(absPath, root string) bool {
 	goroot, gomodcache := s.lspManager().GoEnv()
-	return classifyRoot(absPath, repoRoot, goroot, gomodcache) != rootNone
+	return classifyRoot(absPath, root, goroot, gomodcache) != rootNone
 }
 
 // handleLSPHover returns hover documentation for a position.
@@ -278,10 +303,10 @@ func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := s.session.Load()
 	goroot, gomodcache := mgr.GoEnv()
-	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
+	rc := newRootCache(s.lspRoot(), goroot, gomodcache)
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines, rc))
+		resp = append(resp, resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp})
 }
@@ -306,7 +331,7 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 	goroot, gomodcache := mgr.GoEnv()
 	// Classification is memoized per file: references cluster in a handful
 	// of files, and each classifyRoot call resolves symlinks.
-	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
+	rc := newRootCache(s.lspRoot(), goroot, gomodcache)
 	sortReferences(locations, sess, rc)
 
 	truncated := len(locations) > maxReferenceLocations
@@ -315,7 +340,7 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines, rc))
+		resp = append(resp, resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp, "truncated": truncated})
 }
@@ -328,10 +353,8 @@ func referenceRank(path string, sess *Session, rc *rootCache) int {
 	if kind != rootRepo {
 		return 2 // stdlib, module cache, elsewhere
 	}
-	if rel, err := filepath.Rel(sess.RepoRoot, path); err == nil {
-		if sess.FileByPath(filepath.ToSlash(rel)) != nil {
-			return 0 // a file under review
-		}
+	if rel, ok := rc.relPath(path); ok && sess.FileByPath(rel) != nil {
+		return 0 // a file under review
 	}
 	return 1 // elsewhere in the repo
 }
@@ -368,17 +391,15 @@ func sortReferences(locations []lsp.Location, sess *Session, rc *rootCache) {
 // windows, references small ones). Peek reads are restricted to paths gopls
 // itself returned AND within repoRoot, GOROOT, or GOMODCACHE — there is
 // deliberately no general file-read endpoint behind this.
-func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
-	repoRoot := sess.RepoRoot
+func resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
 	out := lspLocationResponse{Line: loc.Line + 1}
 
 	kind := rc.classify(loc.Path)
 	if kind == rootRepo {
-		rel, err := filepath.Rel(repoRoot, loc.Path)
-		if err != nil {
-			rel = loc.Path
+		relSlash, ok := rc.relPath(loc.Path)
+		if !ok {
+			relSlash = loc.Path
 		}
-		relSlash := filepath.ToSlash(rel)
 		out.Path = relSlash
 		out.DisplayPath = relSlash
 		out.InRepo = true
