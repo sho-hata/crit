@@ -75,8 +75,8 @@ func newLiveProxy(upstreamOrigin string, apiPort int, upstreamCookies string) (h
 			if pr.Out.Header.Get("Origin") != "" {
 				pr.Out.Header.Set("Origin", target.Scheme+"://"+target.Host)
 			}
-			if pr.Out.Header.Get("Referer") != "" {
-				pr.Out.Header.Set("Referer", target.Scheme+"://"+target.Host+pr.Out.URL.Path)
+			if ref := pr.Out.Header.Get("Referer"); ref != "" {
+				pr.Out.Header.Set("Referer", rewriteReferer(ref, target))
 			}
 		},
 		Transport:      transport,
@@ -401,4 +401,31 @@ func BindProxyServer(upstreamOrigin string, apiPort int, upstreamCookies string)
 		IdleTimeout: 60 * time.Second,
 	}
 	return ln, srv, nil
+}
+
+// rewriteReferer swaps in the upstream origin but keeps the referring page's own path
+// and query, which frameworks read to work out where "redirect back" should land.
+// Path is built the same way as rewriteRedirect: never via url.URL.String(), and
+// leading "//" is collapsed so a forged Referer cannot become protocol-relative
+// when an app turns it into a Location.
+func rewriteReferer(ref string, upstream *url.URL) string {
+	origin := upstream.Scheme + "://" + upstream.Host
+	refURL, err := url.Parse(ref)
+	if err != nil {
+		return origin
+	}
+	path := refURL.EscapedPath()
+	if path == "" {
+		path = "/"
+	} else if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	for strings.HasPrefix(path, "//") {
+		path = "/" + strings.TrimLeft(path, "/")
+	}
+	out := origin + path
+	if refURL.RawQuery != "" {
+		out += "?" + refURL.RawQuery
+	}
+	return out
 }

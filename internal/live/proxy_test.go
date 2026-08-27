@@ -386,6 +386,85 @@ func TestProxyRewrite_TargetPathIsNotPrefixedOntoRequests(t *testing.T) {
 	}
 }
 
+func TestProxyRewrite_RefererKeepsReferringPagePath(t *testing.T) {
+	var gotReferer string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotReferer = r.Header.Get("Referer")
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintln(w, "<html><body>ok</body></html>")
+	}))
+	defer upstream.Close()
+	proxy, _ := newLiveProxy(upstream.URL, 9001, "")
+	ps := httptest.NewServer(proxy)
+	defer ps.Close()
+	// A form on /claims/create posting to /claims: "redirect back" reads the
+	// referer, so it has to point at the create page
+	req, _ := http.NewRequest(http.MethodPost, ps.URL+"/claims", nil)
+	req.Header.Set("Referer", ps.URL+"/claims/create?step=2")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	resp.Body.Close()
+	want := upstream.URL + "/claims/create?step=2"
+	if gotReferer != want {
+		t.Errorf("Referer = %q, want %q", gotReferer, want)
+	}
+}
+
+func TestProxyRewrite_RefererDropsUserinfoAndFragment(t *testing.T) {
+	var gotReferer string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotReferer = r.Header.Get("Referer")
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintln(w, "<html><body>ok</body></html>")
+	}))
+	defer upstream.Close()
+	proxy, _ := newLiveProxy(upstream.URL, 9001, "")
+	ps := httptest.NewServer(proxy)
+	defer ps.Close()
+	psURL, _ := url.Parse(ps.URL)
+	req, _ := http.NewRequest(http.MethodPost, ps.URL+"/claims", nil)
+	req.Header.Set("Referer", "http://user:pass@"+psURL.Host+"/claims/create#section")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	resp.Body.Close()
+	want := upstream.URL + "/claims/create"
+	if gotReferer != want {
+		t.Errorf("Referer = %q, want %q (userinfo and fragment must not reach the upstream)", gotReferer, want)
+	}
+}
+
+func TestRewriteReferer(t *testing.T) {
+	upstream, err := url.Parse("http://app.test:3000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "http://app.test:3000"
+	cases := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{name: "keeps path and query", ref: "http://127.0.0.1:9/claims/create?step=2", want: origin + "/claims/create?step=2"},
+		{name: "drops userinfo and fragment", ref: "http://user:pass@127.0.0.1:9/claims/create#x", want: origin + "/claims/create"},
+		{name: "collapses double-slash path", ref: "http://127.0.0.1:9//evil.com/x", want: origin + "/evil.com/x"},
+		{name: "relative without slash", ref: "claims/create", want: origin + "/claims/create"},
+		{name: "empty path becomes slash", ref: "http://127.0.0.1:9", want: origin + "/"},
+		{name: "unparseable falls back to origin", ref: "://bad", want: origin},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rewriteReferer(tc.ref, upstream)
+			if got != tc.want {
+				t.Errorf("rewriteReferer(%q) = %q, want %q", tc.ref, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestProxyRewrite_SendsForwardedHeaders(t *testing.T) {
 	var gotHost, gotProto, gotPort, gotFor string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
