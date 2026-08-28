@@ -117,15 +117,22 @@ func rangeLSPSupported(sess *Session) bool {
 // workspace can be pointed somewhere other than the working tree (a checkout
 // of Focus.HeadSHA for range/PR focus) without the pieces drifting apart.
 func (s *Server) lspRoot() string {
+	s.lsp.mu.Lock()
+	defer s.lsp.mu.Unlock()
+	return s.lspRootLocked()
+}
+
+// lspRootLocked is lspRoot for callers that already hold s.lsp.mu. sync.Mutex
+// is not reentrant, so a locked caller (lspManager) must never route through
+// lspRoot — that self-deadlocks the request and leaves the mutex held for the
+// daemon's lifetime.
+func (s *Server) lspRootLocked() string {
 	sess := s.session.Load()
 	if sess == nil {
 		return ""
 	}
-	s.lsp.mu.Lock()
-	wt := s.lsp.worktreeDir
-	s.lsp.mu.Unlock()
-	if wt != "" {
-		return wt
+	if s.lsp.worktreeDir != "" {
+		return s.lsp.worktreeDir
 	}
 	return sess.RepoRoot
 }
@@ -255,7 +262,7 @@ func (s *Server) lspManager() lspProvider {
 		} else {
 			// shutdownCtx bounds the gopls subprocess: SIGINT/SIGTERM on the
 			// daemon kills it instead of leaking.
-			s.lsp.prov = lsp.NewManager(s.lspRoot(), s.shutdownCtx)
+			s.lsp.prov = lsp.NewManager(s.lspRootLocked(), s.shutdownCtx)
 		}
 	}
 	return s.lsp.prov

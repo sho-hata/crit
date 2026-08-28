@@ -921,3 +921,32 @@ func TestLSPEnabledConfigDefault(t *testing.T) {
 		t.Error("LSPEnabled must default to true")
 	}
 }
+
+// TestLSPManagerDefaultProviderNoDeadlock covers the real provider branch of
+// lspManager (newProvider unset), which resolves the workspace root while
+// already holding s.lsp.mu. Every other test injects a fake provider and so
+// never enters that branch — which is how a self-deadlock there (routing
+// through lspRoot, which takes the same non-reentrant mutex, hanging every
+// LSP request for the daemon's lifetime) once shipped. lsp.NewManager does
+// not spawn gopls, so this needs no binary on PATH.
+func TestLSPManagerDefaultProviderNoDeadlock(t *testing.T) {
+	t.Parallel()
+
+	srv, sess := newLSPTestServer(t, nil)
+	srv.lsp.newProvider = nil
+
+	done := make(chan lspProvider, 1)
+	go func() { done <- srv.lspManager() }()
+	select {
+	case prov := <-done:
+		if prov == nil {
+			t.Fatal("lspManager returned a nil provider")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("lspManager deadlocked resolving the workspace root")
+	}
+	if got := srv.lspRoot(); got != sess.RepoRoot {
+		t.Fatalf("lspRoot = %q, want %q", got, sess.RepoRoot)
+	}
+	srv.ShutdownLSP()
+}
