@@ -25,7 +25,8 @@ import (
 // retry starts clean.
 //
 // Used to give a language server a real filesystem view of a commit that is
-// not the working tree (range/PR focus).
+// not the working tree (range/PR focus). Files land byte-for-byte as they are
+// in the commit — see noEOLConversion.
 func AddSparseWorktree(ctx context.Context, repoRoot, sha, dir string, patterns []string) error {
 	dir, err := absWorktreeDir(dir)
 	if err != nil {
@@ -52,7 +53,7 @@ func AddSparseWorktree(ctx context.Context, repoRoot, sha, dir string, patterns 
 		{"-C", dir, "checkout", "--quiet"},
 	}
 	for _, args := range steps {
-		if _, err := runGit(ctx, repoRoot, args...); err != nil {
+		if _, err := runGit(ctx, repoRoot, append(noEOLConversion(), args...)...); err != nil {
 			// Own timeout, not ctx: ctx may itself be why this step failed.
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), gitOpTimeout)
 			_ = removeWorktree(cleanupCtx, repoRoot, dir, true)
@@ -61,6 +62,17 @@ func AddSparseWorktree(ctx context.Context, repoRoot, sha, dir string, patterns 
 		}
 	}
 	return nil
+}
+
+// noEOLConversion returns the git options that keep a checkout byte-identical
+// to the blobs it comes from. Without them, a machine with core.autocrlf
+// enabled (the default on Windows) rewrites line endings on the way out, so
+// the worktree would no longer match the commit content the review pane
+// renders — and SparseTreeSize, which sums blob sizes, would under-count what
+// actually lands on disk. An explicit .gitattributes eol still wins, as it
+// should: that is the repository declaring its own on-disk form.
+func noEOLConversion() []string {
+	return []string{"-c", "core.autocrlf=false", "-c", "core.eol=lf"}
 }
 
 // RemoveWorktree is idempotent (a missing worktree is not an error) and never

@@ -48,6 +48,40 @@ func TestAddSparseWorktreeChecksOutOnlyMatchingFiles(t *testing.T) {
 	}
 }
 
+func TestAddSparseWorktreeKeepsBlobBytesUnderAutocrlf(t *testing.T) {
+	t.Parallel()
+	repo := InitTestRepo(t)
+	// core.autocrlf=true is the default on Windows. Left to it, git rewrites
+	// line endings on checkout: the worktree would stop matching the commit
+	// the review pane renders, and SparseTreeSize (blob bytes) would
+	// under-count what is on disk by one byte per line.
+	GitRun(t, repo, "config", "core.autocrlf", "true")
+	const content = "package a\n\nfunc A() {}\n"
+	patterns := []string{"*.go"}
+	sha := CommitAtForTest(t, repo, "a.go", content, "add a.go")
+
+	dir := filepath.Join(t.TempDir(), "wt")
+	if err := AddSparseWorktree(context.Background(), repo, sha, dir, patterns); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = RemoveWorktree(context.Background(), repo, dir) }()
+
+	got, err := os.ReadFile(filepath.Join(dir, "a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != content {
+		t.Errorf("worktree content = %q, want %q", got, content)
+	}
+	est, err := SparseTreeSize(context.Background(), repo, sha, patterns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(got)) != est {
+		t.Errorf("checked out %d bytes, SparseTreeSize estimated %d", len(got), est)
+	}
+}
+
 func TestAddSparseWorktreeResolvesAbbreviatedSHA(t *testing.T) {
 	t.Parallel()
 	repo := InitTestRepo(t)
