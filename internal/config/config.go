@@ -40,8 +40,13 @@ type Config struct {
 	// review UI. Defaults to true when unset; features only activate when the
 	// language server binary (gopls) is on PATH. Mergeable from project config —
 	// the spawned binary name is fixed, so a repo cannot hijack the command.
-	LSP          *bool `json:"lsp,omitempty"`
-	DisableStats bool  `json:"disable_stats,omitempty"`
+	LSP *bool `json:"lsp,omitempty"`
+	// LSPWorktreeMaxMB caps the size (in MB) of the sparse git worktree built
+	// to back LSP for range/PR focus (see internal/server syncLSPRoot).
+	// Defaults to 500 when unset; over the limit, LSP is skipped for that
+	// commit rather than checking out an oversized worktree.
+	LSPWorktreeMaxMB *int `json:"lsp_worktree_max_mb,omitempty"`
+	DisableStats     bool `json:"disable_stats,omitempty"`
 	// CloseOnApproveAfterMs, when set, auto-closes the review tab this many
 	// milliseconds after an Approve. Global-only (like open_cmd/agent_cmd) so
 	// a project repo cannot force tabs to close. Nil means disabled; the CLI
@@ -92,6 +97,19 @@ func (c Config) LSPEnabled() bool {
 	return true
 }
 
+// defaultLSPWorktreeMaxMB is LSPWorktreeSizeLimitMB's fallback when the
+// config key is unset.
+const defaultLSPWorktreeMaxMB = 500
+
+// LSPWorktreeSizeLimitMB returns the configured size limit (in MB) for the
+// range/PR-focus LSP worktree, defaulting to 500 when unset.
+func (c Config) LSPWorktreeSizeLimitMB() int {
+	if c.LSPWorktreeMaxMB != nil {
+		return *c.LSPWorktreeMaxMB
+	}
+	return defaultLSPWorktreeMaxMB
+}
+
 // NotifyOnRoundReadyEnabled returns whether desktop notifications should fire
 // when a review round becomes ready. Defaults to false if not explicitly set.
 func (c Config) NotifyOnRoundReadyEnabled() bool {
@@ -138,6 +156,7 @@ func defaultConfig() generatedConfig {
 		CleanupOnApprove:   true,
 		NotifyOnRoundReady: false,
 		LSP:                true,
+		LSPWorktreeMaxMB:   defaultLSPWorktreeMaxMB,
 		VCS:                "",
 		Prompts:            map[string]string{},
 		Hooks:              map[string]string{},
@@ -165,6 +184,7 @@ type generatedConfig struct {
 	CleanupOnApprove   bool              `json:"cleanup_on_approve"`
 	NotifyOnRoundReady bool              `json:"notify_on_round_ready"`
 	LSP                bool              `json:"lsp"`
+	LSPWorktreeMaxMB   int               `json:"lsp_worktree_max_mb"`
 	VCS                string            `json:"vcs"`
 	Prompts            map[string]string `json:"prompts"`
 	Hooks              map[string]string `json:"hooks"`
@@ -279,6 +299,9 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	// LSP carries presence implicitly (*bool, nil = unset).
 	if project.LSP != nil {
 		merged.LSP = project.LSP
+	}
+	if project.LSPWorktreeMaxMB != nil {
+		merged.LSPWorktreeMaxMB = project.LSPWorktreeMaxMB
 	}
 	if project.LiveCookie != "" {
 		merged.LiveCookie = project.LiveCookie

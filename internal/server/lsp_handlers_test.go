@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/lsp"
+	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -304,6 +307,87 @@ func TestShutdownLSPRemovesRangeWorktree(t *testing.T) {
 	}
 	if fake.shutdowns != 1 {
 		t.Errorf("shutdowns = %d, want 1", fake.shutdowns)
+	}
+}
+
+// TestLSPWorktreeSizeGuardBlocksOversizedCheckout covers the
+// lsp_worktree_max_mb guard: a HeadSHA whose sparse-checkout estimate
+// exceeds the configured limit must not be checked out.
+func TestLSPWorktreeSizeGuardBlocksOversizedCheckout(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, sess, repo, _ := newRangeLSPTestServer(t, fake)
+
+	big := "package main\n\n// " + strings.Repeat("x", 2*1024*1024) + "\n"
+	headSHA := vcs.CommitAtForTest(t, repo, "big.go", big, "add big file")
+	sess.Focus = Focus{Kind: FocusRange, BaseSHA: headSHA, HeadSHA: headSHA}
+	limitMB := 1
+	srv.cfg.LSPWorktreeMaxMB = &limitMB
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0")
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (size guard), body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "lsp_worktree_max_mb") {
+		t.Errorf("body = %q, want a size-limit error mentioning lsp_worktree_max_mb", w.Body.String())
+	}
+	if srv.lspRoot() != repo {
+		t.Errorf("lspRoot() = %q after a blocked checkout, want it to fall back to RepoRoot %q", srv.lspRoot(), repo)
+	}
+}
+
+// TestLSPWorktreeIdleCleanup covers the idle-shutdown path: a range-focus
+// worktree left untouched past the idle timeout must be torn down, along
+// with the Manager backed by it, the same way gopls itself idles out.
+func TestLSPWorktreeIdleCleanup(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, _, _, _ := newRangeLSPTestServer(t, fake)
+	srv.lsp.idleTimeout = 20 * time.Millisecond
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	root := srv.lspRoot()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(root); err == nil {
+		t.Error("lsp worktree still exists after the idle timeout")
+	}
+	if fake.shutdowns != 1 {
+		t.Errorf("shutdowns = %d, want 1 (idle timeout must also shut down the Manager)", fake.shutdowns)
+	}
+}
+
+// TestLSPWorktreeSelfHealsStaleLeftover covers restart-after-crash: a
+// worktree directory built by a prior (now-dead) daemon process, which this
+// process's in-memory lspState has no record of, must be cleared and
+// rebuilt rather than making every LSP request fail with "already exists".
+func TestLSPWorktreeSelfHealsStaleLeftover(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, _, repo, headSHA := newRangeLSPTestServer(t, fake)
+
+	dir := session.ReviewPathsFor(srv.reviewPath).LSPWorktree
+	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, goLspSparsePatterns); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := vcs.GitRun(t, srv.lspRoot(), "rev-parse", "HEAD"); got != headSHA {
+		t.Errorf("worktree HEAD = %s, want %s", got, headSHA)
 	}
 }
 

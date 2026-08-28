@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/sho-hata/crit/internal/lsp"
@@ -69,6 +70,12 @@ type lspState struct {
 	// worktreeSHA is the Focus.HeadSHA worktreeDir was built from, used to
 	// detect a focus switch to a different commit.
 	worktreeSHA string
+	// idleTimer drops worktreeDir (and prov) after lsp.DefaultIdleTimeout
+	// without an LSP request, matching gopls's own idle shutdown so a
+	// quietly-abandoned range-focus review doesn't keep a checkout on disk.
+	idleTimer *time.Timer
+	// idleTimeout overrides lsp.DefaultIdleTimeout in tests.
+	idleTimeout time.Duration
 	// newProvider creates the provider on first use; tests override it.
 	newProvider func() lspProvider
 	// binaryAvailable overrides the gopls PATH lookup in tests.
@@ -145,6 +152,7 @@ func (s *Server) syncLSPRoot() error {
 		return nil
 	}
 	if s.lsp.worktreeDir != "" && s.lsp.worktreeSHA == sess.Focus.HeadSHA {
+		s.touchLSPIdleLocked()
 		return nil // already rooted at this commit
 	}
 
@@ -154,12 +162,55 @@ func (s *Server) syncLSPRoot() error {
 	s.dropLSPRootLocked(sess)
 
 	dir := session.ReviewPathsFor(s.reviewPath).LSPWorktree
+	if _, err := os.Lstat(dir); err == nil {
+		// dropLSPRootLocked just ran and found no worktree of its own to
+		// remove, yet the directory exists — left behind by a daemon that
+		// crashed before it could clean up. AddSparseWorktree refuses an
+		// existing dir, so clear it before building fresh.
+		if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir); err != nil {
+			return fmt.Errorf("clearing stale lsp worktree: %w", err)
+		}
+	}
+
+	if limitMB := s.cfg.LSPWorktreeSizeLimitMB(); limitMB > 0 {
+		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, goLspSparsePatterns)
+		if err != nil {
+			return fmt.Errorf("estimating lsp worktree size: %w", err)
+		}
+		if limitBytes := int64(limitMB) * 1024 * 1024; size > limitBytes {
+			return fmt.Errorf("lsp worktree would be %dMB, over the %dMB lsp_worktree_max_mb limit", size/(1024*1024), limitMB)
+		}
+	}
+
 	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, dir, goLspSparsePatterns); err != nil {
 		return fmt.Errorf("preparing lsp worktree: %w", err)
 	}
 	s.lsp.worktreeDir = dir
 	s.lsp.worktreeSHA = sess.Focus.HeadSHA
+	s.touchLSPIdleLocked()
 	return nil
+}
+
+// touchLSPIdleLocked (re)arms the timer that drops the range-focus worktree
+// after lsp.DefaultIdleTimeout of inactivity. Caller holds s.lsp.mu.
+func (s *Server) touchLSPIdleLocked() {
+	if s.lsp.idleTimer != nil {
+		s.lsp.idleTimer.Stop()
+	}
+	timeout := s.lsp.idleTimeout
+	if timeout == 0 {
+		timeout = lsp.DefaultIdleTimeout
+	}
+	s.lsp.idleTimer = time.AfterFunc(timeout, s.dropIdleLSPRoot)
+}
+
+// dropIdleLSPRoot is the idleTimer callback: it runs unlocked (a fresh
+// goroutine, not holding s.lsp.mu), so it takes the lock itself before
+// touching lsp state.
+func (s *Server) dropIdleLSPRoot() {
+	s.lsp.mu.Lock()
+	defer s.lsp.mu.Unlock()
+	s.dropLSPRootLocked(s.session.Load())
 }
 
 // dropLSPRootLocked shuts down the provider and removes the worktree
@@ -169,6 +220,10 @@ func (s *Server) syncLSPRoot() error {
 // just fails the AddSparseWorktree right after this call — surfacing on
 // its own. Caller holds s.lsp.mu.
 func (s *Server) dropLSPRootLocked(sess *Session) {
+	if s.lsp.idleTimer != nil {
+		s.lsp.idleTimer.Stop()
+		s.lsp.idleTimer = nil
+	}
 	if s.lsp.prov != nil {
 		s.lsp.prov.Shutdown()
 		s.lsp.prov = nil
