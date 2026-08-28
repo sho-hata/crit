@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestProxyDirector_StripsAcceptEncoding(t *testing.T) {
+func TestProxyRewrite_StripsAcceptEncoding(t *testing.T) {
 	t.Parallel()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +41,7 @@ func TestProxyDirector_StripsAcceptEncoding(t *testing.T) {
 	}
 }
 
-func TestProxyDirector_InjectsConfiguredCookies(t *testing.T) {
+func TestProxyRewrite_InjectsConfiguredCookies(t *testing.T) {
 	t.Parallel()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +68,7 @@ func TestProxyDirector_InjectsConfiguredCookies(t *testing.T) {
 	}
 }
 
-func TestProxyDirector_PreservesCookieAndAuth(t *testing.T) {
+func TestProxyRewrite_PreservesCookieAndAuth(t *testing.T) {
 	t.Parallel()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func TestProxyDirector_PreservesCookieAndAuth(t *testing.T) {
 	}
 }
 
-func TestProxyDirector_SetsUpstreamHost(t *testing.T) {
+func TestProxyRewrite_SetsUpstreamHost(t *testing.T) {
 	t.Parallel()
 
 	var gotHost string
@@ -120,6 +120,44 @@ func TestProxyDirector_SetsUpstreamHost(t *testing.T) {
 	}
 	if gotHost != upstreamURL.Host {
 		t.Errorf("Host = %q, want %q", gotHost, upstreamURL.Host)
+	}
+}
+
+// The X-Forwarded-* headers come from SetXForwarded. ReverseProxy used to add
+// X-Forwarded-For on its own under Director; a Rewrite hook that forgets to
+// call SetXForwarded silently drops it, so pin the behavior here.
+func TestProxyRewrite_SetsForwardedHeaders(t *testing.T) {
+	t.Parallel()
+
+	var gotFor, gotHost, gotProto string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFor = r.Header.Get("X-Forwarded-For")
+		gotHost = r.Header.Get("X-Forwarded-Host")
+		gotProto = r.Header.Get("X-Forwarded-Proto")
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintln(w, "<html><body>ok</body></html>")
+	}))
+	defer upstream.Close()
+
+	proxy, _ := newLiveProxy(upstream.URL, 9001, "")
+	ps := httptest.NewServer(proxy)
+	defer ps.Close()
+	proxyURL, _ := url.Parse(ps.URL)
+
+	resp, err := http.Get(ps.URL + "/")
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	resp.Body.Close()
+
+	if gotFor == "" {
+		t.Error("X-Forwarded-For not forwarded")
+	}
+	if gotHost != proxyURL.Host {
+		t.Errorf("X-Forwarded-Host = %q, want %q", gotHost, proxyURL.Host)
+	}
+	if gotProto != "http" {
+		t.Errorf("X-Forwarded-Proto = %q, want %q", gotProto, "http")
 	}
 }
 

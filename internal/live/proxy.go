@@ -40,9 +40,9 @@ func newLiveProxy(upstreamOrigin string, apiPort int, upstreamCookies string) (h
 	}
 
 	// Use a transport with DisableCompression=true so http.Transport does
-	// not silently re-add Accept-Encoding: gzip after our Director strips
-	// it. Stripping matters because we need the upstream body uncompressed
-	// in order to inject scripts.
+	// not silently re-add Accept-Encoding: gzip after the rewrite hook
+	// strips it. Stripping matters because we need the upstream body
+	// uncompressed in order to inject scripts.
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		MaxIdleConns:          100,
@@ -53,21 +53,27 @@ func newLiveProxy(upstreamOrigin string, apiPort int, upstreamCookies string) (h
 	}
 
 	rp := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL.Scheme = target.Scheme
-			req.URL.Host = target.Host
-			req.Host = target.Host
-			req.Header.Del("Accept-Encoding")
-			req.Header.Del("If-None-Match")
-			req.Header.Del("If-Modified-Since")
+		// Rewrite, not the deprecated Director: only the origin is
+		// retargeted, never the path — upstreamOrigin's own path prefix is
+		// handled by the caller, so httputil.ProxyRequest.SetURL (which
+		// joins paths) is deliberately not used. SetXForwarded restores the
+		// X-Forwarded-For that the Director path used to add on its own.
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetXForwarded()
+			pr.Out.URL.Scheme = target.Scheme
+			pr.Out.URL.Host = target.Host
+			pr.Out.Host = target.Host
+			pr.Out.Header.Del("Accept-Encoding")
+			pr.Out.Header.Del("If-None-Match")
+			pr.Out.Header.Del("If-Modified-Since")
 			if upstreamCookies != "" {
-				req.Header.Set("Cookie", upstreamCookies)
+				pr.Out.Header.Set("Cookie", upstreamCookies)
 			}
-			if req.Header.Get("Origin") != "" {
-				req.Header.Set("Origin", target.Scheme+"://"+target.Host)
+			if pr.Out.Header.Get("Origin") != "" {
+				pr.Out.Header.Set("Origin", target.Scheme+"://"+target.Host)
 			}
-			if req.Header.Get("Referer") != "" {
-				req.Header.Set("Referer", target.Scheme+"://"+target.Host+req.URL.Path)
+			if pr.Out.Header.Get("Referer") != "" {
+				pr.Out.Header.Set("Referer", target.Scheme+"://"+target.Host+pr.Out.URL.Path)
 			}
 		},
 		Transport:      transport,
