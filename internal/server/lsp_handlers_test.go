@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/lsp"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // fakeLSPProvider implements lspProvider without spawning gopls.
@@ -59,6 +63,37 @@ func newLSPTestServer(t *testing.T, fake *fakeLSPProvider) (*Server, *Session) {
 	srv.lsp.binaryAvailable = func() bool { return true }
 	srv.lsp.newProvider = func() lspProvider { return fake }
 	return srv, sess
+}
+
+// newRangeLSPTestServer builds a test server backed by a real git repo, with
+// the session in range/PR focus at headSHA. reviewPath is a fresh temp dir
+// so syncLSPRoot has somewhere to put the sparse worktree.
+func newRangeLSPTestServer(t *testing.T, fake *fakeLSPProvider) (srv *Server, sess *Session, repo, headSHA string) {
+	t.Helper()
+	repo = vcs.InitTestRepo(t)
+	headSHA = vcs.CommitAtForTest(t, repo, "main.go", "package main\n\nfunc main() {}\n", "add main.go")
+
+	sess = &Session{
+		Mode:        "git",
+		RepoRoot:    repo,
+		VCS:         &vcs.GitVCS{},
+		ReviewRound: 1,
+		Focus:       Focus{Kind: FocusRange, BaseSHA: headSHA, HeadSHA: headSHA},
+		Files: []*FileEntry{
+			{Path: "main.go", AbsPath: filepath.Join(repo, "main.go"), Status: "added", FileType: "code"},
+		},
+	}
+	sess.InitTestChannels()
+
+	var err error
+	srv, err = NewServer(sess, FrontendFS, "", "test", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.reviewPath = t.TempDir()
+	srv.lsp.binaryAvailable = func() bool { return true }
+	srv.lsp.newProvider = func() lspProvider { return fake }
+	return srv, sess, repo, headSHA
 }
 
 func doLSPRequest(t *testing.T, srv *Server, url string) *httptest.ResponseRecorder {
@@ -148,6 +183,9 @@ func TestLSPDisabledByConfig(t *testing.T) {
 	}
 }
 
+// TestLSPUnavailableUnderRangeFocus covers range/PR focus without a VCS
+// (files mode, or --remote/non-git — see rangeLSPSupported). Range focus
+// backed by a local git repo is covered by TestLSPRangeFocusUsesSparseWorktree.
 func TestLSPUnavailableUnderRangeFocus(t *testing.T) {
 	t.Parallel()
 
@@ -156,10 +194,200 @@ func TestLSPUnavailableUnderRangeFocus(t *testing.T) {
 	sess.Focus = Focus{Kind: FocusRange, BaseSHA: "b", HeadSHA: "h"}
 
 	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404 under range focus", w.Code)
+		t.Errorf("status = %d, want 404 under range focus with no VCS", w.Code)
 	}
 	if srv.lspAvailable() {
-		t.Error("lspAvailable must be false under range/PR focus (LSP reads the working tree, not Focus.HeadSHA)")
+		t.Error("lspAvailable must be false under range/PR focus with no VCS to build a worktree from")
+	}
+}
+
+// TestLSPUnavailableForRemoteFocus covers --remote range focus: file content
+// comes from the GitHub API, so there is no local object store to build a
+// sparse worktree from even though sess.VCS is git.
+func TestLSPUnavailableForRemoteFocus(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, sess := newLSPTestServer(t, fake)
+	sess.VCS = &vcs.GitVCS{}
+	sess.RemoteFiles = true
+	sess.Focus = Focus{Kind: FocusRange, BaseSHA: "b", HeadSHA: "h"}
+
+	if srv.lspAvailable() {
+		t.Error("lspAvailable must be false for --remote range focus even with a git VCS")
+	}
+}
+
+// TestLSPRangeFocusUsesSparseWorktree covers the happy path: range/PR focus
+// backed by a local git repo is available, and an LSP request materializes
+// a sparse checkout of Focus.HeadSHA that lspRoot points at (not RepoRoot).
+func TestLSPRangeFocusUsesSparseWorktree(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, _, repo, headSHA := newRangeLSPTestServer(t, fake)
+
+	if !srv.lspAvailable() {
+		t.Fatal("lspAvailable must be true for range/PR focus backed by a local git repo")
+	}
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=3&char=5")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	root := srv.lspRoot()
+	if root == repo || root == "" {
+		t.Fatalf("lspRoot() = %q, want a worktree distinct from RepoRoot %q", root, repo)
+	}
+	if got := vcs.GitRun(t, root, "rev-parse", "HEAD"); got != headSHA {
+		t.Errorf("worktree HEAD = %s, want %s", got, headSHA)
+	}
+	if _, err := os.Stat(filepath.Join(root, "main.go")); err != nil {
+		t.Errorf("main.go missing from lsp worktree: %v", err)
+	}
+}
+
+// TestLSPWorktreeRebuildsOnFocusSwitch covers the "one worktree per daemon"
+// invariant: switching range focus to a different commit must tear down the
+// old worktree (and Manager) and rebuild against the new SHA, not silently
+// keep serving stale content.
+func TestLSPWorktreeRebuildsOnFocusSwitch(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, sess, repo, firstSHA := newRangeLSPTestServer(t, fake)
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("first request: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	firstRoot := srv.lspRoot()
+	if got := vcs.GitRun(t, firstRoot, "rev-parse", "HEAD"); got != firstSHA {
+		t.Fatalf("worktree HEAD = %s, want %s", got, firstSHA)
+	}
+
+	secondSHA := vcs.CommitAtForTest(t, repo, "main.go", "package main\n\nfunc main() { println(1) }\n", "change main.go")
+	sess.Focus = Focus{Kind: FocusRange, BaseSHA: firstSHA, HeadSHA: secondSHA}
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("second request: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	secondRoot := srv.lspRoot()
+	// The worktree dir is reused (torn down + rebuilt in place, see
+	// syncLSPRoot), so the path is unchanged — it's the *content*
+	// that must have moved to secondSHA.
+	if secondRoot != firstRoot {
+		t.Fatalf("lspRoot() = %q after focus switch, want reused path %q", secondRoot, firstRoot)
+	}
+	if got := vcs.GitRun(t, secondRoot, "rev-parse", "HEAD"); got != secondSHA {
+		t.Errorf("worktree HEAD after focus switch = %s, want %s", got, secondSHA)
+	}
+	if fake.shutdowns != 1 {
+		t.Errorf("shutdowns = %d, want 1 (old Manager torn down on focus switch)", fake.shutdowns)
+	}
+}
+
+// TestShutdownLSPRemovesRangeWorktree covers daemon-shutdown cleanup: the
+// range-focus worktree must not outlive the daemon.
+func TestShutdownLSPRemovesRangeWorktree(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, _, _, _ := newRangeLSPTestServer(t, fake)
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	root := srv.lspRoot()
+
+	srv.ShutdownLSP()
+
+	if _, err := os.Stat(root); err == nil {
+		t.Error("lsp worktree still exists after ShutdownLSP")
+	}
+	if fake.shutdowns != 1 {
+		t.Errorf("shutdowns = %d, want 1", fake.shutdowns)
+	}
+}
+
+// TestLSPWorktreeSizeGuardBlocksOversizedCheckout covers the
+// lsp_worktree_max_mb guard: a HeadSHA whose sparse-checkout estimate
+// exceeds the configured limit must not be checked out.
+func TestLSPWorktreeSizeGuardBlocksOversizedCheckout(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, sess, repo, _ := newRangeLSPTestServer(t, fake)
+
+	big := "package main\n\n// " + strings.Repeat("x", 2*1024*1024) + "\n"
+	headSHA := vcs.CommitAtForTest(t, repo, "big.go", big, "add big file")
+	sess.Focus = Focus{Kind: FocusRange, BaseSHA: headSHA, HeadSHA: headSHA}
+	limitMB := 1
+	srv.cfg.LSPWorktreeMaxMB = &limitMB
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0")
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (size guard), body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "lsp_worktree_max_mb") {
+		t.Errorf("body = %q, want a size-limit error mentioning lsp_worktree_max_mb", w.Body.String())
+	}
+	if srv.lspRoot() != repo {
+		t.Errorf("lspRoot() = %q after a blocked checkout, want it to fall back to RepoRoot %q", srv.lspRoot(), repo)
+	}
+}
+
+// TestLSPWorktreeIdleCleanup covers the idle-shutdown path: a range-focus
+// worktree left untouched past the idle timeout must be torn down, along
+// with the Manager backed by it, the same way gopls itself idles out.
+func TestLSPWorktreeIdleCleanup(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, _, _, _ := newRangeLSPTestServer(t, fake)
+	srv.lsp.idleTimeout = 20 * time.Millisecond
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	root := srv.lspRoot()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(root); err == nil {
+		t.Error("lsp worktree still exists after the idle timeout")
+	}
+	if fake.shutdowns != 1 {
+		t.Errorf("shutdowns = %d, want 1 (idle timeout must also shut down the Manager)", fake.shutdowns)
+	}
+}
+
+// TestLSPWorktreeSelfHealsStaleLeftover covers restart-after-crash: a
+// worktree directory built by a prior (now-dead) daemon process, which this
+// process's in-memory lspState has no record of, must be cleared and
+// rebuilt rather than making every LSP request fail with "already exists".
+func TestLSPWorktreeSelfHealsStaleLeftover(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, _, repo, headSHA := newRangeLSPTestServer(t, fake)
+
+	dir := session.ReviewPathsFor(srv.reviewPath).LSPWorktree
+	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, goLspSparsePatterns); err != nil {
+		t.Fatal(err)
+	}
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := vcs.GitRun(t, srv.lspRoot(), "rev-parse", "HEAD"); got != headSHA {
+		t.Errorf("worktree HEAD = %s, want %s", got, headSHA)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 )
 
 // EnsureSHAFetched ensures sha is reachable in the local object store,
@@ -89,7 +88,7 @@ func EnsureSHAFetchedSapling(vcsInst VCS, sha, repoRoot, forkURL string) error {
 }
 
 func tryGitFetch(repoRoot, remote, sha string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), gitOpTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "fetch", remote, sha)
 	cmd.Dir = repoRoot
@@ -97,7 +96,7 @@ func tryGitFetch(repoRoot, remote, sha string) error {
 }
 
 func trySLPull(repoRoot, sha string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), gitOpTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sl", "pull", "-r", sha)
 	cmd.Dir = repoRoot

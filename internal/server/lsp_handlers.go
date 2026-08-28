@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,11 +11,19 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/sho-hata/crit/internal/lsp"
 	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
+
+// goLspSparsePatterns is the sparse-checkout pattern set for the range-focus
+// LSP worktree: Go source and module files, enough for gopls without the
+// rest of the tree.
+var goLspSparsePatterns = []string{"*.go", "go.mod", "go.sum", "go.work", "go.work.sum"}
 
 // peekFullFileMaxLines is the largest file sent to the peek popup in full.
 // Above this (huge generated code in the module cache can reach tens of
@@ -49,11 +58,24 @@ type lspProvider interface {
 	Shutdown()
 }
 
-// lspState holds the lazily-created LSP manager. Lives on Server via
-// composition (see server.go).
+// lspState holds the lazily-created LSP manager and, for range/PR focus, the
+// sparse worktree backing it. Lives on Server via composition (see server.go).
 type lspState struct {
 	mu   sync.Mutex
 	prov lspProvider
+	// worktreeDir is the sparse checkout prov is rooted at when the session
+	// is in range/PR focus; empty when prov (if any) is rooted at the
+	// working tree (sess.RepoRoot).
+	worktreeDir string
+	// worktreeSHA is the Focus.HeadSHA worktreeDir was built from, used to
+	// detect a focus switch to a different commit.
+	worktreeSHA string
+	// idleTimer drops worktreeDir (and prov) after lsp.DefaultIdleTimeout
+	// without an LSP request, matching gopls's own idle shutdown so a
+	// quietly-abandoned range-focus review doesn't keep a checkout on disk.
+	idleTimer *time.Timer
+	// idleTimeout overrides lsp.DefaultIdleTimeout in tests.
+	idleTimeout time.Duration
 	// newProvider creates the provider on first use; tests override it.
 	newProvider func() lspProvider
 	// binaryAvailable overrides the gopls PATH lookup in tests.
@@ -71,12 +93,7 @@ func (s *Server) lspAvailable() bool {
 	if sess == nil || sess.RepoRoot == "" {
 		return false
 	}
-	// Range/PR focus renders file content at Focus.HeadSHA, but the LSP
-	// endpoints read the working tree — positions could silently resolve
-	// against different content than the reviewer sees. Disable rather than
-	// answer wrong. (Feeding SHA content to gopls as a didOpen overlay is a
-	// possible future improvement.)
-	if sess.Focus.Kind == FocusRange {
+	if sess.Focus.Kind == FocusRange && !rangeLSPSupported(sess) {
 		return false
 	}
 	if s.lsp.binaryAvailable != nil {
@@ -85,9 +102,150 @@ func (s *Server) lspAvailable() bool {
 	return lsp.GoplsAvailable()
 }
 
+func rangeLSPSupported(sess *Session) bool {
+	if sess.RemoteFiles {
+		return false
+	}
+	return sess.VCS != nil && sess.VCS.Name() == "git"
+}
+
+// lspRoot returns the directory LSP features operate on: the workspace the
+// language server is anchored at, the base for repo-relative request paths,
+// the root peek reads are authorized against, and the base used to map
+// server result paths back to repo-relative paths for the frontend. Every
+// LSP code path must go through this rather than sess.RepoRoot so that the
+// workspace can be pointed somewhere other than the working tree (a checkout
+// of Focus.HeadSHA for range/PR focus) without the pieces drifting apart.
+func (s *Server) lspRoot() string {
+	sess := s.session.Load()
+	if sess == nil {
+		return ""
+	}
+	s.lsp.mu.Lock()
+	wt := s.lsp.worktreeDir
+	s.lsp.mu.Unlock()
+	if wt != "" {
+		return wt
+	}
+	return sess.RepoRoot
+}
+
+// syncLSPRoot points lspRoot at content matching what the reviewer sees.
+// gopls reads whatever is on disk, which is correct for the normal
+// working-tree focus (sess.RepoRoot). But in range/PR focus the review pane
+// shows each file as it was at Focus.HeadSHA, which can differ from the
+// current working tree — so rather than let gopls answer against the wrong
+// content, this checks out HeadSHA into a throwaway git worktree and points
+// LSP at that instead. Called at the top of every LSP request, before
+// lspRoot/lspManager are read.
+func (s *Server) syncLSPRoot() error {
+	sess := s.session.Load()
+	if sess == nil {
+		return fmt.Errorf("session not ready")
+	}
+
+	s.lsp.mu.Lock()
+	defer s.lsp.mu.Unlock()
+
+	if sess.Focus.Kind != FocusRange {
+		s.dropLSPRootLocked(sess)
+		return nil
+	}
+	if s.lsp.worktreeDir != "" && s.lsp.worktreeSHA == sess.Focus.HeadSHA {
+		s.touchLSPIdleLocked()
+		return nil // already rooted at this commit
+	}
+
+	// Rebuild lazily, here on the first LSP request against the new SHA,
+	// rather than reacting to every focus change immediately — a review may
+	// switch PRs several times before anyone actually hovers a symbol.
+	s.dropLSPRootLocked(sess)
+
+	dir := session.ReviewPathsFor(s.reviewPath).LSPWorktree
+	if _, err := os.Lstat(dir); err == nil {
+		// dropLSPRootLocked just ran and found no worktree of its own to
+		// remove, yet the directory exists — left behind by a daemon that
+		// crashed before it could clean up. AddSparseWorktree refuses an
+		// existing dir, so clear it before building fresh.
+		if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir); err != nil {
+			return fmt.Errorf("clearing stale lsp worktree: %w", err)
+		}
+	}
+
+	if limitMB := s.cfg.LSPWorktreeSizeLimitMB(); limitMB > 0 {
+		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, goLspSparsePatterns)
+		if err != nil {
+			return fmt.Errorf("estimating lsp worktree size: %w", err)
+		}
+		if limitBytes := int64(limitMB) * 1024 * 1024; size > limitBytes {
+			return fmt.Errorf("lsp worktree would be %dMB, over the %dMB lsp_worktree_max_mb limit", size/(1024*1024), limitMB)
+		}
+	}
+
+	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, dir, goLspSparsePatterns); err != nil {
+		return fmt.Errorf("preparing lsp worktree: %w", err)
+	}
+	s.lsp.worktreeDir = dir
+	s.lsp.worktreeSHA = sess.Focus.HeadSHA
+	s.touchLSPIdleLocked()
+	return nil
+}
+
+// touchLSPIdleLocked (re)arms the timer that drops the range-focus worktree
+// after lsp.DefaultIdleTimeout of inactivity. Caller holds s.lsp.mu.
+func (s *Server) touchLSPIdleLocked() {
+	if s.lsp.idleTimer != nil {
+		s.lsp.idleTimer.Stop()
+	}
+	timeout := s.lsp.idleTimeout
+	if timeout == 0 {
+		timeout = lsp.DefaultIdleTimeout
+	}
+	s.lsp.idleTimer = time.AfterFunc(timeout, s.dropIdleLSPRoot)
+}
+
+// dropIdleLSPRoot is the idleTimer callback: it runs unlocked (a fresh
+// goroutine, not holding s.lsp.mu), so it takes the lock itself before
+// touching lsp state.
+func (s *Server) dropIdleLSPRoot() {
+	s.lsp.mu.Lock()
+	defer s.lsp.mu.Unlock()
+	s.dropLSPRootLocked(s.session.Load())
+}
+
+// dropLSPRootLocked shuts down the provider and removes the worktree
+// backing it, if any, for syncLSPRoot (rebuilding for a new commit) and
+// ShutdownLSP alike. A failed removal is only logged: ShutdownLSP ignores
+// the error regardless, and on the syncLSPRoot path a leftover worktree
+// just fails the AddSparseWorktree right after this call — surfacing on
+// its own. Caller holds s.lsp.mu.
+func (s *Server) dropLSPRootLocked(sess *Session) {
+	if s.lsp.idleTimer != nil {
+		s.lsp.idleTimer.Stop()
+		s.lsp.idleTimer = nil
+	}
+	if s.lsp.prov != nil {
+		s.lsp.prov.Shutdown()
+		s.lsp.prov = nil
+	}
+	if s.lsp.worktreeDir == "" {
+		return
+	}
+	dir := s.lsp.worktreeDir
+	s.lsp.worktreeDir = ""
+	s.lsp.worktreeSHA = ""
+	if sess == nil || sess.RepoRoot == "" {
+		return
+	}
+	if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir); err != nil {
+		log.Printf("lsp: removing stale worktree %s: %v", dir, err)
+	}
+}
+
 // lspManager returns the shared LSP provider, creating it on first call.
 // gopls itself is spawned even later — on the first LSP request inside the
-// manager (lazy start keeps parallel worktree daemons cheap).
+// manager (lazy start keeps parallel worktree daemons cheap). Callers on the
+// request path must call syncLSPRoot first (see lspRoot).
 func (s *Server) lspManager() lspProvider {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
@@ -97,20 +255,18 @@ func (s *Server) lspManager() lspProvider {
 		} else {
 			// shutdownCtx bounds the gopls subprocess: SIGINT/SIGTERM on the
 			// daemon kills it instead of leaking.
-			s.lsp.prov = lsp.NewManager(s.session.Load().RepoRoot, s.shutdownCtx)
+			s.lsp.prov = lsp.NewManager(s.lspRoot(), s.shutdownCtx)
 		}
 	}
 	return s.lsp.prov
 }
 
-// ShutdownLSP stops the language server if one was started.
+// ShutdownLSP stops the language server if one was started, and removes the
+// range-focus worktree backing it, if any. Called on daemon shutdown.
 func (s *Server) ShutdownLSP() {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
-	if s.lsp.prov != nil {
-		s.lsp.prov.Shutdown()
-		s.lsp.prov = nil
-	}
+	s.dropLSPRootLocked(s.session.Load())
 }
 
 // parseLSPParams validates the shared query parameters of the LSP endpoints
@@ -125,6 +281,10 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 	}
 	if !s.lspAvailable() {
 		http.Error(w, "LSP not available", http.StatusNotFound)
+		return "", 0, 0, false
+	}
+	if err := s.syncLSPRoot(); err != nil {
+		http.Error(w, fmt.Sprintf("lsp workspace: %v", err), http.StatusBadGateway)
 		return "", 0, 0, false
 	}
 	q := r.URL.Query()
@@ -143,7 +303,7 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		http.Error(w, "char must be a non-negative integer", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
-	repoRoot := s.session.Load().RepoRoot
+	root := s.lspRoot()
 
 	if filepath.IsAbs(reqPath) {
 		// Absolute paths support chained jumps from the peek popup. They are
@@ -151,7 +311,7 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		// root / GOROOT / GOMODCACHE) — this endpoint must not become a
 		// general filesystem probe.
 		absPath = filepath.Clean(reqPath)
-		if !s.lspPathAllowed(absPath, repoRoot) {
+		if !s.lspPathAllowed(absPath, root) {
 			http.Error(w, "Access denied", http.StatusForbidden)
 			return "", 0, 0, false
 		}
@@ -163,8 +323,8 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		http.Error(w, "Invalid file path", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
-	absPath = filepath.Join(repoRoot, filepath.FromSlash(cleaned))
-	if !pathWithinRoot(absPath, repoRoot) {
+	absPath = filepath.Join(root, filepath.FromSlash(cleaned))
+	if !pathWithinRoot(absPath, root) {
 		http.Error(w, "Access denied", http.StatusForbidden)
 		return "", 0, 0, false
 	}
@@ -185,34 +345,44 @@ const (
 // return many locations concentrated in few files, and each classification
 // resolves symlinks against up to three roots.
 type rootCache struct {
-	repoRoot, goroot, gomodcache string
-	seen                         map[string]rootKind
+	root, goroot, gomodcache string
+	seen                     map[string]rootKind
 }
 
-func newRootCache(repoRoot, goroot, gomodcache string) *rootCache {
+func newRootCache(root, goroot, gomodcache string) *rootCache {
 	return &rootCache{
-		repoRoot:   repoRoot,
+		root:       root,
 		goroot:     goroot,
 		gomodcache: gomodcache,
 		seen:       make(map[string]rootKind),
 	}
 }
 
+// relPath maps an absolute path under the LSP root to the slash-separated
+// repo-relative form the frontend and Session.FileByPath use.
+func (c *rootCache) relPath(absPath string) (string, bool) {
+	rel, err := filepath.Rel(c.root, absPath)
+	if err != nil {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
 func (c *rootCache) classify(absPath string) rootKind {
 	if kind, ok := c.seen[absPath]; ok {
 		return kind
 	}
-	kind := classifyRoot(absPath, c.repoRoot, c.goroot, c.gomodcache)
+	kind := classifyRoot(absPath, c.root, c.goroot, c.gomodcache)
 	c.seen[absPath] = kind
 	return kind
 }
 
 // classifyRoot resolves absPath against the three roots LSP features may
-// touch and reports which one contains it. This is the single source of
+// touch (LSP root, GOROOT, GOMODCACHE) and reports which one contains it. This is the single source of
 // truth for authorization (lspPathAllowed), peek readability, and display
 // formatting — the classification must never drift between those uses.
-func classifyRoot(absPath, repoRoot, goroot, gomodcache string) rootKind {
-	if pathWithinRoot(absPath, repoRoot) {
+func classifyRoot(absPath, root, goroot, gomodcache string) rootKind {
+	if pathWithinRoot(absPath, root) {
 		return rootRepo
 	}
 	if goroot != "" && pathWithinRoot(absPath, goroot) {
@@ -225,10 +395,10 @@ func classifyRoot(absPath, repoRoot, goroot, gomodcache string) rootKind {
 }
 
 // lspPathAllowed reports whether an absolute path lies under one of the
-// roots LSP features may touch: repo root, GOROOT, or GOMODCACHE.
-func (s *Server) lspPathAllowed(absPath, repoRoot string) bool {
+// roots LSP features may touch: the LSP root, GOROOT, or GOMODCACHE.
+func (s *Server) lspPathAllowed(absPath, root string) bool {
 	goroot, gomodcache := s.lspManager().GoEnv()
-	return classifyRoot(absPath, repoRoot, goroot, gomodcache) != rootNone
+	return classifyRoot(absPath, root, goroot, gomodcache) != rootNone
 }
 
 // handleLSPHover returns hover documentation for a position.
@@ -278,10 +448,10 @@ func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := s.session.Load()
 	goroot, gomodcache := mgr.GoEnv()
-	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
+	rc := newRootCache(s.lspRoot(), goroot, gomodcache)
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines, rc))
+		resp = append(resp, resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp})
 }
@@ -306,7 +476,7 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 	goroot, gomodcache := mgr.GoEnv()
 	// Classification is memoized per file: references cluster in a handful
 	// of files, and each classifyRoot call resolves symlinks.
-	rc := newRootCache(sess.RepoRoot, goroot, gomodcache)
+	rc := newRootCache(s.lspRoot(), goroot, gomodcache)
 	sortReferences(locations, sess, rc)
 
 	truncated := len(locations) > maxReferenceLocations
@@ -315,7 +485,7 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, s.resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines, rc))
+		resp = append(resp, resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp, "truncated": truncated})
 }
@@ -328,10 +498,8 @@ func referenceRank(path string, sess *Session, rc *rootCache) int {
 	if kind != rootRepo {
 		return 2 // stdlib, module cache, elsewhere
 	}
-	if rel, err := filepath.Rel(sess.RepoRoot, path); err == nil {
-		if sess.FileByPath(filepath.ToSlash(rel)) != nil {
-			return 0 // a file under review
-		}
+	if rel, ok := rc.relPath(path); ok && sess.FileByPath(rel) != nil {
+		return 0 // a file under review
 	}
 	return 1 // elsewhere in the repo
 }
@@ -368,17 +536,15 @@ func sortReferences(locations []lsp.Location, sess *Session, rc *rootCache) {
 // windows, references small ones). Peek reads are restricted to paths gopls
 // itself returned AND within repoRoot, GOROOT, or GOMODCACHE — there is
 // deliberately no general file-read endpoint behind this.
-func (s *Server) resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
-	repoRoot := sess.RepoRoot
+func resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
 	out := lspLocationResponse{Line: loc.Line + 1}
 
 	kind := rc.classify(loc.Path)
 	if kind == rootRepo {
-		rel, err := filepath.Rel(repoRoot, loc.Path)
-		if err != nil {
-			rel = loc.Path
+		relSlash, ok := rc.relPath(loc.Path)
+		if !ok {
+			relSlash = loc.Path
 		}
-		relSlash := filepath.ToSlash(rel)
 		out.Path = relSlash
 		out.DisplayPath = relSlash
 		out.InRepo = true

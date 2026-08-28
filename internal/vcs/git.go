@@ -12,9 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sho-hata/crit/internal/diff"
 )
+
+const gitOpTimeout = 30 * time.Second
 
 // FileChange represents a single file change detected by git.
 type FileChange struct {
@@ -1359,4 +1362,28 @@ func WorkingTreeFingerprint() string {
 		return ""
 	}
 	return string(out)
+}
+
+// resolveCommit turns sha (full, abbreviated, or otherwise commit-ish) into
+// the full commit SHA, failing on ambiguity, branch names that merely look
+// like hex, or anything that is not a commit.
+func resolveCommit(ctx context.Context, repoRoot, sha string) (string, error) {
+	if !isCommitish(sha) {
+		return "", fmt.Errorf("worktree: %q is not a commit SHA", sha)
+	}
+	out, err := runGit(ctx, repoRoot, "rev-parse", "--verify", "--quiet", "--end-of-options", sha+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("worktree: %q does not resolve to a commit: %w", sha, err)
+	}
+	full := strings.TrimSpace(string(out))
+	if len(full) != 40 {
+		return "", fmt.Errorf("worktree: unexpected rev-parse output %q", full)
+	}
+	// rev-parse prefers a ref over an abbreviated object name, so a branch
+	// called "beef" would resolve here. Requiring the input to be a prefix
+	// of the resolved SHA guarantees it named the commit itself.
+	if !strings.HasPrefix(full, strings.ToLower(sha)) {
+		return "", fmt.Errorf("worktree: %q resolves to %s, which it does not abbreviate (a ref, not a commit SHA?)", sha, full)
+	}
+	return full, nil
 }
