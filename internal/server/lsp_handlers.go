@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,7 +15,14 @@ import (
 
 	"github.com/sho-hata/crit/internal/lsp"
 	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/vcs"
 )
+
+// goLspSparsePatterns is the sparse-checkout pattern set for the range-focus
+// LSP worktree: Go source and module files, enough for gopls without the
+// rest of the tree.
+var goLspSparsePatterns = []string{"*.go", "go.mod", "go.sum", "go.work", "go.work.sum"}
 
 // peekFullFileMaxLines is the largest file sent to the peek popup in full.
 // Above this (huge generated code in the module cache can reach tens of
@@ -49,11 +57,18 @@ type lspProvider interface {
 	Shutdown()
 }
 
-// lspState holds the lazily-created LSP manager. Lives on Server via
-// composition (see server.go).
+// lspState holds the lazily-created LSP manager and, for range/PR focus, the
+// sparse worktree backing it. Lives on Server via composition (see server.go).
 type lspState struct {
 	mu   sync.Mutex
 	prov lspProvider
+	// worktreeDir is the sparse checkout prov is rooted at when the session
+	// is in range/PR focus; empty when prov (if any) is rooted at the
+	// working tree (sess.RepoRoot).
+	worktreeDir string
+	// worktreeSHA is the Focus.HeadSHA worktreeDir was built from, used to
+	// detect a focus switch to a different commit.
+	worktreeSHA string
 	// newProvider creates the provider on first use; tests override it.
 	newProvider func() lspProvider
 	// binaryAvailable overrides the gopls PATH lookup in tests.
@@ -71,18 +86,20 @@ func (s *Server) lspAvailable() bool {
 	if sess == nil || sess.RepoRoot == "" {
 		return false
 	}
-	// Range/PR focus renders file content at Focus.HeadSHA, but the LSP
-	// endpoints read the working tree — positions could silently resolve
-	// against different content than the reviewer sees. Disable rather than
-	// answer wrong. (Feeding SHA content to gopls as a didOpen overlay is a
-	// possible future improvement.)
-	if sess.Focus.Kind == FocusRange {
+	if sess.Focus.Kind == FocusRange && !rangeLSPSupported(sess) {
 		return false
 	}
 	if s.lsp.binaryAvailable != nil {
 		return s.lsp.binaryAvailable()
 	}
 	return lsp.GoplsAvailable()
+}
+
+func rangeLSPSupported(sess *Session) bool {
+	if sess.RemoteFiles {
+		return false
+	}
+	return sess.VCS != nil && sess.VCS.Name() == "git"
 }
 
 // lspRoot returns the directory LSP features operate on: the workspace the
@@ -97,12 +114,83 @@ func (s *Server) lspRoot() string {
 	if sess == nil {
 		return ""
 	}
+	s.lsp.mu.Lock()
+	wt := s.lsp.worktreeDir
+	s.lsp.mu.Unlock()
+	if wt != "" {
+		return wt
+	}
 	return sess.RepoRoot
+}
+
+// syncLSPRoot points lspRoot at content matching what the reviewer sees.
+// gopls reads whatever is on disk, which is correct for the normal
+// working-tree focus (sess.RepoRoot). But in range/PR focus the review pane
+// shows each file as it was at Focus.HeadSHA, which can differ from the
+// current working tree — so rather than let gopls answer against the wrong
+// content, this checks out HeadSHA into a throwaway git worktree and points
+// LSP at that instead. Called at the top of every LSP request, before
+// lspRoot/lspManager are read.
+func (s *Server) syncLSPRoot() error {
+	sess := s.session.Load()
+	if sess == nil {
+		return fmt.Errorf("session not ready")
+	}
+
+	s.lsp.mu.Lock()
+	defer s.lsp.mu.Unlock()
+
+	if sess.Focus.Kind != FocusRange {
+		s.dropLSPRootLocked(sess)
+		return nil
+	}
+	if s.lsp.worktreeDir != "" && s.lsp.worktreeSHA == sess.Focus.HeadSHA {
+		return nil // already rooted at this commit
+	}
+
+	// Rebuild lazily, here on the first LSP request against the new SHA,
+	// rather than reacting to every focus change immediately — a review may
+	// switch PRs several times before anyone actually hovers a symbol.
+	s.dropLSPRootLocked(sess)
+
+	dir := session.ReviewPathsFor(s.reviewPath).LSPWorktree
+	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, dir, goLspSparsePatterns); err != nil {
+		return fmt.Errorf("preparing lsp worktree: %w", err)
+	}
+	s.lsp.worktreeDir = dir
+	s.lsp.worktreeSHA = sess.Focus.HeadSHA
+	return nil
+}
+
+// dropLSPRootLocked shuts down the provider and removes the worktree
+// backing it, if any, for syncLSPRoot (rebuilding for a new commit) and
+// ShutdownLSP alike. A failed removal is only logged: ShutdownLSP ignores
+// the error regardless, and on the syncLSPRoot path a leftover worktree
+// just fails the AddSparseWorktree right after this call — surfacing on
+// its own. Caller holds s.lsp.mu.
+func (s *Server) dropLSPRootLocked(sess *Session) {
+	if s.lsp.prov != nil {
+		s.lsp.prov.Shutdown()
+		s.lsp.prov = nil
+	}
+	if s.lsp.worktreeDir == "" {
+		return
+	}
+	dir := s.lsp.worktreeDir
+	s.lsp.worktreeDir = ""
+	s.lsp.worktreeSHA = ""
+	if sess == nil || sess.RepoRoot == "" {
+		return
+	}
+	if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir); err != nil {
+		log.Printf("lsp: removing stale worktree %s: %v", dir, err)
+	}
 }
 
 // lspManager returns the shared LSP provider, creating it on first call.
 // gopls itself is spawned even later — on the first LSP request inside the
-// manager (lazy start keeps parallel worktree daemons cheap).
+// manager (lazy start keeps parallel worktree daemons cheap). Callers on the
+// request path must call syncLSPRoot first (see lspRoot).
 func (s *Server) lspManager() lspProvider {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
@@ -118,14 +206,12 @@ func (s *Server) lspManager() lspProvider {
 	return s.lsp.prov
 }
 
-// ShutdownLSP stops the language server if one was started.
+// ShutdownLSP stops the language server if one was started, and removes the
+// range-focus worktree backing it, if any. Called on daemon shutdown.
 func (s *Server) ShutdownLSP() {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
-	if s.lsp.prov != nil {
-		s.lsp.prov.Shutdown()
-		s.lsp.prov = nil
-	}
+	s.dropLSPRootLocked(s.session.Load())
 }
 
 // parseLSPParams validates the shared query parameters of the LSP endpoints
@@ -140,6 +226,10 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 	}
 	if !s.lspAvailable() {
 		http.Error(w, "LSP not available", http.StatusNotFound)
+		return "", 0, 0, false
+	}
+	if err := s.syncLSPRoot(); err != nil {
+		http.Error(w, fmt.Sprintf("lsp workspace: %v", err), http.StatusBadGateway)
 		return "", 0, 0, false
 	}
 	q := r.URL.Query()
