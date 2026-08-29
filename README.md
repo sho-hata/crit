@@ -12,7 +12,7 @@ Review and comment on plans, code diffs, frontend elements and send feedback dir
 
 > [!NOTE]
 > **This is a fork** of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) with features not (yet) in upstream. Fork-specific additions are marked **(fork-only)** below. Currently:
-> - **[Code intelligence for Go diffs (LSP)](#code-intelligence-for-go-diffs-lsp-fork-only)** — hover documentation and go-to-definition powered by gopls
+> - **[Code intelligence in diffs (LSP)](#code-intelligence-in-diffs-lsp-fork-only)** — hover documentation, go-to-definition, and find-references in the review pane (Go, via gopls)
 
 ![Crit UI for "notification-plan.md" showing comment left on "Queue - Redis Streams, SQS, RabbitMQ" line saying "Just use SQS - we're in AWS"](docs/images/demo-overview.png)
 
@@ -152,15 +152,34 @@ Click a line number to comment. Drag to select a range. Comments are rendered in
 
 ![Simple comments](docs/images/simple-comments.gif)
 
-### Code intelligence for Go diffs (LSP, fork-only)
+### Code intelligence in diffs (LSP, fork-only)
 
-Reviewing a Go diff, powered by [gopls](https://pkg.go.dev/golang.org/x/tools/gopls):
+Reading a diff means reading code with no editor attached. This brings the three things you actually reach for — what is this? where is it defined? who else calls it? — into the review pane.
 
-- **Hover** over code on the new side of a diff → type signature + documentation tooltip
-- **⌘/Ctrl+Click** an identifier → go to definition:
-  - target in the review → jump there (collapsed diff gaps auto-expand)
-  - target elsewhere (unchanged repo file, stdlib, module cache) → an inline **peek popup** (whole file up to 2000 lines, scrollable, definition line highlighted)
-- **⌘/Ctrl+Click inside the peek popup** → follow definitions further; `←` / `Esc` steps back through the jump history
+> [!NOTE]
+> Currently **Go only**, powered by [gopls](https://pkg.go.dev/golang.org/x/tools/gopls). Other languages are not wired up yet.
+
+#### Hover: signature + docs
+
+Hover an identifier on the new side of a diff to get its type signature and documentation.
+
+![Hover tooltip on a Go diff showing "field worktreeDir string" with its doc comment](docs/images/lsp-hover.png)
+
+#### ⌘/Ctrl+Click: go to definition
+
+When the definition is **inside the review**, crit jumps to it — auto-expanding collapsed diff gaps on the way.
+
+![Go-to-definition jumping to a target inside the reviewed diff](docs/images/lsp-definition.gif)
+
+When the definition is **outside the review** (an unchanged repo file, the stdlib, the module cache), crit opens an inline **peek popup** instead: the surrounding source, scrollable, definition line highlighted. ⌘/Ctrl+Click inside the popup follows definitions further; `←` / `Esc` steps back through the jump history.
+
+![Peek popup showing lsp_handlers.go:69 with the definition line highlighted](docs/images/lsp-definition-peek.png)
+
+#### ⌘/Ctrl+Shift+Click: find references
+
+Opens a side panel listing every reference to the identifier (declaration included), grouped by file and showing each reference's own source line. Clicking a row inside the review jumps to it in the diff and keeps the panel open so you can walk the list; a row outside the review opens the peek popup instead.
+
+![References panel listing 3 references to lspRootLocked across internal/server/lsp_handlers.go](docs/images/lsp-references.png)
 
 #### Enabling it locally
 
@@ -179,13 +198,14 @@ Reviewing a Go diff, powered by [gopls](https://pkg.go.dev/golang.org/x/tools/go
    curl -s localhost:<port>/api/config | grep lsp_available   # → "lsp_available": true
    ```
 
-   If it reports `false`: gopls is not on the PATH crit was started from, `lsp` is disabled in config, the session has no repo root (plain files mode), or a range/PR review is active (`--range` / `--pr` — the diff shows content at a fixed SHA, while LSP reads the working tree, so answers could silently mismatch).
+   If it reports `false`: gopls is not on the PATH crit was started from, `lsp` is disabled in config, the session has no repo root (plain files mode), or the review is a range/PR review that can't be backed by a local git checkout (`--remote`, or a Sapling/JJ repo — see below).
 
 Notes:
 
 - gopls starts **lazily** on the first hover and is stopped after 3 minutes of inactivity — running crit in many worktrees at once only keeps language servers alive for reviews you're actively hovering.
 - The very first hover after a cold start can take a few seconds while gopls loads the workspace (the tooltip shows a loading placeholder).
-- Definition targets are only read from your repo, `GOROOT`, and `GOMODCACHE`.
+- Definition and reference targets are only read from your repo, `GOROOT`, and `GOMODCACHE`. There is deliberately no general file-read endpoint.
+- **Range / PR reviews** (`--range`, `--pr`) show file content at a fixed SHA, which can differ from what's on disk. Rather than answering from the working tree and silently mismatching the diff you're reading, crit anchors gopls at a sparse git worktree checked out at that SHA — built on the first LSP request and torn down on the same idle timeout. Local git only; `--remote` and Sapling/JJ range reviews report `lsp_available: false`. Cap the checkout size with `lsp_worktree_max_mb` (default 500) — a commit whose estimated checkout exceeds it is skipped rather than checked out.
 
 ### Programmatic comments
 
@@ -329,7 +349,8 @@ All keys are optional — omit any you don't need.
 | `no_update_check`      | bool     | `false`                    | Don't check for new versions on startup.                                                                                                                                                |
 | `no_integration_check` | bool     | `false`                    | Skip the integration config freshness check on startup.                                                                                                                                 |
 | `vcs`                  | string   | auto-detected              | Preferred VCS backend: `"git"`, `"sl"`, or `"jj"`. When set, crit uses this VCS instead of auto-detecting. Falls back to git if the configured VCS isn't available. Can also be set via `--vcs` CLI flag (flag takes precedence over config). |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition) for Go files. Only activates when `gopls` is on PATH. See [Code intelligence for Go diffs](#code-intelligence-for-go-diffs-lsp-fork-only). |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go files. Only activates when `gopls` is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
+| `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** Size cap (MB) for the sparse git worktree LSP checks out to answer range/PR reviews at their reviewed SHA. A commit whose estimated checkout exceeds this is skipped (LSP stays off for that review) rather than checked out. |
 | `live_cookie`          | string   | `""`                       | Cookie header value forwarded to the upstream app in live mode (e.g. `"_crit_key=..."`). Global or project. Prefer `live_cookie_file` for secrets. |
 | `live_cookie_file`     | string   | `""`                       | Path to a file with upstream cookies for live mode (raw header lines or Netscape jar). Global or project; relative paths resolve from repo root. |
 | `live_cdp_url`         | string   | `""`                       | Chrome DevTools URL (e.g. `http://127.0.0.1:9222`) to reuse browser cookies for the live upstream. Global or project. |
