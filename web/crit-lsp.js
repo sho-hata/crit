@@ -665,7 +665,20 @@
     document.addEventListener('keydown', onRefsKeydown, true);
   }
 
+  // Shift+Click asks for LSP references, but the browser reads it as a text
+  // selection across the diff. Selection is the *mousedown* default action,
+  // so it has to be suppressed here — by the time onClick runs the range is
+  // already painted.
+  function suppressChordSelection(e) {
+    if (e.button !== 0 || !e.shiftKey) return;
+    if (!e.metaKey && !e.ctrlKey) return;
+    if (isDisabled()) return;
+    if (!eligibleLineEl(e.target)) return;
+    e.preventDefault();
+  }
+
   function onGlobalMousedown(e) {
+    suppressChordSelection(e);
     if (st.peek && !st.peek.contains(e.target)) hidePeek();
     if (st.refs && !st.refs.contains(e.target) && !(st.peek && st.peek.contains(e.target))) hideRefs();
     if (st.tooltip && !st.tooltip.hidden && !st.tooltip.contains(e.target)) hideTooltip();
