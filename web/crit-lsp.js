@@ -679,6 +679,10 @@
 
   function onGlobalMousedown(e) {
     suppressChordSelection(e);
+    // A hover request armed just before the click must not resurrect the
+    // tooltip the click is dismissing: hideTooltip only nulls st.hoverKey,
+    // so the pending timer would fire past the dedup check.
+    clearTimeout(st.hoverTimer);
     if (st.peek && !st.peek.contains(e.target)) hidePeek();
     if (st.refs && !st.refs.contains(e.target) && !(st.peek && st.peek.contains(e.target))) hideRefs();
     if (st.tooltip && !st.tooltip.hidden && !st.tooltip.contains(e.target)) hideTooltip();
