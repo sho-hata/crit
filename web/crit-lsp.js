@@ -348,7 +348,6 @@
     clearTimeout(st.hoverTimer);
     hideTooltip();
     if (e.shiftKey) {
-      dropSelection();
       requestReferences(hit, char);
       return;
     }
@@ -664,13 +663,6 @@
         });
     });
     document.addEventListener('keydown', onRefsKeydown, true);
-  }
-
-  // dropSelection clears a leftover selection so the LSP references panel
-  // doesn't open behind a stale highlight.
-  function dropSelection() {
-    const sel = window.getSelection && window.getSelection();
-    if (sel && !sel.isCollapsed) sel.removeAllRanges();
   }
 
   // Shift+Click asks for LSP references, but the browser reads it as a text
