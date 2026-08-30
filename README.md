@@ -5,6 +5,8 @@
 [![Release](https://img.shields.io/github/release/sho-hata/crit.svg)](https://github.com/sho-hata/crit/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**English** | [日本語](README.ja.md)
+
 > **This is a private fork of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit).** Differences from upstream:
 > - The share feature (`crit share`/`crit fetch`/`crit unpublish`/`crit auth` and the crit-web hosted-service integration) has been removed for private use.
 
@@ -61,7 +63,7 @@ iwr https://github.com/sho-hata/crit/releases/latest/download/crit-windows-amd64
 
 Or download the latest release from [GitHub](https://github.com/sho-hata/crit/releases/latest).
 
-## 2. Integrate with your agent
+### 2. Integrate with your agent
 Claude Code:
 ```
 claude plugin marketplace add sho-hata/crit
