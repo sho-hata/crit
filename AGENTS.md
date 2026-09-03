@@ -189,7 +189,7 @@ All routes wrapped with `s.withReady` return 503 until session init completes �
 
 Session-scoped:
 
-- `GET  /api/health` — liveness probe (no readiness gate; used for daemon health checks)
+- `GET  /api/health` — liveness probe (no readiness gate; used for daemon health checks); `{status, browser_clients, api_version}` — bump `APIVersion` only for breaking HTTP API changes; missing `api_version` = 0
 - `GET  /api/session` — session metadata
 - `GET  /api/config` — `{version, latest_version, ...}`
 - `GET  /api/review-cycle` — review-cycle metadata (round number, edits-since-last)
