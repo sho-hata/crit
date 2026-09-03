@@ -125,6 +125,32 @@ func TestLSPHoverHappyPath(t *testing.T) {
 	}
 }
 
+func TestLSPProviderReusedAcrossWorkingTreeRequests(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, _ := newLSPTestServer(t, fake)
+	created := 0
+	srv.lsp.newProvider = func() lspProvider {
+		created++
+		return fake
+	}
+
+	for i := 0; i < 3; i++ {
+		w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=3&char=5")
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, body = %s", i, w.Code, w.Body.String())
+		}
+	}
+
+	if created != 1 {
+		t.Errorf("provider created %d times, want 1", created)
+	}
+	if fake.shutdowns != 0 {
+		t.Errorf("shutdowns = %d, want 0", fake.shutdowns)
+	}
+}
+
 func TestLSPHoverErrors(t *testing.T) {
 	t.Parallel()
 
@@ -284,6 +310,36 @@ func TestLSPWorktreeRebuildsOnFocusSwitch(t *testing.T) {
 	}
 	if fake.shutdowns != 1 {
 		t.Errorf("shutdowns = %d, want 1 (old Manager torn down on focus switch)", fake.shutdowns)
+	}
+}
+
+func TestLSPWorktreeDroppedOnSwitchToWorkingTreeFocus(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "doc"}
+	srv, sess, repo, _ := newRangeLSPTestServer(t, fake)
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("range request: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	worktree := srv.lspRoot()
+	if worktree == repo {
+		t.Fatalf("lspRoot() = %q, want a worktree distinct from RepoRoot", worktree)
+	}
+
+	sess.Focus = Focus{}
+
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("working-tree request: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := srv.lspRoot(); got != repo {
+		t.Errorf("lspRoot() = %q after focus clear, want RepoRoot %q", got, repo)
+	}
+	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+		t.Errorf("worktree %s still exists after focus clear (stat err = %v)", worktree, err)
+	}
+	if fake.shutdowns != 1 {
+		t.Errorf("shutdowns = %d, want 1", fake.shutdowns)
 	}
 }
 

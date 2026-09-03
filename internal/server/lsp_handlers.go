@@ -155,7 +155,9 @@ func (s *Server) syncLSPRoot() error {
 	defer s.lsp.mu.Unlock()
 
 	if sess.Focus.Kind != FocusRange {
-		s.dropLSPRootLocked(sess)
+		if s.lsp.worktreeDir != "" {
+			s.dropLSPRootLocked(sess)
+		}
 		return nil
 	}
 	if s.lsp.worktreeDir != "" && s.lsp.worktreeSHA == sess.Focus.HeadSHA {
