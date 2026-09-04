@@ -305,7 +305,12 @@ test('renderCommentsPanel: live comments use code-review markdown semantics', ()
     getLanguage(lang) { return lang === 'js'; },
     highlight(str) { return { value: '<span class="hl">' + str + '</span>' }; },
   };
-  win.crit.commentHtml = { sanitize(html) { return html; } };
+  // sanitize is a pass-through (DOMPurify needs a real DOM); normalize is
+  // identity-equivalent here — the real one only rewrites `**> text**` lines.
+  win.crit.commentHtml = {
+    sanitize(html) { return html; },
+    normalizeCommentMarkdown(src) { return src; },
+  };
   win.crit.live.row = {
     renderLivePinRow(_comment, deps) {
       commentMd = deps.commentMd;
