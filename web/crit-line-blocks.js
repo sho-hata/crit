@@ -313,6 +313,25 @@
     return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   }
 
+  // stripTagsForLength drops <...> tag spans (an unterminated trailing "<..."
+  // is dropped too) with a linear scan. Only used to estimate visible text
+  // length — the result is never rendered, so this is not a sanitizer.
+  function stripTagsForLength(s) {
+    var out = '';
+    var inTag = false;
+    for (var i = 0; i < s.length; i++) {
+      var ch = s[i];
+      if (inTag) {
+        if (ch === '>') inTag = false;
+      } else if (ch === '<') {
+        inTag = true;
+      } else {
+        out += ch;
+      }
+    }
+    return out;
+  }
+
   function inlineVisibleLength(token) {
     if (!token.children || token.children.length === 0) {
       return Array.from(token.content || '').length;
@@ -321,7 +340,7 @@
     return token.children.reduce(function(length, child) {
       if (child.nesting !== 0) return length;
       var content = child.content || '';
-      if (child.type === 'html_inline') content = content.replace(/<[^>]*>/g, '');
+      if (child.type === 'html_inline') content = stripTagsForLength(content);
       return length + Array.from(content).length;
     }, 0);
   }

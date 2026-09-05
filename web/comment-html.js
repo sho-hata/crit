@@ -36,7 +36,11 @@
   ];
   // Crit-generated classes only — suggestion diffs + highlight/ref spans.
   // language-* survives so markdown-it fenced-code classes remain after sanitize.
-  var SAFE_CLASS = /^(?:hljs(?:-[\w-]+)?|language-[\w-]+|file-ref|comment-ref|comment-ref-code|suggestion(?:-[\w-]+)+|diff-word-(?:del|add))$/;
+  // suggestion-[\w-]+ matches the same names as the previous
+  // suggestion(?:-[\w-]+)+ form ('-' is inside [\w-]) without the nested
+  // quantifier, whose ambiguity allowed exponential backtracking (ReDoS) on
+  // long non-matching inputs like "suggestion" + "--" * n.
+  var SAFE_CLASS = /^(?:hljs(?:-[\w-]+)?|language-[\w-]+|file-ref|comment-ref|comment-ref-code|suggestion-[\w-]+|diff-word-(?:del|add))$/;
   var SAFE_COMMENT_REF = /^(?:c|r|rp)_[a-f0-9]{6,}$/;
   var SAFE_URL = /^(?:(?:https?|mailto):|(?:\/|\.{1,2}\/|#))/i;
 
