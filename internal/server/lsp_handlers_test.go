@@ -434,7 +434,7 @@ func TestLSPWorktreeSelfHealsStaleLeftover(t *testing.T) {
 	srv, _, repo, headSHA := newRangeLSPTestServer(t, fake)
 
 	dir := session.ReviewPathsFor(srv.reviewPath).LSPWorktree
-	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, goLspSparsePatterns); err != nil {
+	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, lsp.AllSparsePatterns()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1005,4 +1005,60 @@ func TestLSPManagerDefaultProviderNoDeadlock(t *testing.T) {
 		t.Fatalf("lspRoot = %q, want %q", got, sess.RepoRoot)
 	}
 	srv.ShutdownLSP()
+}
+
+// TestLSPHoverTypeScriptFile covers multi-language support: the endpoints
+// accept any extension a registered language server covers, not just .go.
+func TestLSPHoverTypeScriptFile(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "```ts\nconst x: number\n```"}
+	srv, sess := newLSPTestServer(t, fake)
+	tsPath := filepath.Join(sess.RepoRoot, "app.ts")
+	if err := os.WriteFile(tsPath, []byte("const x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess.Files = append(sess.Files, &FileEntry{
+		Path: "app.ts", AbsPath: tsPath, Status: "modified", FileType: "code",
+	})
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=app.ts&line=1&char=6")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Contents string `json:"contents"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Contents != fake.hoverContents {
+		t.Errorf("contents = %q, want %q", resp.Contents, fake.hoverContents)
+	}
+}
+
+// TestLSPExtensions covers the /api/config extension list: all registered
+// extensions when the availability hook reports servers installed, nil when
+// LSP is unavailable.
+func TestLSPExtensions(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
+	exts := srv.lspExtensions()
+	want := map[string]bool{"go": false, "ts": false, "tsx": false, "js": false}
+	for _, e := range exts {
+		if _, ok := want[e]; ok {
+			want[e] = true
+		}
+	}
+	for e, seen := range want {
+		if !seen {
+			t.Errorf("lspExtensions() = %v, missing %q", exts, e)
+		}
+	}
+
+	srv.lsp.binaryAvailable = func() bool { return false }
+	if got := srv.lspExtensions(); got != nil {
+		t.Errorf("lspExtensions() with no servers = %v, want nil", got)
+	}
 }

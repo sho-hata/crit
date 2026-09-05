@@ -123,3 +123,22 @@ test('findGapForLine: inner gap only', function () {
   assert.strictEqual(lsp.findGapForLine(HUNKS, 40), null);
   assert.strictEqual(lsp.findGapForLine([], 1), null);
 });
+
+test('makeExtensionMatcher: matches server-provided extensions, case-insensitive', function () {
+  const re = lsp.makeExtensionMatcher(['go', 'ts', 'tsx']);
+  assert.strictEqual(re.test('internal/server/main.go'), true);
+  assert.strictEqual(re.test('web/src/App.tsx'), true);
+  assert.strictEqual(re.test('web/src/UTIL.TS'), true);
+  assert.strictEqual(re.test('README.md'), false);
+  assert.strictEqual(re.test('main.go.orig'), false);
+  assert.strictEqual(re.test('script.js'), false); // not in the list
+});
+
+test('makeExtensionMatcher: falls back to go and drops unsafe entries', function () {
+  assert.strictEqual(lsp.makeExtensionMatcher(null).test('a.go'), true);
+  assert.strictEqual(lsp.makeExtensionMatcher([]).test('a.ts'), false);
+  // Regex metacharacters must not survive into the pattern.
+  const re = lsp.makeExtensionMatcher(['t(s', '.*', 'js']);
+  assert.strictEqual(re.test('a.js'), true);
+  assert.strictEqual(re.test('a.tXs'), false);
+});
