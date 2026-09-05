@@ -14,7 +14,7 @@
 
 > [!NOTE]
 > **これはフォークです。** [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) に、本家にはまだ入っていない機能を追加しています。フォーク独自の追加機能には **(fork-only)** を付けています。現時点では以下:
-> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go、gopls 経由）
+> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go は gopls、TypeScript / JavaScript は typescript-language-server 経由）
 
 ![「notification-plan.md」を開いた Crit の画面。「Queue - Redis Streams, SQS, RabbitMQ」の行に「Just use SQS - we're in AWS」というコメントが付いている](docs/images/demo-overview.png)
 
@@ -166,7 +166,7 @@ crit cleanup                      # 古いレビューファイルを削除
 diff を読むというのは、エディタなしでコードを読むということです。この機能は、そこで実際に知りたくなる 3 つのこと — これは何か？　どこで定義されているか？　他にどこから呼ばれているか？ — をレビュー画面の中に持ち込みます。
 
 > [!NOTE]
-> 現時点では **Go のみ** 対応で、[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) を使っています。他の言語にはまだ対応していません。
+> 対応言語は **Go**（[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) 経由）と **TypeScript / JavaScript**（[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) 経由）です。それぞれのサーバーバイナリが `PATH` にあれば、言語ごとに独立して有効になります。
 
 #### ホバー: シグネチャとドキュメント
 
@@ -192,14 +192,19 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
 
 #### ローカルで有効にする
 
-1. gopls をインストールし、`gopls` と `go` ツールチェインの両方が `PATH` に通っていることを確認します（gopls は `go` なしでワークスペースをビルドできません）:
+1. レビューする言語の言語サーバーをインストールし、`PATH` に通っていることを確認します:
 
    ```bash
+   # Go — gopls は go ツールチェインも PATH に必要です
    go install golang.org/x/tools/gopls@latest
    which gopls go   # 両方が解決されること
+
+   # TypeScript / JavaScript
+   npm install -g typescript-language-server typescript
+   which typescript-language-server
    ```
 
-2. Go のリポジトリでレビューを開始します。それだけです。LSP はデフォルトで有効です（`lsp` 設定キー。無効にするには `"lsp": false`）。
+2. レビューを開始します。それだけです。LSP はデフォルトで有効で（`lsp` 設定キー。無効にするには `"lsp": false`）、インストールされているサーバーに応じて言語ごとに独立して有効になります。
 
 3. 有効になっているかの確認:
 
@@ -207,14 +212,14 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
    curl -s localhost:<port>/api/config | grep lsp_available   # → "lsp_available": true
    ```
 
-   `false` の場合、原因は次のいずれかです: crit を起動した `PATH` に gopls がない、設定で `lsp` が無効になっている、セッションにリポジトリルートがない（プレーンファイルモード）、あるいはローカルの git チェックアウトで裏付けられない範囲／PR レビューである（`--remote`、または Sapling / JJ リポジトリ。下記参照）。
+   `false` の場合、原因は次のいずれかです: crit を起動した `PATH` に対応する言語サーバーが 1 つもない、設定で `lsp` が無効になっている、セッションにリポジトリルートがない（プレーンファイルモード）、あるいはローカルの git チェックアウトで裏付けられない範囲／PR レビューである（`--remote`、または Sapling / JJ リポジトリ。下記参照）。同じレスポンスの `lsp_extensions` に、見つかったサーバーがカバーする拡張子の一覧が入ります。
 
 補足:
 
-- gopls は最初のホバー時に**遅延起動**し、3 分間リクエストがなければ停止します。多数の worktree で同時に crit を動かしていても、実際にホバーしているレビューの分しか言語サーバーは生きません。
-- コールドスタート直後の最初のホバーは、gopls がワークスペースを読み込む数秒間かかることがあります（その間ツールチップにはローディング表示が出ます）。
-- 定義・参照のジャンプ先として読み取るのは、自分のリポジトリ・`GOROOT`・`GOMODCACHE` のみです。汎用のファイル読み取りエンドポイントは意図的に用意していません。
-- **範囲 / PR レビュー**（`--range`、`--pr`）は、固定された SHA 時点のファイル内容を表示します。これはディスク上の内容と異なりうるため、作業ツリーを見て回答すると、読んでいる diff と静かに食い違ってしまいます。そこで crit は、その SHA をチェックアウトしたスパースな git worktree に gopls をアンカーします。この worktree は最初の LSP リクエスト時に作られ、gopls と同じアイドルタイムアウトで破棄されます。対応するのはローカル git のみで、`--remote` と Sapling / JJ の範囲レビューでは `lsp_available: false` になります。チェックアウトのサイズ上限は `lsp_worktree_max_mb`（デフォルト 500）で設定でき、推定サイズがこれを超えるコミットはチェックアウトせずスキップされます。
+- 言語サーバーは最初のホバー時に**遅延起動**し、3 分間リクエストがなければ停止します。多数の worktree で同時に crit を動かしていても、実際にホバーしているレビューの分しか言語サーバーは生きません。
+- コールドスタート直後の最初のホバーは、サーバーがワークスペースを読み込む数秒間かかることがあります（その間ツールチップにはローディング表示が出ます）。
+- 定義・参照のジャンプ先として読み取るのは、自分のリポジトリ・`GOROOT`・`GOMODCACHE` のみです。汎用のファイル読み取りエンドポイントは意図的に用意していません（TypeScript の `node_modules` 内への定義ジャンプはリポジトリルート配下なので、リポジトリルートのルールでカバーされます）。
+- **範囲 / PR レビュー**（`--range`、`--pr`）は、固定された SHA 時点のファイル内容を表示します。これはディスク上の内容と異なりうるため、作業ツリーを見て回答すると、読んでいる diff と静かに食い違ってしまいます。そこで crit は、その SHA をチェックアウトしたスパースな git worktree に言語サーバーをアンカーします。この worktree は最初の LSP リクエスト時に作られ、言語サーバーと同じアイドルタイムアウトで破棄されます。対応するのはローカル git のみで、`--remote` と Sapling / JJ の範囲レビューでは `lsp_available: false` になります。チェックアウトのサイズ上限は `lsp_worktree_max_mb`（デフォルト 500）で設定でき、推定サイズがこれを超えるコミットはチェックアウトせずスキップされます。TypeScript では `node_modules` は git 管理外のためチェックアウトに含まれず、範囲 / PR フォーカスではパッケージをまたぐホバー・定義ジャンプが劣化します（リポジトリ内のシンボルは引き続き動作します）。
 
 ### プログラムからのコメント投稿
 
@@ -359,7 +364,7 @@ crit config                                    # 解決後の設定を表示（�
 | `no_update_check`      | bool     | `false`                    | 起動時に新バージョンを確認しない。                                                                                                                                                      |
 | `no_integration_check` | bool     | `false`                    | 起動時の連携設定の鮮度チェックをスキップする。                                                                                                                                          |
 | `vcs`                  | string   | 自動検出                   | 使用する VCS バックエンド: `"git"`、`"sl"`、`"jj"`。設定した場合、自動検出の代わりにこれを使います。指定した VCS が利用できない場合は git にフォールバックします。`--vcs` CLI フラグでも指定でき、フラグが設定より優先されます。 |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Go ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。`gopls` が PATH にある場合のみ有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Go・TypeScript / JavaScript ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。各言語のサーバー（`gopls`、`typescript-language-server`）が PATH にある場合に言語ごとに有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** 範囲 / PR レビューを対象 SHA 時点で解決するために LSP がチェックアウトする、スパースな git worktree のサイズ上限（MB）。推定サイズがこれを超えるコミットはチェックアウトせずスキップされます（そのレビューでは LSP が無効のままになります）。 |
 | `live_cookie`          | string   | `""`                       | ライブモードで上流アプリへ転送する Cookie ヘッダの値（例: `"_crit_key=..."`）。グローバル / プロジェクトどちらでも可。秘密情報は `live_cookie_file` を推奨。                            |
 | `live_cookie_file`     | string   | `""`                       | ライブモード用の上流 Cookie を記載したファイルのパス（生のヘッダ行、または Netscape 形式の cookie jar）。グローバル / プロジェクトどちらでも可。相対パスはリポジトリルートから解決されます。 |

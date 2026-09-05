@@ -1,8 +1,10 @@
 // crit-lsp.js — LSP hover, go-to-definition, and find-references for
 // code-review mode.
 //
-// Talks to the local Go server's /api/lsp/* endpoints (which proxy gopls).
-// Hover: rest the mouse over Go code in a diff → documentation tooltip.
+// Talks to the local Go server's /api/lsp/* endpoints (which proxy a
+// language server: gopls, typescript-language-server). Which file
+// extensions are eligible comes from /api/config's lsp_extensions.
+// Hover: rest the mouse over eligible code in a diff → documentation tooltip.
 // Definition: Cmd/Ctrl+Click → jump within the review, or a peek popup when
 // the target lives outside the visible diff / session / repo.
 // References: Cmd/Ctrl+Shift+Click → side panel listing every reference,
@@ -100,6 +102,17 @@
     return groups;
   }
 
+  // makeExtensionMatcher builds a RegExp matching paths whose extension is
+  // in exts (server-provided, lower-case, no dots). Falls back to Go only
+  // when the list is missing or empty (a server predating lsp_extensions).
+  function makeExtensionMatcher(exts) {
+    var list = (exts || []).filter(function (e) {
+      return typeof e === 'string' && /^[a-z0-9]+$/.test(e);
+    });
+    if (!list.length) list = ['go'];
+    return new RegExp('\\.(' + list.join('|') + ')$', 'i');
+  }
+
   // refSnippet extracts the reference's own source line from its peek window,
   // or '' when the location carries no peek (file outside readable roots).
   function refSnippet(loc) {
@@ -125,9 +138,9 @@
   }
 
   // eligibleLineEl walks up from an event target to the enclosing new-side
-  // .go diff line, returning {lineEl, contentEl} or null. Unified view rows
-  // are .diff-line; split view sides are .diff-split-side — both carry the
-  // same data-diff-* attributes via tagDiffLine.
+  // diff line of an LSP-covered file, returning {lineEl, contentEl} or null.
+  // Unified view rows are .diff-line; split view sides are .diff-split-side —
+  // both carry the same data-diff-* attributes via tagDiffLine.
   function eligibleLineEl(target) {
     if (!target || !target.closest) return null;
     const contentEl = target.closest('.diff-content');
@@ -135,7 +148,7 @@
     const lineEl = contentEl.closest('.diff-line, .diff-split-side');
     if (!lineEl) return null;
     const path = lineEl.dataset.diffFilePath;
-    if (!path || !/\.go$/.test(path)) return null;
+    if (!path || !st.extRe.test(path)) return null;
     if (lineEl.dataset.diffSide === 'old') return null;
     const line = parseInt(lineEl.dataset.diffLineNum, 10);
     if (!line) return null;
@@ -495,10 +508,11 @@
     const codeEl = e.target.closest('.lsp-peek-code');
     if (!codeEl) return;
     const from = st.peekLocs[st.peekActive];
-    // Peeks also render non-Go targets (embed assets, runtime assembly);
-    // the server only answers definition requests for .go files, so don't
-    // send one — a guaranteed 4xx would just feed the failure breaker.
-    if (!from || !/\.go$/.test(from.path)) return;
+    // Peeks can render targets outside LSP coverage (embed assets, runtime
+    // assembly); the server only answers definition requests for covered
+    // extensions, so don't send one — a guaranteed 4xx would just feed the
+    // failure breaker.
+    if (!from || !st.extRe.test(from.path)) return;
     const lineEl = codeEl.closest('.lsp-peek-line');
     if (!lineEl) return;
     const lineNo = parseInt(lineEl.dataset.line, 10);
@@ -711,7 +725,8 @@
       refsTruncatedText: opts.refsTruncatedText || '(list truncated)',
       refsHintText: opts.refsHintText || 'Click: jump / preview · Esc: close',
       errorText: opts.errorText || 'Language server request failed',
-      loadingText: opts.loadingText || 'Loading documentation… (first request warms up gopls)',
+      loadingText: opts.loadingText || 'Loading documentation… (first request warms up the language server)',
+      extRe: makeExtensionMatcher(opts.extensions),
       openFullText: opts.openFullText || 'Open full file ↗',
       noPreviewText: opts.noPreviewText || 'No preview available',
       truncatedText: opts.truncatedText || 'Large file — showing an excerpt around the definition',
@@ -745,6 +760,7 @@
     findGapForLine: findGapForLine,
     groupLocationsByFile: groupLocationsByFile,
     refSnippet: refSnippet,
+    makeExtensionMatcher: makeExtensionMatcher,
   };
   if (typeof window !== 'undefined') {
     window.crit = window.crit || {};

@@ -14,7 +14,7 @@ Review and comment on plans, code diffs, frontend elements and send feedback dir
 
 > [!NOTE]
 > **This is a fork** of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) with features not (yet) in upstream. Fork-specific additions are marked **(fork-only)** below. Currently:
-> - **[Code intelligence in diffs (LSP)](#code-intelligence-in-diffs-lsp-fork-only)** — hover documentation, go-to-definition, and find-references in the review pane (Go, via gopls)
+> - **[Code intelligence in diffs (LSP)](#code-intelligence-in-diffs-lsp-fork-only)** — hover documentation, go-to-definition, and find-references in the review pane (Go via gopls, TypeScript/JavaScript via typescript-language-server)
 
 ![Crit UI for "notification-plan.md" showing comment left on "Queue - Redis Streams, SQS, RabbitMQ" line saying "Just use SQS - we're in AWS"](docs/images/demo-overview.png)
 
@@ -159,7 +159,7 @@ Click a line number to comment. Drag to select a range. Comments are rendered in
 Reading a diff means reading code with no editor attached. This brings the three things you actually reach for — what is this? where is it defined? who else calls it? — into the review pane.
 
 > [!NOTE]
-> Currently **Go only**, powered by [gopls](https://pkg.go.dev/golang.org/x/tools/gopls). Other languages are not wired up yet.
+> Supported languages: **Go** (via [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)) and **TypeScript / JavaScript** (via [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)). Each activates independently when its server binary is on `PATH`.
 
 #### Hover: signature + docs
 
@@ -185,14 +185,19 @@ Opens a side panel listing every reference to the identifier (declaration includ
 
 #### Enabling it locally
 
-1. Install gopls and make sure both `gopls` and the `go` toolchain are on your `PATH` (gopls cannot build a workspace without `go`):
+1. Install the language server(s) for the languages you review and make sure they are on your `PATH`:
 
    ```bash
+   # Go — gopls also needs the go toolchain on PATH
    go install golang.org/x/tools/gopls@latest
    which gopls go   # both must resolve
+
+   # TypeScript / JavaScript
+   npm install -g typescript-language-server typescript
+   which typescript-language-server
    ```
 
-2. Start a review in a Go repository — that's it. LSP is on by default (`lsp` config key, set `"lsp": false` to disable).
+2. Start a review — that's it. LSP is on by default (`lsp` config key, set `"lsp": false` to disable) and each language activates independently based on which servers are installed.
 
 3. To verify it's active:
 
@@ -200,14 +205,14 @@ Opens a side panel listing every reference to the identifier (declaration includ
    curl -s localhost:<port>/api/config | grep lsp_available   # → "lsp_available": true
    ```
 
-   If it reports `false`: gopls is not on the PATH crit was started from, `lsp` is disabled in config, the session has no repo root (plain files mode), or the review is a range/PR review that can't be backed by a local git checkout (`--remote`, or a Sapling/JJ repo — see below).
+   If it reports `false`: no supported language server is on the PATH crit was started from, `lsp` is disabled in config, the session has no repo root (plain files mode), or the review is a range/PR review that can't be backed by a local git checkout (`--remote`, or a Sapling/JJ repo — see below). `lsp_extensions` in the same response lists which file extensions are covered by the servers crit found.
 
 Notes:
 
-- gopls starts **lazily** on the first hover and is stopped after 3 minutes of inactivity — running crit in many worktrees at once only keeps language servers alive for reviews you're actively hovering.
-- The very first hover after a cold start can take a few seconds while gopls loads the workspace (the tooltip shows a loading placeholder).
-- Definition and reference targets are only read from your repo, `GOROOT`, and `GOMODCACHE`. There is deliberately no general file-read endpoint.
-- **Range / PR reviews** (`--range`, `--pr`) show file content at a fixed SHA, which can differ from what's on disk. Rather than answering from the working tree and silently mismatching the diff you're reading, crit anchors gopls at a sparse git worktree checked out at that SHA — built on the first LSP request and torn down on the same idle timeout. Local git only; `--remote` and Sapling/JJ range reviews report `lsp_available: false`. Cap the checkout size with `lsp_worktree_max_mb` (default 500) — a commit whose estimated checkout exceeds it is skipped rather than checked out.
+- Language servers start **lazily** on the first hover and are stopped after 3 minutes of inactivity — running crit in many worktrees at once only keeps language servers alive for reviews you're actively hovering.
+- The very first hover after a cold start can take a few seconds while the server loads the workspace (the tooltip shows a loading placeholder).
+- Definition and reference targets are only read from your repo, `GOROOT`, and `GOMODCACHE`. There is deliberately no general file-read endpoint. (TypeScript definitions into `node_modules` live under your repo root, so they're covered by the repo-root rule.)
+- **Range / PR reviews** (`--range`, `--pr`) show file content at a fixed SHA, which can differ from what's on disk. Rather than answering from the working tree and silently mismatching the diff you're reading, crit anchors the language servers at a sparse git worktree checked out at that SHA — built on the first LSP request and torn down on the same idle timeout. Local git only; `--remote` and Sapling/JJ range reviews report `lsp_available: false`. Cap the checkout size with `lsp_worktree_max_mb` (default 500) — a commit whose estimated checkout exceeds it is skipped rather than checked out. For TypeScript, `node_modules` is not part of the checkout (it isn't tracked by git), so cross-package hover/definition degrades in range/PR focus while intra-repo symbols keep working.
 
 ### Programmatic comments
 
@@ -352,7 +357,7 @@ All keys are optional — omit any you don't need.
 | `no_update_check`      | bool     | `false`                    | Don't check for new versions on startup.                                                                                                                                                |
 | `no_integration_check` | bool     | `false`                    | Skip the integration config freshness check on startup.                                                                                                                                 |
 | `vcs`                  | string   | auto-detected              | Preferred VCS backend: `"git"`, `"sl"`, or `"jj"`. When set, crit uses this VCS instead of auto-detecting. Falls back to git if the configured VCS isn't available. Can also be set via `--vcs` CLI flag (flag takes precedence over config). |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go files. Only activates when `gopls` is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go and TypeScript/JavaScript files. Each language activates when its server (`gopls`, `typescript-language-server`) is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** Size cap (MB) for the sparse git worktree LSP checks out to answer range/PR reviews at their reviewed SHA. A commit whose estimated checkout exceeds this is skipped (LSP stays off for that review) rather than checked out. |
 | `live_cookie`          | string   | `""`                       | Cookie header value forwarded to the upstream app in live mode (e.g. `"_crit_key=..."`). Global or project. Prefer `live_cookie_file` for secrets. |
 | `live_cookie_file`     | string   | `""`                       | Path to a file with upstream cookies for live mode (raw header lines or Netscape jar). Global or project; relative paths resolve from repo root. |
