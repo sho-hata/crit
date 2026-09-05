@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1144,6 +1146,104 @@ func TestHandleFiles_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestAPICodeFonts_CachesCodeFontDiscovery(t *testing.T) {
+	s, _ := newTestServer(t)
+	calls := 0
+	// The injected discovery function keeps this independent of local fonts.
+	s.codeFontDiscovery = func() ([]string, error) {
+		calls++
+		return []string{"Example Mono", "Sample Code Mono"}, nil
+	}
+
+	for range 2 {
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, httptest.NewRequest("GET", "/api/code-fonts", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		var body struct {
+			CodeFonts []string `json:"code_fonts"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := body.CodeFonts, []string{"Example Mono", "Sample Code Mono"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("code_fonts = %v, want %v", got, want)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("font discovery calls = %d, want 1", calls)
+	}
+}
+
+func TestAPIConfig_DoesNotDiscoverCodeFonts(t *testing.T) {
+	s, _ := newTestServer(t)
+	calls := 0
+	s.codeFontDiscovery = func() ([]string, error) { calls++; return []string{"Ignored"}, nil }
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest("GET", "/api/config", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if calls != 0 {
+		t.Errorf("font discovery calls = %d, want 0", calls)
+	}
+	if strings.Contains(w.Body.String(), "code_fonts") {
+		t.Error("/api/config unexpectedly includes code_fonts")
+	}
+}
+
+func TestAPICodeFontsRetriesAfterDiscoveryFails(t *testing.T) {
+	s, _ := newTestServer(t)
+	calls := 0
+	s.codeFontDiscovery = func() ([]string, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("font scanner unavailable")
+		}
+		return []string{"Recovered Mono"}, nil
+	}
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest("GET", "/api/code-fonts", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest("GET", "/api/code-fonts", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("second status = %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"code_fonts":["Recovered Mono"]`) {
+		t.Errorf("response = %s, want recovered font", w.Body.String())
+	}
+	if calls != 2 {
+		t.Errorf("font discovery calls = %d, want 2", calls)
+	}
+}
+
+func TestAPICodeFontsCachesEmptyDiscoveryResult(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		discovery func() ([]string, error)
+	}{
+		{name: "nil result", discovery: func() ([]string, error) { return nil, nil }},
+		{name: "nil discovery function", discovery: nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := newTestServer(t)
+			s.codeFontDiscovery = tt.discovery
+			for range 2 {
+				w := httptest.NewRecorder()
+				s.ServeHTTP(w, httptest.NewRequest("GET", "/api/code-fonts", nil))
+				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"code_fonts":[]`) {
+					t.Fatalf("status = %d, response = %s", w.Code, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
 func TestGetConfig(t *testing.T) {
 	t.Parallel()
 
@@ -1733,9 +1833,12 @@ func TestWaitForEventIgnoresOtherEvents(t *testing.T) {
 	srv, session := newTestServer(t)
 	session.AddComment(session.Files[0].Path, 1, 1, "", "test", "", "", "")
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	done := make(chan struct{})
 	go func() {
-		req := httptest.NewRequest(http.MethodGet, "/api/wait-for-event", nil)
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/wait-for-event", nil)
 		w := httptest.NewRecorder()
 		srv.ServeHTTP(w, req)
 		close(done)
@@ -1750,6 +1853,14 @@ func TestWaitForEventIgnoresOtherEvents(t *testing.T) {
 		t.Fatal("long-poll should not return on comments-changed event")
 	case <-time.After(200 * time.Millisecond):
 		// Good — still blocking
+	}
+
+	// Stop the long-poll before the test's temporary directory is cleaned up.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("long-poll did not stop after request cancellation")
 	}
 }
 
@@ -1956,6 +2067,16 @@ func TestHealthEndpoint(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("GET /api/health: got %d, want 200", w.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("status = %v, want ok", resp["status"])
+	}
+	if resp["api_version"] != float64(APIVersion) {
+		t.Errorf("api_version = %v, want %d", resp["api_version"], APIVersion)
 	}
 }
 
@@ -3714,6 +3835,9 @@ func TestHandleHealth_WithBrowserClients(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["browser_clients"] != true {
 		t.Errorf("browser_clients = %v, want true", resp["browser_clients"])
+	}
+	if resp["api_version"] != float64(APIVersion) {
+		t.Errorf("api_version = %v, want %d", resp["api_version"], APIVersion)
 	}
 }
 

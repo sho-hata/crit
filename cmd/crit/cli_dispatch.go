@@ -29,7 +29,7 @@ Check installed integrations for missing or stale configuration.`},
 	{name: "pr", handler: runPR, help: `Usage: crit pr <num|url>
 
 Open a GitHub pull request for review.`},
-	{name: "pull", handler: runPull, help: `Usage: crit pull [--output <dir>] [pr-number]
+	{name: "pull", handler: runPull, help: `Usage: crit pull [--session <id>] [--output <dir>] [pr-number]
 
 Fetch GitHub pull-request comments into the local review file.`},
 	{name: "push", handler: runPush, help: `Usage: crit push [options] [pr-number]
@@ -37,6 +37,7 @@ Fetch GitHub pull-request comments into the local review file.`},
 Post local comments as a GitHub pull-request review.
 
 Options:
+      --session <id>     Target an active review session
       --dry-run          Preview without posting
   -e, --event <type>     comment, approve, or request-changes
   -m, --message <text>   Review-level message
@@ -248,8 +249,8 @@ Comments:
   crit comments [--session <id>] [--json] [--all] [review]    List unresolved comments (review-level first)
 
 GitHub PR sync:
-  crit pull [pr-number]                      Fetch PR comments into the review file
-  crit push [--dry-run] [pr-number]          Post review comments to a GitHub PR
+  crit pull [--session <id>] [pr-number]     Fetch PR comments into the review file
+  crit push [--session <id>] [--dry-run] [pr-number]  Post review comments to a GitHub PR
 
 Setup & management:
   crit install <agent>                       Install integration for an AI coding tool

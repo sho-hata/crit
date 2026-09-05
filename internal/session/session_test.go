@@ -49,6 +49,10 @@ func newTestSession(t *testing.T) *Session {
 			},
 		},
 	}
+	// AddComment arms a 200ms debounced disk write. Quiesce before t.TempDir's
+	// cleanup so a delayed WriteFiles doesn't race with RemoveAll — on Windows
+	// that manifests as "directory is not empty".
+	t.Cleanup(func() { quiesceSession(t, s) })
 	return s
 }
 
@@ -3156,9 +3160,18 @@ func TestEnsureLoadedNotLazy(t *testing.T) {
 }
 
 func TestNewSessionFromGitLazyThreshold(t *testing.T) {
+	// DefaultBranch is cached process-wide, while this test creates a fresh
+	// repository whose branch is renamed to main after its initial commit.
+	// Reset the cache so an earlier test cannot make the merge-base lookup use
+	// a stale branch name and accidentally include README.md in the change set.
+	vcs.ResetDefaultBranchOnceForTest()
 	dir := initTestRepo(t)
-	vcs.SetDefaultBranchOverride("")
-	defer func() { vcs.SetDefaultBranchOverride("") }()
+	// Keep the fixture independent of cached or ambient default-branch detection.
+	vcs.SetDefaultBranchOverride("main")
+	defer func() {
+		vcs.SetDefaultBranchOverride("")
+		vcs.ResetDefaultBranchOnceForTest()
+	}()
 
 	gitT(t, dir, "checkout", "-b", "feature-many-files")
 	for i := 0; i < 120; i++ {

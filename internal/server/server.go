@@ -106,11 +106,19 @@ type Server struct {
 	// double-count. Accessed only from handleFinish (serialized by HTTP) and
 	// the shutdown path (after the server has stopped), so no mutex needed.
 	statsRecorded bool
+
+	// codeFontFamilies is populated on the first /api/code-fonts request. Scanning
+	// font files can be relatively expensive, so keep it per daemon rather than
+	// repeating it whenever the Settings panel is opened.
+	codeFontFamiliesMu     sync.Mutex
+	codeFontFamiliesLoaded bool
+	codeFontFamilies       []string
+	codeFontDiscovery      func() ([]string, error)
 }
 
 // NewServer creates a Server with the given session and configuration.
 func NewServer(session *Session, frontendFS embed.FS, author string, currentVersion string, port int, agentCmd string) (*Server, error) {
-	s := &Server{assets: frontendFS, author: author, agentCmd: agentCmd, currentVersion: currentVersion, port: port, prList: &PRListCache{}}
+	s := &Server{assets: frontendFS, author: author, agentCmd: agentCmd, currentVersion: currentVersion, port: port, prList: &PRListCache{}, codeFontDiscovery: discoverCodeFontFamilies}
 	if session != nil {
 		s.session.Store(session)
 	}
@@ -150,6 +158,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	// Session-dependent endpoints (guarded by withReady middleware)
 	mux.HandleFunc("/api/review-cycle", s.withReady(s.handleReviewCycle))
 	mux.HandleFunc("/api/config", s.withReady(s.handleConfig))
+	mux.HandleFunc("/api/code-fonts", s.withReady(s.handleCodeFonts))
 	mux.HandleFunc("/api/session", s.withReady(s.handleSession))
 	mux.HandleFunc("/api/project-prompts/trust", s.withReady(s.handleProjectPromptTrust))
 	mux.HandleFunc("/api/finish", s.withReady(s.handleFinish))
@@ -538,6 +547,36 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		resp["pr_created_at"] = prInfo.CreatedAt
 	}
 	writeJSON(w, resp)
+}
+
+// handleCodeFonts discovers installed coding fonts only when the user opens
+// Settings. Keeping this out of /api/config avoids delaying normal startup.
+func (s *Server) handleCodeFonts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.codeFontFamiliesMu.Lock()
+	if !s.codeFontFamiliesLoaded {
+		families := []string{}
+		var err error
+		if s.codeFontDiscovery != nil {
+			families, err = s.codeFontDiscovery()
+		}
+		if err != nil {
+			s.codeFontFamiliesMu.Unlock()
+			http.Error(w, "Code font discovery failed", http.StatusServiceUnavailable)
+			return
+		}
+		if families == nil {
+			families = []string{}
+		}
+		s.codeFontFamilies = families
+		s.codeFontFamiliesLoaded = true
+	}
+	families := s.codeFontFamilies
+	s.codeFontFamiliesMu.Unlock()
+	writeJSON(w, map[string][]string{"code_fonts": families})
 }
 
 // addIntegrationStatus populates integration detection fields in the config response.
@@ -1747,6 +1786,12 @@ func buildCommentsListCommand(sess *Session) string {
 	return fmt.Sprintf("crit comments --json %s", shellQuoteArg(sess.CritJSONPath()))
 }
 
+// APIVersion is the HTTP API protocol version returned by GET /api/health as
+// api_version. Bump only for breaking changes (removed/renamed fields or
+// endpoints, changed field meaning, or changed request shape). Additive
+// changes do not require a bump. Clients treat a missing field as version 0.
+const APIVersion = 1
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1759,6 +1804,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"status":          "ok",
 		"browser_clients": browserClients,
+		"api_version":     APIVersion,
 	})
 }
 
