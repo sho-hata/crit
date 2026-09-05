@@ -20,10 +20,17 @@ import (
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
-// goLspSparsePatterns is the sparse-checkout pattern set for the range-focus
-// LSP worktree: Go source and module files, enough for gopls without the
-// rest of the tree.
-var goLspSparsePatterns = []string{"*.go", "go.mod", "go.sum", "go.work", "go.work.sum"}
+// lspSparsePatterns returns the sparse-checkout pattern set for the
+// range-focus LSP worktree: source and project files of every language whose
+// server is installed, enough for the servers without the rest of the tree.
+func (s *Server) lspSparsePatterns() []string {
+	if s.lsp.binaryAvailable != nil {
+		// Test hook active: treat every registered language as installed so
+		// the pattern set doesn't depend on the machine's PATH.
+		return lsp.AllSparsePatterns()
+	}
+	return lsp.SparsePatterns()
+}
 
 // peekFullFileMaxLines is the largest file sent to the peek popup in full.
 // Above this (huge generated code in the module cache can reach tens of
@@ -83,8 +90,8 @@ type lspState struct {
 }
 
 // lspAvailable reports whether LSP features should be offered to the
-// frontend: enabled in config, gopls installed, and a repo root to anchor the
-// workspace.
+// frontend: enabled in config, at least one language server installed, and a
+// repo root to anchor the workspace.
 func (s *Server) lspAvailable() bool {
 	if !s.cfg.LSPEnabled() {
 		return false
@@ -99,7 +106,21 @@ func (s *Server) lspAvailable() bool {
 	if s.lsp.binaryAvailable != nil {
 		return s.lsp.binaryAvailable()
 	}
-	return lsp.GoplsAvailable()
+	return lsp.AnyAvailable()
+}
+
+// lspExtensions returns the file extensions (no dots) LSP features cover:
+// the extensions of every language whose server is installed, or nil when
+// LSP is unavailable. Sent to the frontend via /api/config so it only offers
+// hover/definition on files the server can actually answer for.
+func (s *Server) lspExtensions() []string {
+	if !s.lspAvailable() {
+		return nil
+	}
+	if s.lsp.binaryAvailable != nil {
+		return lsp.AllExtensions()
+	}
+	return lsp.AvailableExtensions()
 }
 
 func rangeLSPSupported(sess *Session) bool {
@@ -181,8 +202,9 @@ func (s *Server) syncLSPRoot() error {
 		}
 	}
 
+	patterns := s.lspSparsePatterns()
 	if limitMB := s.cfg.LSPWorktreeSizeLimitMB(); limitMB > 0 {
-		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, goLspSparsePatterns)
+		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, patterns)
 		if err != nil {
 			return fmt.Errorf("estimating lsp worktree size: %w", err)
 		}
@@ -191,7 +213,7 @@ func (s *Server) syncLSPRoot() error {
 		}
 	}
 
-	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, dir, goLspSparsePatterns); err != nil {
+	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, dir, patterns); err != nil {
 		return fmt.Errorf("preparing lsp worktree: %w", err)
 	}
 	s.lsp.worktreeDir = dir
@@ -298,8 +320,8 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 	}
 	q := r.URL.Query()
 	reqPath := q.Get("path")
-	if reqPath == "" || !strings.HasSuffix(reqPath, ".go") {
-		http.Error(w, "path must be a .go file", http.StatusBadRequest)
+	if reqPath == "" || lsp.LanguageForPath(reqPath) == nil {
+		http.Error(w, "no language server covers this file type", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
 	line, err := strconv.Atoi(q.Get("line"))

@@ -23,7 +23,7 @@ func newManagerHarness(t *testing.T, handler func(method string, params json.Raw
 	t.Helper()
 	h := &managerHarness{handler: handler}
 	m := NewManager(t.TempDir(), context.Background())
-	m.start = func(_ context.Context, _ string) (*Client, error) {
+	m.start = func(_ context.Context, _ string, _ *Language) (*Client, error) {
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
 		h.mu.Lock()
@@ -115,7 +115,7 @@ func TestManagerIdleShutdownAndRespawn(t *testing.T) {
 	waitFor(t, "idle shutdown", func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return m.client == nil
+		return len(m.servers) == 0
 	})
 	// Next request respawns transparently.
 	if _, err := m.Hover(file, 0, 0); err != nil {

@@ -37,9 +37,10 @@ type Config struct {
 	// becomes ready for the human. Defaults to false when unset (opt-in).
 	NotifyOnRoundReady *bool `json:"notify_on_round_ready,omitempty"`
 	// LSP controls language-server features (hover, go-to-definition) in the
-	// review UI. Defaults to true when unset; features only activate when the
-	// language server binary (gopls) is on PATH. Mergeable from project config —
-	// the spawned binary name is fixed, so a repo cannot hijack the command.
+	// review UI. Defaults to true when unset; features only activate for
+	// languages whose server binary (gopls, typescript-language-server) is on
+	// PATH. Mergeable from project config — the spawned binary names are
+	// fixed, so a repo cannot hijack the command.
 	LSP *bool `json:"lsp,omitempty"`
 	// LSPWorktreeMaxMB caps the size (in MB) of the sparse git worktree built
 	// to back LSP for range/PR focus (see internal/server syncLSPRoot).
