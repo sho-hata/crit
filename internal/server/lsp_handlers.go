@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,15 +22,17 @@ import (
 )
 
 // lspSparsePatterns returns the sparse-checkout pattern set for the
-// range-focus LSP worktree: source and project files of every language whose
-// server is installed, enough for the servers without the rest of the tree.
-func (s *Server) lspSparsePatterns() []string {
-	if s.lsp.binaryAvailable != nil {
-		// Test hook active: treat every registered language as installed so
-		// the pattern set doesn't depend on the machine's PATH.
-		return lsp.AllSparsePatterns()
+// range-focus LSP worktree: source and project files of every language that
+// both covers a file in the session and has its server installed — enough
+// for the servers without the rest of the tree, and without inflating the
+// checkout (or its lsp_worktree_max_mb estimate) with languages the review
+// doesn't contain.
+func (s *Server) lspSparsePatterns(sess *Session) []string {
+	paths := make([]string, 0, len(sess.Files))
+	for _, f := range sess.Files {
+		paths = append(paths, f.Path)
 	}
-	return lsp.SparsePatterns()
+	return lsp.SparsePatternsForFiles(paths, s.lspLangAvailable())
 }
 
 // peekFullFileMaxLines is the largest file sent to the peek popup in full.
@@ -61,7 +64,7 @@ type lspProvider interface {
 	Hover(absPath string, line, character int) (string, error)
 	Definition(absPath string, line, character int) ([]lsp.Location, error)
 	References(absPath string, line, character int) ([]lsp.Location, error)
-	GoEnv() (goroot, gomodcache string)
+	PeekRoots() []lsp.PeekRoot
 	Shutdown()
 }
 
@@ -77,6 +80,11 @@ type lspState struct {
 	// worktreeSHA is the Focus.HeadSHA worktreeDir was built from, used to
 	// detect a focus switch to a different commit.
 	worktreeSHA string
+	// worktreePatterns is the sparse pattern set worktreeDir was built with.
+	// Patterns depend on which servers are installed, which can change while
+	// a daemon runs (user installs typescript-language-server mid-session),
+	// so SHA equality alone is not enough to reuse a checkout.
+	worktreePatterns []string
 	// idleTimer drops worktreeDir (and prov) after lsp.DefaultIdleTimeout
 	// without an LSP request, matching gopls's own idle shutdown so a
 	// quietly-abandoned range-focus review doesn't keep a checkout on disk.
@@ -85,8 +93,11 @@ type lspState struct {
 	idleTimeout time.Duration
 	// newProvider creates the provider on first use; tests override it.
 	newProvider func() lspProvider
-	// binaryAvailable overrides the gopls PATH lookup in tests.
-	binaryAvailable func() bool
+	// langAvailable overrides the per-language server PATH lookup in tests.
+	// Unlike a single boolean, a per-language predicate can express mixed
+	// machines ("gopls yes, typescript-language-server no"), which is
+	// exactly the per-language activation behavior worth testing.
+	langAvailable func(*lsp.Language) bool
 }
 
 // lspAvailable reports whether LSP features should be offered to the
@@ -103,10 +114,17 @@ func (s *Server) lspAvailable() bool {
 	if sess.Focus.Kind == FocusRange && !rangeLSPSupported(sess) {
 		return false
 	}
-	if s.lsp.binaryAvailable != nil {
-		return s.lsp.binaryAvailable()
+	return lsp.Any(s.lspLangAvailable())
+}
+
+// lspLangAvailable returns the predicate deciding whether a language's
+// server is installed: the test hook when set, the real PATH lookup
+// otherwise.
+func (s *Server) lspLangAvailable() func(*lsp.Language) bool {
+	if s.lsp.langAvailable != nil {
+		return s.lsp.langAvailable
 	}
-	return lsp.AnyAvailable()
+	return (*lsp.Language).Available
 }
 
 // lspExtensions returns the file extensions (no dots) LSP features cover:
@@ -117,10 +135,7 @@ func (s *Server) lspExtensions() []string {
 	if !s.lspAvailable() {
 		return nil
 	}
-	if s.lsp.binaryAvailable != nil {
-		return lsp.AllExtensions()
-	}
-	return lsp.AvailableExtensions()
+	return lsp.Extensions(s.lspLangAvailable())
 }
 
 func rangeLSPSupported(sess *Session) bool {
@@ -181,9 +196,11 @@ func (s *Server) syncLSPRoot() error {
 		}
 		return nil
 	}
-	if s.lsp.worktreeDir != "" && s.lsp.worktreeSHA == sess.Focus.HeadSHA {
+	patterns := s.lspSparsePatterns(sess)
+	if s.lsp.worktreeDir != "" && s.lsp.worktreeSHA == sess.Focus.HeadSHA &&
+		slices.Equal(s.lsp.worktreePatterns, patterns) {
 		s.touchLSPIdleLocked()
-		return nil // already rooted at this commit
+		return nil // already rooted at this commit with the same pattern set
 	}
 
 	// Rebuild lazily, here on the first LSP request against the new SHA,
@@ -202,7 +219,6 @@ func (s *Server) syncLSPRoot() error {
 		}
 	}
 
-	patterns := s.lspSparsePatterns()
 	if limitMB := s.cfg.LSPWorktreeSizeLimitMB(); limitMB > 0 {
 		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, patterns)
 		if err != nil {
@@ -218,6 +234,7 @@ func (s *Server) syncLSPRoot() error {
 	}
 	s.lsp.worktreeDir = dir
 	s.lsp.worktreeSHA = sess.Focus.HeadSHA
+	s.lsp.worktreePatterns = patterns
 	s.touchLSPIdleLocked()
 	return nil
 }
@@ -265,6 +282,7 @@ func (s *Server) dropLSPRootLocked(sess *Session) {
 	dir := s.lsp.worktreeDir
 	s.lsp.worktreeDir = ""
 	s.lsp.worktreeSHA = ""
+	s.lsp.worktreePatterns = nil
 	if sess == nil || sess.RepoRoot == "" {
 		return
 	}
@@ -320,8 +338,16 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 	}
 	q := r.URL.Query()
 	reqPath := q.Get("path")
-	if reqPath == "" || lsp.LanguageForPath(reqPath) == nil {
+	lang := lsp.LanguageForPath(reqPath)
+	if reqPath == "" || lang == nil {
 		http.Error(w, "no language server covers this file type", http.StatusBadRequest)
+		return "", 0, 0, false
+	}
+	// A registered but uninstalled language is a client error ("unsupported
+	// here"), not an upstream failure — without this check the request would
+	// reach startServer and surface as a misleading 502.
+	if !s.lspLangAvailable()(lang) {
+		http.Error(w, "no language server installed for this file type", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
 	line, err := strconv.Atoi(q.Get("line"))
@@ -334,58 +360,66 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		http.Error(w, "char must be a non-negative integer", http.StatusBadRequest)
 		return "", 0, 0, false
 	}
-	root := s.lspRoot()
-
-	if filepath.IsAbs(reqPath) {
-		// Absolute paths support chained jumps from the peek popup. They are
-		// accepted ONLY under the same roots the peek itself may read (repo
-		// root / GOROOT / GOMODCACHE) — this endpoint must not become a
-		// general filesystem probe.
-		absPath = filepath.Clean(reqPath)
-		if !s.lspPathAllowed(absPath, root) {
-			http.Error(w, "Access denied", http.StatusForbidden)
-			return "", 0, 0, false
-		}
-		return absPath, line - 1, char, true
-	}
-
-	cleaned := filepath.ToSlash(filepath.Clean(reqPath))
-	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
-		http.Error(w, "Invalid file path", http.StatusBadRequest)
-		return "", 0, 0, false
-	}
-	absPath = filepath.Join(root, filepath.FromSlash(cleaned))
-	if !pathWithinRoot(absPath, root) {
-		http.Error(w, "Access denied", http.StatusForbidden)
+	absPath, ok = s.resolveLSPRequestPath(w, reqPath)
+	if !ok {
 		return "", 0, 0, false
 	}
 	return absPath, line - 1, char, true
 }
 
-// rootKind classifies which allowed root contains an LSP path.
-type rootKind int
+// resolveLSPRequestPath resolves an LSP request's path parameter to an
+// absolute path under an allowed root, writing the HTTP error on failure.
+func (s *Server) resolveLSPRequestPath(w http.ResponseWriter, reqPath string) (string, bool) {
+	root := s.lspRoot()
 
+	if filepath.IsAbs(reqPath) {
+		// Absolute paths support chained jumps from the peek popup. They are
+		// accepted ONLY under the same roots the peek itself may read (the
+		// LSP root plus the installed languages' extra roots) — this endpoint
+		// must not become a general filesystem probe.
+		absPath := filepath.Clean(reqPath)
+		if !s.lspPathAllowed(absPath, root) {
+			http.Error(w, "Access denied", http.StatusForbidden)
+			return "", false
+		}
+		return absPath, true
+	}
+
+	cleaned := filepath.ToSlash(filepath.Clean(reqPath))
+	if strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		http.Error(w, "Invalid file path", http.StatusBadRequest)
+		return "", false
+	}
+	absPath := filepath.Join(root, filepath.FromSlash(cleaned))
+	if !pathWithinRoot(absPath, root) {
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return "", false
+	}
+	return absPath, true
+}
+
+// classifyRoot results: rootRepo for the LSP root, an index >= 0 into the
+// extra-roots slice (GOROOT, GOMODCACHE, the global node_modules, …), or
+// rootNone.
 const (
-	rootNone rootKind = iota
-	rootRepo
-	rootGoroot
-	rootGomodcache
+	rootNone = -2
+	rootRepo = -1
 )
 
 // rootCache memoizes classifyRoot per path for one request. References
 // return many locations concentrated in few files, and each classification
-// resolves symlinks against up to three roots.
+// resolves symlinks against every allowed root.
 type rootCache struct {
-	root, goroot, gomodcache string
-	seen                     map[string]rootKind
+	root   string
+	extras []lsp.PeekRoot
+	seen   map[string]int
 }
 
-func newRootCache(root, goroot, gomodcache string) *rootCache {
+func newRootCache(root string, extras []lsp.PeekRoot) *rootCache {
 	return &rootCache{
-		root:       root,
-		goroot:     goroot,
-		gomodcache: gomodcache,
-		seen:       make(map[string]rootKind),
+		root:   root,
+		extras: extras,
+		seen:   make(map[string]int),
 	}
 }
 
@@ -399,37 +433,38 @@ func (c *rootCache) relPath(absPath string) (string, bool) {
 	return filepath.ToSlash(rel), true
 }
 
-func (c *rootCache) classify(absPath string) rootKind {
+func (c *rootCache) classify(absPath string) int {
 	if kind, ok := c.seen[absPath]; ok {
 		return kind
 	}
-	kind := classifyRoot(absPath, c.root, c.goroot, c.gomodcache)
+	kind := classifyRoot(absPath, c.root, c.extras)
 	c.seen[absPath] = kind
 	return kind
 }
 
-// classifyRoot resolves absPath against the three roots LSP features may
-// touch (LSP root, GOROOT, GOMODCACHE) and reports which one contains it. This is the single source of
-// truth for authorization (lspPathAllowed), peek readability, and display
-// formatting — the classification must never drift between those uses.
-func classifyRoot(absPath, root, goroot, gomodcache string) rootKind {
+// classifyRoot resolves absPath against the roots LSP features may touch —
+// the LSP root plus each installed language's extra roots (GOROOT,
+// GOMODCACHE, the global node_modules) — and reports which one contains it.
+// This is the single source of truth for authorization (lspPathAllowed),
+// peek readability, and display formatting — the classification must never
+// drift between those uses.
+func classifyRoot(absPath, root string, extras []lsp.PeekRoot) int {
 	if pathWithinRoot(absPath, root) {
 		return rootRepo
 	}
-	if goroot != "" && pathWithinRoot(absPath, goroot) {
-		return rootGoroot
-	}
-	if gomodcache != "" && pathWithinRoot(absPath, gomodcache) {
-		return rootGomodcache
+	for i, ex := range extras {
+		if ex.Path != "" && pathWithinRoot(absPath, ex.Path) {
+			return i
+		}
 	}
 	return rootNone
 }
 
 // lspPathAllowed reports whether an absolute path lies under one of the
-// roots LSP features may touch: the LSP root, GOROOT, or GOMODCACHE.
+// roots LSP features may touch: the LSP root or an installed language's
+// extra roots (GOROOT, GOMODCACHE, the global node_modules).
 func (s *Server) lspPathAllowed(absPath, root string) bool {
-	goroot, gomodcache := s.lspManager().GoEnv()
-	return classifyRoot(absPath, root, goroot, gomodcache) != rootNone
+	return classifyRoot(absPath, root, s.lspManager().PeekRoots()) != rootNone
 }
 
 // handleLSPHover returns hover documentation for a position.
@@ -478,11 +513,10 @@ func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := s.session.Load()
-	goroot, gomodcache := mgr.GoEnv()
-	rc := newRootCache(s.lspRoot(), goroot, gomodcache)
+	rc := newRootCache(s.lspRoot(), mgr.PeekRoots())
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, resolveLocation(sess, loc, goroot, gomodcache, peekFullFileMaxLines, peekContextLines, rc))
+		resp = append(resp, resolveLocation(sess, loc, peekFullFileMaxLines, peekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp})
 }
@@ -504,10 +538,9 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := s.session.Load()
-	goroot, gomodcache := mgr.GoEnv()
 	// Classification is memoized per file: references cluster in a handful
 	// of files, and each classifyRoot call resolves symlinks.
-	rc := newRootCache(s.lspRoot(), goroot, gomodcache)
+	rc := newRootCache(s.lspRoot(), mgr.PeekRoots())
 	sortReferences(locations, sess, rc)
 
 	truncated := len(locations) > maxReferenceLocations
@@ -516,7 +549,7 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]lspLocationResponse, 0, len(locations))
 	for _, loc := range locations {
-		resp = append(resp, resolveLocation(sess, loc, goroot, gomodcache, refPeekFullFileMaxLines, refPeekContextLines, rc))
+		resp = append(resp, resolveLocation(sess, loc, refPeekFullFileMaxLines, refPeekContextLines, rc))
 	}
 	writeJSON(w, map[string]any{"locations": resp, "truncated": truncated})
 }
@@ -561,13 +594,14 @@ func sortReferences(locations []lsp.Location, sess *Session, rc *rootCache) {
 	})
 }
 
-// resolveLocation classifies a target (session / repo / stdlib / module
-// cache) and attaches a peek when the file lives under a root crit is allowed
-// to read. fullMaxLines/contextLines size the peek (definitions get generous
-// windows, references small ones). Peek reads are restricted to paths gopls
-// itself returned AND within repoRoot, GOROOT, or GOMODCACHE — there is
-// deliberately no general file-read endpoint behind this.
-func resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
+// resolveLocation classifies a target (session / repo / an extra root such
+// as the stdlib or module cache) and attaches a peek when the file lives
+// under a root crit is allowed to read. fullMaxLines/contextLines size the
+// peek (definitions get generous windows, references small ones). Peek reads
+// are restricted to paths the language server itself returned AND within the
+// LSP root or an installed language's extra roots — there is deliberately no
+// general file-read endpoint behind this.
+func resolveLocation(sess *Session, loc lsp.Location, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
 	out := lspLocationResponse{Line: loc.Line + 1}
 
 	kind := rc.classify(loc.Path)
@@ -582,7 +616,7 @@ func resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string,
 		out.InSession = sess.FileByPath(relSlash) != nil
 	} else {
 		out.Path = loc.Path
-		out.DisplayPath = displayPathOutsideRepo(loc.Path, kind, goroot, gomodcache)
+		out.DisplayPath = displayPathOutsideRepo(loc.Path, kind, rc.extras)
 	}
 	if kind != rootNone {
 		out.PeekStart, out.Peek, out.PeekTruncated = readPeek(loc.Path, loc.Line+1, fullMaxLines, contextLines)
@@ -590,16 +624,12 @@ func resolveLocation(sess *Session, loc lsp.Location, goroot, gomodcache string,
 	return out
 }
 
-// displayPathOutsideRepo shortens stdlib and module-cache paths for the UI.
-func displayPathOutsideRepo(path string, kind rootKind, goroot, gomodcache string) string {
-	switch kind {
-	case rootGoroot:
-		if rel, err := filepath.Rel(goroot, path); err == nil {
-			return "$GOROOT/" + filepath.ToSlash(rel)
-		}
-	case rootGomodcache:
-		if rel, err := filepath.Rel(gomodcache, path); err == nil {
-			return "$GOMODCACHE/" + filepath.ToSlash(rel)
+// displayPathOutsideRepo shortens paths under an extra root (stdlib, module
+// cache, global node_modules) to that root's display label for the UI.
+func displayPathOutsideRepo(path string, kind int, extras []lsp.PeekRoot) string {
+	if kind >= 0 && kind < len(extras) {
+		if rel, err := filepath.Rel(extras[kind].Path, path); err == nil {
+			return extras[kind].Label + "/" + filepath.ToSlash(rel)
 		}
 	}
 	return path

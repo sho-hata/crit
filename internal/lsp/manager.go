@@ -18,16 +18,6 @@ import (
 // pinning N server processes: only actively-hovered sessions hold one.
 const DefaultIdleTimeout = 3 * time.Minute
 
-// GoplsAvailable reports whether gopls is installed on PATH.
-func GoplsAvailable() bool {
-	for _, l := range languages {
-		if l.Name == "go" {
-			return l.Available()
-		}
-	}
-	return false
-}
-
 // startFunc spawns an initialized LSP client for a workspace root and
 // language. Overridden in tests to avoid spawning a real server.
 type startFunc func(ctx context.Context, rootDir string, lang *Language) (*Client, error)
@@ -39,15 +29,24 @@ type fileState struct {
 }
 
 // serverState is one running language server plus the documents synced to it.
+// mu serializes spawn, file sync, and requests for THIS server only —
+// per-language, so one language's cold start or warm-up retry loop never
+// blocks the other language's requests.
 type serverState struct {
-	client *Client
+	mu     sync.Mutex
+	client *Client              // nil until the first request spawns it
 	files  map[string]fileState // abs path -> sync state
+	// dropped marks a state removed from Manager.servers (idle shutdown);
+	// a request that raced the lookup must re-fetch instead of respawning
+	// a server into an orphaned, untracked state.
+	dropped bool
 }
 
 // Manager owns at most one server process per language for a workspace root,
 // spawning each on first use and shutting all of them down after idleTimeout
 // without requests. All methods are safe for concurrent use; requests are
-// serialized, which is fine for a single-reviewer localhost tool.
+// serialized per language, which is fine for a single-reviewer localhost
+// tool.
 type Manager struct {
 	root        string
 	baseCtx     context.Context
@@ -58,10 +57,8 @@ type Manager struct {
 	servers   map[string]*serverState // Language.Name -> running server
 	idleTimer *time.Timer
 
-	goEnvMu    sync.Mutex
-	goEnvDone  bool
-	goroot     string
-	gomodcache string
+	rootsMu    sync.Mutex
+	extraRoots map[string][]PeekRoot // Language.Name -> resolved ExtraRoots
 }
 
 // NewManager creates a manager for the given workspace root. baseCtx, when
@@ -77,6 +74,7 @@ func NewManager(root string, baseCtx context.Context) *Manager {
 		idleTimeout: DefaultIdleTimeout,
 		start:       startServer,
 		servers:     make(map[string]*serverState),
+		extraRoots:  make(map[string][]PeekRoot),
 	}
 }
 
@@ -120,35 +118,37 @@ const warmupTimeout = 15 * time.Second
 
 // withClient runs fn against a live, file-synced client for absPath's
 // language, restarting the server once if the previous process died and
-// absorbing warm-up errors.
+// absorbing warm-up errors. Only srv.mu is held across the spawn, the
+// request round-trip, and the warm-up retries — never m.mu — so a slow cold
+// start for one language cannot head-of-line block the other.
 func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 	lang := LanguageForPath(absPath)
 	if lang == nil {
 		return fmt.Errorf("lsp: no language server registered for %s", absPath)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.touchIdleLocked()
+	srv := m.lockServer(lang)
+	defer srv.mu.Unlock()
 
 	deadline := time.Now().Add(warmupTimeout)
 	restarted := false
 	for {
-		srv, err := m.ensureServerLocked(lang)
-		if err != nil {
+		if err := m.ensureClient(srv, lang); err != nil {
 			return err
 		}
-		if err := m.syncFileLocked(srv, lang, absPath); err != nil {
+		if err := syncFile(srv, lang, absPath); err != nil {
 			return err
 		}
-		err = fn(srv.client)
+		err := fn(srv.client)
 		if err == nil {
 			return nil
 		}
 		// Restart once when the transport died mid-request (server crash).
 		if srv.client.Dead() && !restarted {
 			restarted = true
-			m.dropServerLocked(lang.Name)
+			srv.client.Close()
+			srv.client = nil
+			srv.files = make(map[string]fileState)
 			continue
 		}
 		// "no views" means gopls's workspace view isn't built yet — transient
@@ -161,26 +161,58 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 	}
 }
 
-// ensureServerLocked spawns + initializes lang's server if not already
-// running.
-func (m *Manager) ensureServerLocked(lang *Language) (*serverState, error) {
-	if srv, ok := m.servers[lang.Name]; ok && !srv.client.Dead() {
-		return srv, nil
+// lockServer returns lang's serverState with srv.mu held, re-fetching when
+// an idle shutdown dropped the state between the map lookup and the lock.
+func (m *Manager) lockServer(lang *Language) *serverState {
+	for {
+		srv := m.serverFor(lang)
+		srv.mu.Lock()
+		if !srv.dropped {
+			return srv
+		}
+		srv.mu.Unlock()
 	}
-	m.dropServerLocked(lang.Name)
-	client, err := m.start(m.baseCtx, m.root, lang)
-	if err != nil {
-		return nil, err
-	}
-	srv := &serverState{client: client, files: make(map[string]fileState)}
-	m.servers[lang.Name] = srv
-	return srv, nil
 }
 
-// syncFileLocked makes the server's view of absPath match the disk content:
+// serverFor returns the state tracking lang's server, creating the empty
+// state (no process yet — that happens under srv.mu in ensureClient) if
+// needed, and re-arms the idle timer.
+func (m *Manager) serverFor(lang *Language) *serverState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.touchIdleLocked()
+	srv, ok := m.servers[lang.Name]
+	if !ok {
+		srv = &serverState{files: make(map[string]fileState)}
+		m.servers[lang.Name] = srv
+	}
+	return srv
+}
+
+// ensureClient spawns + initializes lang's server if srv has no live client.
+// Caller holds srv.mu.
+func (m *Manager) ensureClient(srv *serverState, lang *Language) error {
+	if srv.client != nil && !srv.client.Dead() {
+		return nil
+	}
+	if srv.client != nil {
+		srv.client.Close()
+		srv.client = nil
+		srv.files = make(map[string]fileState)
+	}
+	client, err := m.start(m.baseCtx, m.root, lang)
+	if err != nil {
+		return err
+	}
+	srv.client = client
+	return nil
+}
+
+// syncFile makes the server's view of absPath match the disk content:
 // didOpen on first touch, didChange (full sync) when content changed. Agents
 // edit files between review rounds, so disk is always the source of truth.
-func (m *Manager) syncFileLocked(srv *serverState, lang *Language, absPath string) error {
+// Caller holds srv.mu.
+func syncFile(srv *serverState, lang *Language, absPath string) error {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("lsp: reading %s: %w", absPath, err)
@@ -222,11 +254,22 @@ func (m *Manager) idleShutdown() {
 	m.dropAllLocked()
 }
 
+// dropServerLocked removes lang's server from the map and closes it. Caller
+// holds m.mu; the srv.mu acquisition waits for any in-flight request so its
+// transport is never yanked mid-call (lock order is always m.mu → srv.mu).
 func (m *Manager) dropServerLocked(name string) {
-	if srv, ok := m.servers[name]; ok {
-		srv.client.Close()
-		delete(m.servers, name)
+	srv, ok := m.servers[name]
+	if !ok {
+		return
 	}
+	delete(m.servers, name)
+	srv.mu.Lock()
+	srv.dropped = true
+	if srv.client != nil {
+		srv.client.Close()
+		srv.client = nil
+	}
+	srv.mu.Unlock()
 }
 
 func (m *Manager) dropAllLocked() {
@@ -245,30 +288,31 @@ func (m *Manager) Shutdown() {
 	m.dropAllLocked()
 }
 
-// GoEnv returns GOROOT and GOMODCACHE, used to validate that definition peek
-// targets stay within known source roots. Only a successful `go env` lookup
-// is cached — a failure (e.g. `go` missing from the daemon's PATH) is
-// retried on the next call rather than pinning empty roots for the daemon's
-// lifetime.
-func (m *Manager) GoEnv() (goroot, gomodcache string) {
-	m.goEnvMu.Lock()
-	defer m.goEnvMu.Unlock()
-	if m.goEnvDone {
-		return m.goroot, m.gomodcache
+// PeekRoots returns the extra source roots (beyond the workspace root) that
+// definition/reference peeks may read, resolved per installed language:
+// GOROOT and GOMODCACHE for Go, the global node_modules for TypeScript.
+// Only a successful lookup is cached — a failure (e.g. the toolchain missing
+// from the daemon's PATH) is retried on the next call rather than pinning
+// empty roots for the daemon's lifetime.
+func (m *Manager) PeekRoots() []PeekRoot {
+	m.rootsMu.Lock()
+	defer m.rootsMu.Unlock()
+	var roots []PeekRoot
+	for _, l := range languages {
+		if l.ExtraRoots == nil || !l.Available() {
+			continue
+		}
+		cached, ok := m.extraRoots[l.Name]
+		if !ok {
+			cached = l.ExtraRoots()
+			if cached == nil {
+				continue
+			}
+			m.extraRoots[l.Name] = cached
+		}
+		roots = append(roots, cached...)
 	}
-	out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
-	if err != nil {
-		return "", ""
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) >= 1 {
-		m.goroot = strings.TrimSpace(lines[0])
-	}
-	if len(lines) >= 2 {
-		m.gomodcache = strings.TrimSpace(lines[1])
-	}
-	m.goEnvDone = true
-	return m.goroot, m.gomodcache
+	return roots
 }
 
 // startServer spawns a real language-server subprocess rooted at rootDir.

@@ -164,8 +164,61 @@ func TestManagerMissingFile(t *testing.T) {
 	}
 }
 
-func TestGoplsAvailableDoesNotPanic(t *testing.T) {
+func TestAvailableDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
-	_ = GoplsAvailable() // smoke: PATH lookup must be side-effect free
+	for _, l := range languages {
+		_ = l.Available() // smoke: PATH lookup must be side-effect free
+	}
+}
+
+// TestManagerColdStartDoesNotBlockOtherLanguage pins the per-language
+// locking: one language's slow spawn must not head-of-line block requests
+// for another language whose server can already answer.
+func TestManagerColdStartDoesNotBlockOtherLanguage(t *testing.T) {
+	t.Parallel()
+
+	goStarted := make(chan struct{})
+	goRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(goRelease) }) }
+
+	h := &managerHarness{handler: hoverOK}
+	m := NewManager(t.TempDir(), context.Background())
+	m.start = func(_ context.Context, _ string, lang *Language) (*Client, error) {
+		if lang.Name == "go" {
+			close(goStarted)
+			<-goRelease // park the Go cold start
+		}
+		h.spawns.Add(1)
+		fs := startFake(h.handler)
+		h.mu.Lock()
+		h.servers = append(h.servers, fs)
+		h.mu.Unlock()
+		return fs.client, nil
+	}
+	// LIFO: release runs before Shutdown, so a failed test can't deadlock
+	// Shutdown on the srv.mu the parked spawn still holds.
+	t.Cleanup(m.Shutdown)
+	t.Cleanup(release)
+
+	goFile := writeGoFile(t, m.root, "main.go", "package main\n")
+	tsFile := writeGoFile(t, m.root, "app.ts", "const x = 1\n")
+
+	goDone := make(chan error, 1)
+	go func() {
+		_, err := m.Hover(goFile, 0, 0)
+		goDone <- err
+	}()
+	<-goStarted
+
+	// While the Go server is still spawning, a TypeScript hover must complete.
+	if _, err := m.Hover(tsFile, 0, 0); err != nil {
+		t.Fatalf("ts Hover during go cold start: %v", err)
+	}
+
+	release()
+	if err := <-goDone; err != nil {
+		t.Fatalf("go Hover: %v", err)
+	}
 }
