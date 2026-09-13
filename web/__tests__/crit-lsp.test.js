@@ -123,3 +123,39 @@ test('findGapForLine: inner gap only', function () {
   assert.strictEqual(lsp.findGapForLine(HUNKS, 40), null);
   assert.strictEqual(lsp.findGapForLine([], 1), null);
 });
+
+test('makeExtensionMatcher: matches server-provided extensions, case-insensitive', function () {
+  const re = lsp.makeExtensionMatcher(['go', 'ts', 'tsx']);
+  assert.strictEqual(re.test('internal/server/main.go'), true);
+  assert.strictEqual(re.test('web/src/App.tsx'), true);
+  assert.strictEqual(re.test('web/src/UTIL.TS'), true);
+  assert.strictEqual(re.test('README.md'), false);
+  assert.strictEqual(re.test('main.go.orig'), false);
+  assert.strictEqual(re.test('script.js'), false); // not in the list
+});
+
+test('makeExtensionMatcher: empty list matches nothing, unsafe entries dropped', function () {
+  // No guessed fallback: an empty/missing list must not offer hovers the
+  // server would reject (init only runs when lsp_available is true, which
+  // guarantees a non-empty list from the server).
+  assert.strictEqual(lsp.makeExtensionMatcher(null).test('a.go'), false);
+  assert.strictEqual(lsp.makeExtensionMatcher([]).test('a.ts'), false);
+  assert.strictEqual(lsp.makeExtensionMatcher(['t(s', '.*']).test('a.t(s'), false);
+  // Regex metacharacters must not survive into the pattern.
+  const re = lsp.makeExtensionMatcher(['t(s', '.*', 'js']);
+  assert.strictEqual(re.test('a.js'), true);
+  assert.strictEqual(re.test('a.tXs'), false);
+});
+
+test('hljsLanguageForPath: grammar follows the peeked file, not Go', function () {
+  assert.strictEqual(lsp.hljsLanguageForPath('internal/server/main.go'), 'go');
+  assert.strictEqual(lsp.hljsLanguageForPath('src/App.tsx'), 'typescript');
+  assert.strictEqual(lsp.hljsLanguageForPath('lib/util.MTS'), 'typescript');
+  assert.strictEqual(lsp.hljsLanguageForPath('web/app.js'), 'javascript');
+  assert.strictEqual(lsp.hljsLanguageForPath('web/mod.cjs'), 'javascript');
+  // No grammar → null → escaped plain text, never the wrong grammar.
+  assert.strictEqual(lsp.hljsLanguageForPath('runtime/asm_arm64.s'), null);
+  assert.strictEqual(lsp.hljsLanguageForPath('README.md'), null);
+  assert.strictEqual(lsp.hljsLanguageForPath(''), null);
+  assert.strictEqual(lsp.hljsLanguageForPath(null), null);
+});

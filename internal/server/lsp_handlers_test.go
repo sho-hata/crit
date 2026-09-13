@@ -28,8 +28,7 @@ type fakeLSPProvider struct {
 	definitionErr error
 	references    []lsp.Location
 	referencesErr error
-	goroot        string
-	gomodcache    string
+	peekRoots     []lsp.PeekRoot
 	shutdowns     int
 }
 
@@ -45,8 +44,8 @@ func (f *fakeLSPProvider) References(string, int, int) ([]lsp.Location, error) {
 	return f.references, f.referencesErr
 }
 
-func (f *fakeLSPProvider) GoEnv() (string, string) { return f.goroot, f.gomodcache }
-func (f *fakeLSPProvider) Shutdown()               { f.shutdowns++ }
+func (f *fakeLSPProvider) PeekRoots() []lsp.PeekRoot { return f.peekRoots }
+func (f *fakeLSPProvider) Shutdown()                 { f.shutdowns++ }
 
 // newLSPTestServer builds a test server whose session contains main.go and
 // whose LSP provider is the given fake.
@@ -60,7 +59,7 @@ func newLSPTestServer(t *testing.T, fake *fakeLSPProvider) (*Server, *Session) {
 	sess.Files = append(sess.Files, &FileEntry{
 		Path: "main.go", AbsPath: goPath, Status: "modified", FileType: "code",
 	})
-	srv.lsp.binaryAvailable = func() bool { return true }
+	srv.lsp.langAvailable = func(*lsp.Language) bool { return true }
 	srv.lsp.newProvider = func() lspProvider { return fake }
 	return srv, sess
 }
@@ -91,7 +90,7 @@ func newRangeLSPTestServer(t *testing.T, fake *fakeLSPProvider) (srv *Server, se
 		t.Fatal(err)
 	}
 	srv.reviewPath = t.TempDir()
-	srv.lsp.binaryAvailable = func() bool { return true }
+	srv.lsp.langAvailable = func(*lsp.Language) bool { return true }
 	srv.lsp.newProvider = func() lspProvider { return fake }
 	return srv, sess, repo, headSHA
 }
@@ -434,7 +433,8 @@ func TestLSPWorktreeSelfHealsStaleLeftover(t *testing.T) {
 	srv, _, repo, headSHA := newRangeLSPTestServer(t, fake)
 
 	dir := session.ReviewPathsFor(srv.reviewPath).LSPWorktree
-	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, goLspSparsePatterns); err != nil {
+	allLangs := func(*lsp.Language) bool { return true }
+	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, lsp.SparsePatternsForFiles([]string{"main.go"}, allLangs)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -521,7 +521,7 @@ func TestLSPDefinitionOutsideAllowedRootsHasNoPeek(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("package secret\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// goroot/gomodcache empty: the outside dir matches no allowed root.
+	// peekRoots empty: the outside dir matches no allowed root.
 	fake := &fakeLSPProvider{locations: []lsp.Location{{Path: outside, Line: 0}}}
 	srv.lsp.newProvider = func() lspProvider { return fake }
 
@@ -683,7 +683,7 @@ func TestLSPDefinitionGorootPeek(t *testing.T) {
 	}
 	fake := &fakeLSPProvider{
 		locations: []lsp.Location{{Path: stdlibFile, Line: 2}},
-		goroot:    goroot,
+		peekRoots: []lsp.PeekRoot{{Path: goroot, Label: "$GOROOT"}},
 	}
 	srv.lsp.newProvider = func() lspProvider { return fake }
 
@@ -707,7 +707,8 @@ func TestLSPDefinitionGorootPeek(t *testing.T) {
 }
 
 // TestLSPAbsolutePathScoping covers chained jumps from the peek popup:
-// absolute paths are accepted only under repo root / GOROOT / GOMODCACHE.
+// absolute paths are accepted only under the LSP root or an installed
+// language's extra roots (GOROOT here).
 func TestLSPAbsolutePathScoping(t *testing.T) {
 	t.Parallel()
 
@@ -722,7 +723,7 @@ func TestLSPAbsolutePathScoping(t *testing.T) {
 	if err := os.WriteFile(stdlibFile, []byte("package fmt\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fake.goroot = goroot
+	fake.peekRoots = []lsp.PeekRoot{{Path: goroot, Label: "$GOROOT"}}
 
 	outside := filepath.Join(t.TempDir(), "secret.go")
 	if err := os.WriteFile(outside, []byte("package secret\n"), 0o644); err != nil {
@@ -852,7 +853,7 @@ func TestReferenceCharacterTiebreak(t *testing.T) {
 		{Path: path, Line: 4, Character: 20},
 		{Path: path, Line: 4, Character: 3},
 	}
-	rc := newRootCache(sess.RepoRoot, "", "")
+	rc := newRootCache(sess.RepoRoot, nil)
 	sortReferences(locs, sess, rc)
 	if locs[0].Character != 3 || locs[1].Character != 20 {
 		t.Errorf("same-line references not ordered by character: %+v", locs)
@@ -1005,4 +1006,96 @@ func TestLSPManagerDefaultProviderNoDeadlock(t *testing.T) {
 		t.Fatalf("lspRoot = %q, want %q", got, sess.RepoRoot)
 	}
 	srv.ShutdownLSP()
+}
+
+// TestLSPHoverTypeScriptFile covers multi-language support: the endpoints
+// accept any extension a registered language server covers, not just .go.
+func TestLSPHoverTypeScriptFile(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{hoverContents: "```ts\nconst x: number\n```"}
+	srv, sess := newLSPTestServer(t, fake)
+	tsPath := filepath.Join(sess.RepoRoot, "app.ts")
+	if err := os.WriteFile(tsPath, []byte("const x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess.Files = append(sess.Files, &FileEntry{
+		Path: "app.ts", AbsPath: tsPath, Status: "modified", FileType: "code",
+	})
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=app.ts&line=1&char=6")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Contents string `json:"contents"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Contents != fake.hoverContents {
+		t.Errorf("contents = %q, want %q", resp.Contents, fake.hoverContents)
+	}
+}
+
+// TestLSPExtensions covers the /api/config extension list: all registered
+// extensions when the availability hook reports servers installed, nil when
+// LSP is unavailable.
+func TestLSPExtensions(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
+	exts := srv.lspExtensions()
+	want := map[string]bool{"go": false, "ts": false, "tsx": false, "js": false}
+	for _, e := range exts {
+		if _, ok := want[e]; ok {
+			want[e] = true
+		}
+	}
+	for e, seen := range want {
+		if !seen {
+			t.Errorf("lspExtensions() = %v, missing %q", exts, e)
+		}
+	}
+
+	srv.lsp.langAvailable = func(*lsp.Language) bool { return false }
+	if got := srv.lspExtensions(); got != nil {
+		t.Errorf("lspExtensions() with no servers = %v, want nil", got)
+	}
+}
+
+// TestLSPExtensionsPerLanguage covers mixed availability — the headline
+// behavior of multi-language support: only the installed language's
+// extensions are offered to the frontend.
+func TestLSPExtensionsPerLanguage(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newLSPTestServer(t, &fakeLSPProvider{})
+	srv.lsp.langAvailable = func(l *lsp.Language) bool { return l.Name == "go" }
+
+	exts := srv.lspExtensions()
+	if len(exts) != 1 || exts[0] != "go" {
+		t.Errorf("lspExtensions() with only gopls installed = %v, want [go]", exts)
+	}
+}
+
+// TestLSPUninstalledLanguageRejected covers requests for a registered
+// language whose server is not installed: a clean 400, not a 502 from a
+// failed server spawn.
+func TestLSPUninstalledLanguageRejected(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newLSPTestServer(t, &fakeLSPProvider{hoverContents: "doc"})
+	srv.lsp.langAvailable = func(l *lsp.Language) bool { return l.Name == "go" }
+
+	w := doLSPRequest(t, srv, "/api/lsp/hover?path=app.ts&line=1&char=0")
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for uninstalled language; body = %s", w.Code, w.Body.String())
+	}
+
+	// The installed language keeps working through the same predicate.
+	w = doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0")
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 for installed language; body = %s", w.Code, w.Body.String())
+	}
 }

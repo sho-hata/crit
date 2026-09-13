@@ -1,8 +1,10 @@
 // crit-lsp.js — LSP hover, go-to-definition, and find-references for
 // code-review mode.
 //
-// Talks to the local Go server's /api/lsp/* endpoints (which proxy gopls).
-// Hover: rest the mouse over Go code in a diff → documentation tooltip.
+// Talks to the local Go server's /api/lsp/* endpoints (which proxy a
+// language server: gopls, typescript-language-server). Which file
+// extensions are eligible comes from /api/config's lsp_extensions.
+// Hover: rest the mouse over eligible code in a diff → documentation tooltip.
 // Definition: Cmd/Ctrl+Click → jump within the review, or a peek popup when
 // the target lives outside the visible diff / session / repo.
 // References: Cmd/Ctrl+Shift+Click → side panel listing every reference,
@@ -100,6 +102,34 @@
     return groups;
   }
 
+  // makeExtensionMatcher builds a RegExp matching paths whose extension is
+  // in exts (server-provided, lower-case, no dots). An empty or missing list
+  // matches nothing: init only runs when the server reports lsp_available,
+  // which guarantees a non-empty list, and guessing an extension here would
+  // just offer hovers the server 4xxes — feeding the failure breaker instead
+  // of surfacing the bug.
+  function makeExtensionMatcher(exts) {
+    var list = (exts || []).filter(function (e) {
+      return typeof e === 'string' && /^[a-z0-9]+$/.test(e);
+    });
+    if (!list.length) return /(?!)/;
+    return new RegExp('\\.(' + list.join('|') + ')$', 'i');
+  }
+
+  // hljsLanguageForPath maps a peek target's file extension to the highlight.js
+  // grammar used to render it, or null when no grammar applies (assembly,
+  // embed assets, …) — those render as escaped plain text.
+  var HLJS_LANG_BY_EXT = {
+    go: 'go',
+    ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'typescript',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+  };
+  function hljsLanguageForPath(path) {
+    var m = /\.([a-z0-9]+)$/i.exec(path || '');
+    if (!m) return null;
+    return HLJS_LANG_BY_EXT[m[1].toLowerCase()] || null;
+  }
+
   // refSnippet extracts the reference's own source line from its peek window,
   // or '' when the location carries no peek (file outside readable roots).
   function refSnippet(loc) {
@@ -125,9 +155,9 @@
   }
 
   // eligibleLineEl walks up from an event target to the enclosing new-side
-  // .go diff line, returning {lineEl, contentEl} or null. Unified view rows
-  // are .diff-line; split view sides are .diff-split-side — both carry the
-  // same data-diff-* attributes via tagDiffLine.
+  // diff line of an LSP-covered file, returning {lineEl, contentEl} or null.
+  // Unified view rows are .diff-line; split view sides are .diff-split-side —
+  // both carry the same data-diff-* attributes via tagDiffLine.
   function eligibleLineEl(target) {
     if (!target || !target.closest) return null;
     const contentEl = target.closest('.diff-content');
@@ -135,7 +165,7 @@
     const lineEl = contentEl.closest('.diff-line, .diff-split-side');
     if (!lineEl) return null;
     const path = lineEl.dataset.diffFilePath;
-    if (!path || !/\.go$/.test(path)) return null;
+    if (!path || !st.extRe.test(path)) return null;
     if (lineEl.dataset.diffSide === 'old') return null;
     const line = parseInt(lineEl.dataset.diffLineNum, 10);
     if (!line) return null;
@@ -407,16 +437,19 @@
     }
   }
 
-  // highlightGoPeek highlights all lines in ONE hljs pass and splits the
-  // result per line with splitHighlightedCode (span state carries across
-  // lines), so multi-line constructs — block comments, raw strings — keep
+  // highlightPeek highlights all lines in ONE hljs pass — with the grammar
+  // matching the peeked file's extension — and splits the result per line
+  // with splitHighlightedCode (span state carries across lines), so
+  // multi-line constructs — block comments, raw/template strings — keep
   // correct colors and a 2000-line peek costs one highlight call, not 2000.
-  // Falls back to escaped plain text when hljs or the splitter is missing.
-  function highlightGoPeek(lines) {
+  // Falls back to escaped plain text when no grammar covers the file or
+  // hljs / the splitter is missing.
+  function highlightPeek(lines, path) {
     const lineBlocks = window.crit.lineBlocks;
-    if (window.hljs && lineBlocks && lineBlocks.splitHighlightedCode) {
+    const language = hljsLanguageForPath(path);
+    if (language && window.hljs && lineBlocks && lineBlocks.splitHighlightedCode) {
       try {
-        const html = window.hljs.highlight(lines.join('\n'), { language: 'go' }).value;
+        const html = window.hljs.highlight(lines.join('\n'), { language: language }).value;
         const split = lineBlocks.splitHighlightedCode(html);
         if (split.length === lines.length) return split;
       } catch (err) { /* fall through to escaped text */ }
@@ -474,7 +507,7 @@
     }
     // Highlight once per location and cache: tab switches and history steps
     // re-render, but the peek content never changes.
-    loc.hl = loc.hl || highlightGoPeek(loc.peek);
+    loc.hl = loc.hl || highlightPeek(loc.peek, loc.path);
     const codeLines = loc.hl;
     for (let i = 0; i < loc.peek.length; i++) {
       const lineNo = loc.peek_start + i;
@@ -495,10 +528,11 @@
     const codeEl = e.target.closest('.lsp-peek-code');
     if (!codeEl) return;
     const from = st.peekLocs[st.peekActive];
-    // Peeks also render non-Go targets (embed assets, runtime assembly);
-    // the server only answers definition requests for .go files, so don't
-    // send one — a guaranteed 4xx would just feed the failure breaker.
-    if (!from || !/\.go$/.test(from.path)) return;
+    // Peeks can render targets outside LSP coverage (embed assets, runtime
+    // assembly); the server only answers definition requests for covered
+    // extensions, so don't send one — a guaranteed 4xx would just feed the
+    // failure breaker.
+    if (!from || !st.extRe.test(from.path)) return;
     const lineEl = codeEl.closest('.lsp-peek-line');
     if (!lineEl) return;
     const lineNo = parseInt(lineEl.dataset.line, 10);
@@ -634,7 +668,7 @@
         // Each row is an isolated line, so highlight it on its own —
         // batching unrelated lines would leak parser state between rows.
         const code = snippet
-          ? '<span class="lsp-peek-code">' + highlightGoPeek([snippet])[0] + '</span>'
+          ? '<span class="lsp-peek-code">' + highlightPeek([snippet], item.loc.path)[0] + '</span>'
           : '<span class="lsp-peek-code lsp-refs-nopreview">' + esc(st.noPreviewText) + '</span>';
         html += '<button type="button" class="lsp-refs-item" data-idx="' + item.idx + '">' +
           '<span class="lsp-peek-num">' + item.loc.line + '</span>' + code +
@@ -711,7 +745,8 @@
       refsTruncatedText: opts.refsTruncatedText || '(list truncated)',
       refsHintText: opts.refsHintText || 'Click: jump / preview · Esc: close',
       errorText: opts.errorText || 'Language server request failed',
-      loadingText: opts.loadingText || 'Loading documentation… (first request warms up gopls)',
+      loadingText: opts.loadingText || 'Loading documentation… (first request warms up the language server)',
+      extRe: makeExtensionMatcher(opts.extensions),
       openFullText: opts.openFullText || 'Open full file ↗',
       noPreviewText: opts.noPreviewText || 'No preview available',
       truncatedText: opts.truncatedText || 'Large file — showing an excerpt around the definition',
@@ -745,6 +780,8 @@
     findGapForLine: findGapForLine,
     groupLocationsByFile: groupLocationsByFile,
     refSnippet: refSnippet,
+    makeExtensionMatcher: makeExtensionMatcher,
+    hljsLanguageForPath: hljsLanguageForPath,
   };
   if (typeof window !== 'undefined') {
     window.crit = window.crit || {};

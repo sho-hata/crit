@@ -874,13 +874,15 @@
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
 
-    // LSP hover / go-to-definition (Go files). Only wired when the server
-    // reports gopls available + enabled; the module owns all its listeners.
+    // LSP hover / go-to-definition. Only wired when the server reports a
+    // language server available + enabled; lsp_extensions says which file
+    // extensions it covers. The module owns all its listeners.
     if (configRes.lsp_available && window.crit.lsp) {
       window.crit.lsp.init({
         renderMarkdown: function (text) { return commentMd.render(text); },
         jumpToLocation: lspJumpToLocation,
         toast: function (message) { showMiniToast(message); },
+        extensions: configRes.lsp_extensions,
       });
     }
     promptTrustConfig = {

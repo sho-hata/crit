@@ -21,7 +21,7 @@ func TestRealGopls(t *testing.T) {
 	if os.Getenv("CRIT_LSP_REAL") == "" {
 		t.Skip("set CRIT_LSP_REAL=1 to run against a real gopls")
 	}
-	if !GoplsAvailable() {
+	if !LanguageForPath("x.go").Available() {
 		t.Fatal("gopls not on PATH")
 	}
 	dir := t.TempDir()
