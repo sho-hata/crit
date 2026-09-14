@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -32,6 +33,11 @@ type Language struct {
 	// LSP worktree: source and project files, enough for the server without
 	// the rest of the tree.
 	SparsePatterns []string
+	// InitOptions returns the initializationOptions to send with initialize
+	// for a server rooted at root whose first request is about absPath, or
+	// nil to send none. Runs on the request path (once per server spawn) —
+	// keep it filesystem-cheap.
+	InitOptions func(root, absPath string) map[string]any
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for
 	// TypeScript). May run external commands; the Manager caches successful
@@ -73,8 +79,54 @@ var languages = []*Language{
 			"*.js", "*.mjs", "*.cjs", "*.jsx",
 			"package.json", "tsconfig*.json", "jsconfig.json",
 		},
-		ExtraRoots: npmGlobalRoots,
+		InitOptions: tsInitOptions,
+		ExtraRoots:  npmGlobalRoots,
 	},
+}
+
+// tsInitOptions pins the TypeScript installation typescript-language-server
+// should run. The server resolves the "typescript" package from its workspace
+// root and exits during initialize when it finds none — which is the ordinary
+// layout in a monorepo, where the dependency belongs to the package that owns
+// the file (e.g. frontend/node_modules/typescript) and not to the repo root
+// crit anchors the workspace to. So walk up from the file and pin the nearest
+// install. Returning nil leaves the server's own resolution in charge, which
+// is right for a single-package repo or a global typescript.
+func tsInitOptions(root, absPath string) map[string]any {
+	tsserver := findTSServer(root, absPath)
+	if tsserver == "" {
+		return nil
+	}
+	return map[string]any{"tsserver": map[string]any{"path": tsserver}}
+}
+
+// findTSServer returns the tsserver.js of the node_modules/typescript nearest
+// to absPath, searching its directory upwards through root (inclusive), or ""
+// when there is none. The search never leaves root: a file outside it is not
+// ours to resolve dependencies for.
+func findTSServer(root, absPath string) string {
+	root = filepath.Clean(root)
+	dir := filepath.Dir(absPath)
+	if rel, err := filepath.Rel(root, dir); err != nil || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	for {
+		candidate := filepath.Join(dir, "node_modules", "typescript", "lib", "tsserver.js")
+		// Stat, not Lstat: pnpm and Yarn link the package into the consuming
+		// package's node_modules, and the link target is the real install.
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			return candidate
+		}
+		if dir == root {
+			return ""
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // goExtraRoots resolves GOROOT and GOMODCACHE, where Go definitions outside

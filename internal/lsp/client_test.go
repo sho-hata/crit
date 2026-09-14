@@ -157,7 +157,7 @@ func TestClientInitializeAndHover(t *testing.T) {
 	})
 	defer fs.client.Close()
 
-	if err := fs.client.Initialize("/tmp/repo"); err != nil {
+	if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
 	got, err := fs.client.Hover("/tmp/repo/main.go", 4, 7)
@@ -434,5 +434,154 @@ func TestPathURIRoundtrip(t *testing.T) {
 		if got := URIToPath(uri); got != path {
 			t.Errorf("roundtrip(%q) = %q", path, got)
 		}
+	}
+}
+
+// sendProgress emits one work-done progress notification from the fake server.
+func (fs *fakeServer) sendProgress(token, kind string) {
+	fs.send(map[string]any{"jsonrpc": "2.0", "method": "$/progress", "params": map[string]any{
+		"token": token,
+		"value": map[string]any{"kind": kind, "title": "Initializing JS/TS language features…"},
+	}})
+}
+
+func TestInitializeOptsIntoWorkDoneProgress(t *testing.T) {
+	t.Parallel()
+
+	var caps struct {
+		Window struct {
+			WorkDoneProgress bool `json:"workDoneProgress"`
+		} `json:"window"`
+	}
+	fs := startFake(func(method string, params json.RawMessage) any {
+		if method == "initialize" {
+			var p struct {
+				Capabilities json.RawMessage `json:"capabilities"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				t.Errorf("bad initialize params: %v", err)
+			}
+			if err := json.Unmarshal(p.Capabilities, &caps); err != nil {
+				t.Errorf("bad capabilities: %v", err)
+			}
+		}
+		return nil
+	})
+	defer fs.client.Close()
+
+	if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	// Without this capability the server never reports its startup work and
+	// WaitReady has nothing to wait on — the first answer goes back wrong.
+	if !caps.Window.WorkDoneProgress {
+		t.Error("initialize must declare window.workDoneProgress")
+	}
+}
+
+func TestInitializeSendsInitializationOptions(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]any
+	fs := startFake(func(method string, params json.RawMessage) any {
+		if method == "initialize" {
+			var p struct {
+				InitializationOptions map[string]any `json:"initializationOptions"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				t.Errorf("bad initialize params: %v", err)
+			}
+			got = p.InitializationOptions
+		}
+		return nil
+	})
+	defer fs.client.Close()
+
+	opts := map[string]any{"tsserver": map[string]any{"path": "/repo/node_modules/typescript/lib/tsserver.js"}}
+	if err := fs.client.Initialize("/tmp/repo", opts); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	ts, ok := got["tsserver"].(map[string]any)
+	if !ok {
+		t.Fatalf("initializationOptions = %v, want a tsserver entry", got)
+	}
+	if ts["path"] != "/repo/node_modules/typescript/lib/tsserver.js" {
+		t.Errorf("tsserver.path = %v", ts["path"])
+	}
+}
+
+func TestWaitReadyWaitsOutReportedWork(t *testing.T) {
+	t.Parallel()
+
+	fs := startFake(nil)
+	defer fs.client.Close()
+	if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	fs.sendProgress("tok-1", "begin")
+
+	done := make(chan struct{})
+	go func() {
+		fs.client.WaitReady(time.Second, 2*time.Second)
+		close(done)
+	}()
+
+	// The whole point: no request may go out while the project is loading,
+	// because the server would answer it with the wrong location.
+	select {
+	case <-done:
+		t.Fatal("WaitReady returned while work was still in progress")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	fs.sendProgress("tok-1", "end")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitReady did not return after the work ended")
+	}
+}
+
+func TestWaitReadyProceedsWhenServerReportsNothing(t *testing.T) {
+	t.Parallel()
+
+	fs := startFake(nil)
+	defer fs.client.Close()
+	if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	// A server that reports no progress at all (or does not implement it)
+	// must cost only the grace window, not the full timeout.
+	start := time.Now()
+	fs.client.WaitReady(50*time.Millisecond, 10*time.Second)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("WaitReady blocked for %s, want ~the 50ms grace", elapsed)
+	}
+}
+
+func TestWaitReadyReturnsWhenServerDies(t *testing.T) {
+	t.Parallel()
+
+	fs := startFake(nil)
+	if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	fs.sendProgress("tok-1", "begin")
+	waitFor(t, "progress begin to land", func() bool {
+		seen, _ := fs.client.progressState()
+		return seen
+	})
+
+	done := make(chan struct{})
+	go func() {
+		fs.client.WaitReady(time.Second, 10*time.Second)
+		close(done)
+	}()
+	fs.kill() // crash mid-load: waiting out a dead server's work is pointless
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("WaitReady did not return after the server died")
 	}
 }

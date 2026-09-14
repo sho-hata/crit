@@ -173,6 +173,16 @@ func (s *Server) lspRootLocked() string {
 	return sess.RepoRoot
 }
 
+// repoRootLocked returns the session's working tree, or "" when there is no
+// session yet. Caller holds s.lsp.mu (see lspRootLocked).
+func (s *Server) repoRootLocked() string {
+	sess := s.session.Load()
+	if sess == nil {
+		return ""
+	}
+	return sess.RepoRoot
+}
+
 // syncLSPRoot points lspRoot at content matching what the reviewer sees.
 // gopls reads whatever is on disk, which is correct for the normal
 // working-tree focus (sess.RepoRoot). But in range/PR focus the review pane
@@ -304,7 +314,10 @@ func (s *Server) lspManager() lspProvider {
 		} else {
 			// shutdownCtx bounds the gopls subprocess: SIGINT/SIGTERM on the
 			// daemon kills it instead of leaking.
-			s.lsp.prov = lsp.NewManager(s.lspRootLocked(), s.shutdownCtx)
+			// The second root is the working tree: when the first is a
+			// range/PR focus worktree, git-untracked dependencies live only
+			// in the real checkout (see Manager.depRoot).
+			s.lsp.prov = lsp.NewManager(s.lspRootLocked(), s.repoRootLocked(), s.shutdownCtx)
 		}
 	}
 	return s.lsp.prov

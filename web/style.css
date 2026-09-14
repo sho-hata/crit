@@ -6424,6 +6424,11 @@ body.crit-story-active .crit-story-rail-resizer { display: block; }
   color: var(--crit-fg-muted);
   font-style: italic;
 }
+
+.lsp-tooltip-error {
+  color: var(--crit-red);
+  font-size: 12px;
+}
 html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
 
 .lsp-peek-truncated {

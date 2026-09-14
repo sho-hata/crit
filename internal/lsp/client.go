@@ -22,6 +22,11 @@ import (
 // large module can take several seconds while gopls loads packages.
 const requestTimeout = 15 * time.Second
 
+// progressGrace bounds the wait for a server to report ANY startup work
+// after initialize. typescript-language-server begins its within ~100ms;
+// a server that says nothing in this window is treated as ready.
+const progressGrace = time.Second
+
 // jsonrpcMessage is one incoming JSON-RPC 2.0 message. A message with both
 // Method and ID is a server->client request; Method without ID is a
 // notification; ID without Method is a response to one of our requests.
@@ -61,6 +66,13 @@ type Client struct {
 	done     chan struct{}
 	doneOnce sync.Once
 
+	// progressMu guards the work-done progress bookkeeping fed by $/progress
+	// notifications: the tokens the server has begun and not yet ended, and
+	// whether it ever reported any. See WaitReady.
+	progressMu     sync.Mutex
+	progressActive map[string]bool
+	progressSeen   bool
+
 	// kill terminates the underlying subprocess. Nil for in-memory pipe
 	// transports (tests).
 	kill func()
@@ -71,10 +83,11 @@ type Client struct {
 // invoked from Close after the polite shutdown handshake.
 func NewClient(stdin io.WriteCloser, stdout io.Reader, kill func()) *Client {
 	c := &Client{
-		stdin:   stdin,
-		pending: make(map[int64]chan jsonrpcMessage),
-		done:    make(chan struct{}),
-		kill:    kill,
+		stdin:          stdin,
+		pending:        make(map[int64]chan jsonrpcMessage),
+		done:           make(chan struct{}),
+		progressActive: make(map[string]bool),
+		kill:           kill,
 	}
 	go c.readLoop(stdout)
 	return c
@@ -153,8 +166,11 @@ func (c *Client) dispatch(msg jsonrpcMessage) {
 		if msg.ID != nil {
 			c.respondToServerRequest(msg)
 		}
-		// Notifications (window/showMessage, $/progress, publishDiagnostics,
-		// ...) are intentionally ignored.
+		if msg.Method == "$/progress" {
+			c.trackProgress(msg.Params)
+		}
+		// Other notifications (window/showMessage, publishDiagnostics, ...)
+		// are intentionally ignored.
 		return
 	}
 	if msg.ID == nil {
@@ -172,6 +188,79 @@ func (c *Client) dispatch(msg jsonrpcMessage) {
 	c.mu.Unlock()
 	if ok {
 		ch <- msg
+	}
+}
+
+// trackProgress records the begin/end of one work-done progress token. The
+// token is compared as raw JSON: LSP allows a string or a number, and either
+// one round-trips identically between the begin and its end.
+func (c *Client) trackProgress(params json.RawMessage) {
+	var p struct {
+		Token json.RawMessage `json:"token"`
+		Value struct {
+			Kind string `json:"kind"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return
+	}
+	token := string(p.Token)
+	c.progressMu.Lock()
+	defer c.progressMu.Unlock()
+	switch p.Value.Kind {
+	case "begin":
+		c.progressSeen = true
+		c.progressActive[token] = true
+	case "end":
+		delete(c.progressActive, token)
+	}
+}
+
+// progressState reports whether the server has announced any work, and
+// whether some of it is still running.
+func (c *Client) progressState() (seen, busy bool) {
+	c.progressMu.Lock()
+	defer c.progressMu.Unlock()
+	return c.progressSeen, len(c.progressActive) > 0
+}
+
+// WaitReady blocks until the server has finished the startup work it reports
+// through work-done progress, or until one of the budgets runs out.
+//
+// This is not an optimization — it is what makes the first answer correct.
+// typescript-language-server serves requests while it is still building the
+// project, and serves them WRONG: a definition resolves to the import
+// statement under the cursor instead of the imported symbol, and hovers come
+// back bare. Nothing in those replies marks them as provisional, so unlike
+// gopls's "no views" there is no error for withClient to retry on. Its
+// "Initializing JS/TS language features" progress is the one signal that the
+// answers have become trustworthy.
+//
+// grace bounds the wait for the server to report anything at all; timeout
+// bounds the work itself. Overrunning either yields to the caller rather than
+// failing: a slow answer beats none.
+func (c *Client) WaitReady(grace, timeout time.Duration) {
+	const tick = 25 * time.Millisecond
+	deadline := time.Now().Add(grace)
+	for {
+		seen, _ := c.progressState()
+		if seen {
+			break
+		}
+		if c.Dead() || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(tick)
+	}
+	deadline = time.Now().Add(timeout)
+	for {
+		if _, busy := c.progressState(); !busy {
+			return
+		}
+		if c.Dead() || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(tick)
 	}
 }
 
@@ -250,8 +339,10 @@ func (c *Client) notify(method string, params any) error {
 }
 
 // Initialize performs the LSP initialize handshake for the given workspace
-// root.
-func (c *Client) Initialize(rootDir string) error {
+// root. initOpts, when non-nil, is sent as initializationOptions — the
+// server-specific settings a language needs at handshake time (see
+// Language.InitOptions).
+func (c *Client) Initialize(rootDir string, initOpts map[string]any) error {
 	rootURI := PathToURI(rootDir)
 	params := map[string]any{
 		"processId": nil,
@@ -260,6 +351,9 @@ func (c *Client) Initialize(rootDir string) error {
 			{"uri": rootURI, "name": filepath.Base(rootDir)},
 		},
 		"capabilities": map[string]any{
+			// Opting in is what makes the server report its startup work at
+			// all — WaitReady has nothing to wait on without this.
+			"window": map[string]any{"workDoneProgress": true},
 			"textDocument": map[string]any{
 				"hover": map[string]any{
 					"contentFormat": []string{"markdown", "plaintext"},
@@ -268,6 +362,9 @@ func (c *Client) Initialize(rootDir string) error {
 				"references": map[string]any{},
 			},
 		},
+	}
+	if initOpts != nil {
+		params["initializationOptions"] = initOpts
 	}
 	if err := c.call("initialize", params, nil); err != nil {
 		return err
