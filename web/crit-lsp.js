@@ -143,6 +143,8 @@
 
   const HOVER_DELAY_MS = 350;
   const MAX_CONSECUTIVE_FAILURES = 3;
+  // Cap for a server error rendered into a tooltip or toast.
+  const MAX_ERROR_CHARS = 200;
   // After the breaker trips, allow another attempt this long after the last
   // failure (half-open): gopls warm-up on large repos can outlast the
   // server's retry window, and a permanent disable would outlive the outage.
@@ -193,13 +195,20 @@
     return textOffsetIn(contentEl, node, offset);
   }
 
+  // recordFailure counts one failed request and opens the breaker on the
+  // third in a row, returning whether this call opened it. The breaker stops
+  // hover from firing at all, so it has to announce itself: silently going
+  // dead is indistinguishable from the feature never having worked.
   function recordFailure() {
     st.failures++;
-    if (st.failures >= MAX_CONSECUTIVE_FAILURES) {
+    if (st.failures >= MAX_CONSECUTIVE_FAILURES && !st.disabled) {
       st.disabled = true;
       st.disabledAt = Date.now();
       hideTooltip();
+      st.toast(st.disabledText);
+      return true;
     }
+    return false;
   }
 
   // isDisabled reports whether the failure breaker is open, letting one
@@ -281,6 +290,24 @@
     }, HOVER_DELAY_MS);
   }
 
+  // serverErrorText turns a failed LSP response into one line a reviewer can
+  // act on. The Go handlers answer with a plain-text reason (a language server
+  // that would not start, a workspace that could not be prepared) and that
+  // reason is the whole diagnosis — dropping it is what made a broken language
+  // server look like a flaky one.
+  function serverErrorText(body, status) {
+    const line = String(body || '').trim().split('\n')[0];
+    if (!line) return 'Language server request failed (HTTP ' + status + ')';
+    return line.length > MAX_ERROR_CHARS ? line.slice(0, MAX_ERROR_CHARS - 1) + '…' : line;
+  }
+
+  // responseError rejects with the server's own reason for a non-ok response.
+  function responseError(r) {
+    return r.text().then(function (body) {
+      throw new Error(serverErrorText(body, r.status));
+    });
+  }
+
   function requestHover(hit, x, y) {
     const char = caretCharOffset(hit.contentEl, x, y);
     if (char < 0) return;
@@ -291,14 +318,16 @@
     st.inflight = ctl;
     // Slow-response indicator: the first request after gopls spawns can take
     // seconds (workspace load). Show a placeholder so the wait is visible.
+    let loadingShown = false;
     const loadingTimer = setTimeout(function () {
+      loadingShown = true;
       showTooltip('<div class="lsp-tooltip-loading">' + esc(st.loadingText) + '</div>', x, y);
     }, 400);
     const url = '/api/lsp/hover?path=' + encodeURIComponent(hit.path) +
       '&line=' + hit.line + '&char=' + char;
     fetch(url, { signal: ctl.signal })
       .then(function (r) {
-        if (!r.ok) throw new Error('hover ' + r.status);
+        if (!r.ok) return responseError(r);
         return r.json();
       })
       .then(function (data) {
@@ -314,7 +343,13 @@
       .catch(function (err) {
         clearTimeout(loadingTimer);
         if (err && err.name === 'AbortError') return;
-        hideTooltip();
+        if (loadingShown) {
+          // The reviewer watched a spinner sit there; swapping it for nothing
+          // reads as "hover is broken". Show what the server actually said.
+          showTooltip('<div class="lsp-tooltip-error">' + esc(err.message) + '</div>', x, y);
+        } else {
+          hideTooltip();
+        }
         recordFailure();
       });
   }
@@ -345,7 +380,7 @@
         setBusy(false);
       })
       .then(function (r) {
-        if (!r.ok) throw new Error('lsp ' + r.status);
+        if (!r.ok) return responseError(r);
         return r.json();
       })
       .then(function (data) {
@@ -360,9 +395,9 @@
       })
       .catch(function (err) {
         if (err && err.name === 'AbortError') return;
-        recordFailure();
-        if (seq !== st.defSeq) return;
-        st.toast(st.errorText);
+        const tripped = recordFailure(); // already toasted the breaker notice
+        if (seq !== st.defSeq || tripped) return;
+        st.toast(err.message || st.errorText);
       });
   }
 
@@ -745,6 +780,8 @@
       refsTruncatedText: opts.refsTruncatedText || '(list truncated)',
       refsHintText: opts.refsHintText || 'Click: jump / preview · Esc: close',
       errorText: opts.errorText || 'Language server request failed',
+      disabledText: opts.disabledText ||
+        'Language server unavailable — hover and go-to-definition paused for 30s',
       loadingText: opts.loadingText || 'Loading documentation… (first request warms up the language server)',
       extRe: makeExtensionMatcher(opts.extensions),
       openFullText: opts.openFullText || 'Open full file ↗',
@@ -775,6 +812,7 @@
 
   const api = {
     init: init,
+    serverErrorText: serverErrorText,
     textOffsetIn: textOffsetIn,
     findHunkForLine: findHunkForLine,
     findGapForLine: findGapForLine,

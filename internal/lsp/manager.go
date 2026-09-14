@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +20,9 @@ import (
 const DefaultIdleTimeout = 3 * time.Minute
 
 // startFunc spawns an initialized LSP client for a workspace root and
-// language. Overridden in tests to avoid spawning a real server.
-type startFunc func(ctx context.Context, rootDir string, lang *Language) (*Client, error)
+// language, sending initOpts as initializationOptions. Overridden in tests to
+// avoid spawning a real server.
+type startFunc func(ctx context.Context, rootDir string, lang *Language, initOpts map[string]any) (*Client, error)
 
 // fileState tracks the sync state of one open document.
 type fileState struct {
@@ -48,7 +50,12 @@ type serverState struct {
 // serialized per language, which is fine for a single-reviewer localhost
 // tool.
 type Manager struct {
-	root        string
+	root string
+	// depRoot is the working tree backing root, set only when root is the
+	// sparse worktree of a range/PR focus. That checkout holds tracked files
+	// only — node_modules is absent — so a language whose handshake needs a
+	// dependency resolves it from depRoot at the same repo-relative path.
+	depRoot     string
 	baseCtx     context.Context
 	idleTimeout time.Duration
 	start       startFunc
@@ -61,15 +68,19 @@ type Manager struct {
 	extraRoots map[string][]PeekRoot // Language.Name -> resolved ExtraRoots
 }
 
-// NewManager creates a manager for the given workspace root. baseCtx, when
-// non-nil, bounds the server subprocess lifetimes (daemon shutdown kills
-// them). No server is spawned here — only on the first LSP request.
-func NewManager(root string, baseCtx context.Context) *Manager {
+// NewManager creates a manager for the given workspace root. depRoot names
+// the working tree backing root and is only meaningful when root is a
+// range/PR focus worktree; pass "" when root is the working tree itself.
+// baseCtx, when non-nil, bounds the server subprocess lifetimes (daemon
+// shutdown kills them). No server is spawned here — only on the first LSP
+// request.
+func NewManager(root, depRoot string, baseCtx context.Context) *Manager {
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
 	return &Manager{
 		root:        root,
+		depRoot:     depRoot,
 		baseCtx:     baseCtx,
 		idleTimeout: DefaultIdleTimeout,
 		start:       startServer,
@@ -133,14 +144,22 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 	deadline := time.Now().Add(warmupTimeout)
 	restarted := false
 	for {
-		if err := m.ensureClient(srv, lang); err != nil {
+		if err := m.ensureClient(srv, lang, absPath); err != nil {
 			return err
 		}
-		if err := syncFile(srv, lang, absPath); err != nil {
+		opened, err := syncFile(srv, lang, absPath)
+		if err != nil {
 			return err
 		}
-		err := fn(srv.client)
-		if err == nil {
+		if opened {
+			// Opening a document is what makes a TypeScript server build the
+			// project around it, and it answers from a half-built one without
+			// saying so (see WaitReady). Only the didOpen pays this wait: on
+			// a warm server the first loop inside WaitReady exits at once.
+			srv.client.WaitReady(progressGrace, warmupTimeout)
+		}
+		reqErr := fn(srv.client)
+		if reqErr == nil {
 			return nil
 		}
 		// Restart once when the transport died mid-request (server crash).
@@ -153,11 +172,11 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 		}
 		// "no views" means gopls's workspace view isn't built yet — transient
 		// during startup, so retry briefly instead of surfacing an error.
-		if strings.Contains(err.Error(), "no views") && time.Now().Before(deadline) {
+		if strings.Contains(reqErr.Error(), "no views") && time.Now().Before(deadline) {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		return err
+		return reqErr
 	}
 }
 
@@ -190,8 +209,11 @@ func (m *Manager) serverFor(lang *Language) *serverState {
 }
 
 // ensureClient spawns + initializes lang's server if srv has no live client.
+// absPath is the file the triggering request is about; a language whose
+// handshake settings depend on where the file sits in the tree (TypeScript
+// picking the nearest node_modules/typescript) resolves them from it.
 // Caller holds srv.mu.
-func (m *Manager) ensureClient(srv *serverState, lang *Language) error {
+func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string) error {
 	if srv.client != nil && !srv.client.Dead() {
 		return nil
 	}
@@ -200,7 +222,14 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language) error {
 		srv.client = nil
 		srv.files = make(map[string]fileState)
 	}
-	client, err := m.start(m.baseCtx, m.root, lang)
+	var initOpts map[string]any
+	if lang.InitOptions != nil {
+		initOpts = lang.InitOptions(m.root, absPath)
+		if initOpts == nil {
+			initOpts = m.depInitOptions(lang, absPath)
+		}
+	}
+	client, err := m.start(m.baseCtx, m.root, lang, initOpts)
 	if err != nil {
 		return err
 	}
@@ -208,34 +237,52 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language) error {
 	return nil
 }
 
+// depInitOptions retries lang's handshake lookup against depRoot, for the
+// file at the same repo-relative path. In range/PR focus the server is rooted
+// at a sparse worktree that by design contains tracked files only, so
+// TypeScript finds no installation there and the server exits at initialize.
+// Borrowing just the dependency location from the working tree keeps the
+// server alive while the reviewed sources still come from the checkout.
+func (m *Manager) depInitOptions(lang *Language, absPath string) map[string]any {
+	if m.depRoot == "" || m.depRoot == m.root {
+		return nil
+	}
+	rel, err := filepath.Rel(m.root, absPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	return lang.InitOptions(m.depRoot, filepath.Join(m.depRoot, rel))
+}
+
 // syncFile makes the server's view of absPath match the disk content:
 // didOpen on first touch, didChange (full sync) when content changed. Agents
 // edit files between review rounds, so disk is always the source of truth.
-// Caller holds srv.mu.
-func syncFile(srv *serverState, lang *Language, absPath string) error {
+// It reports whether this call opened the document, which is the point where
+// a server starts building the project around it. Caller holds srv.mu.
+func syncFile(srv *serverState, lang *Language, absPath string) (opened bool, err error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return fmt.Errorf("lsp: reading %s: %w", absPath, err)
+		return false, fmt.Errorf("lsp: reading %s: %w", absPath, err)
 	}
 	hash := sha256.Sum256(data)
 	st, open := srv.files[absPath]
 	if open && st.hash == hash {
-		return nil
+		return false, nil
 	}
 	if !open {
 		st = fileState{version: 1, hash: hash}
 		if err := srv.client.DidOpen(absPath, lang.LanguageID(absPath), string(data), st.version); err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		st.version++
 		st.hash = hash
 		if err := srv.client.DidChange(absPath, string(data), st.version); err != nil {
-			return err
+			return false, err
 		}
 	}
 	srv.files[absPath] = st
-	return nil
+	return !open, nil
 }
 
 // touchIdleLocked (re)arms the idle shutdown timer.
@@ -316,7 +363,7 @@ func (m *Manager) PeekRoots() []PeekRoot {
 }
 
 // startServer spawns a real language-server subprocess rooted at rootDir.
-func startServer(ctx context.Context, rootDir string, lang *Language) (*Client, error) {
+func startServer(ctx context.Context, rootDir string, lang *Language, initOpts map[string]any) (*Client, error) {
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
 	}
@@ -347,7 +394,7 @@ func startServer(ctx context.Context, rootDir string, lang *Language) (*Client, 
 		}
 	}
 	client := NewClient(stdin, stdout, kill)
-	if err := client.Initialize(rootDir); err != nil {
+	if err := client.Initialize(rootDir, initOpts); err != nil {
 		client.Close()
 		return nil, fmt.Errorf("lsp: initializing %s: %w", lang.Command[0], err)
 	}

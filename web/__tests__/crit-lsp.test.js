@@ -159,3 +159,24 @@ test('hljsLanguageForPath: grammar follows the peeked file, not Go', function ()
   assert.strictEqual(lsp.hljsLanguageForPath(''), null);
   assert.strictEqual(lsp.hljsLanguageForPath(null), null);
 });
+
+test('serverErrorText: keeps the server reason, one line, bounded', function () {
+  // The reason IS the diagnosis — a language server that will not start says
+  // exactly why, and that line is what the reviewer needs in the tooltip.
+  const real = 'lsp hover: lsp: initializing typescript-language-server: ' +
+    'Could not find a valid TypeScript installation.';
+  assert.strictEqual(lsp.serverErrorText(real, 502), real);
+
+  // Only the first line: Go errors can carry a stack-ish tail.
+  assert.strictEqual(lsp.serverErrorText('first line\nsecond line', 502), 'first line');
+
+  // An empty body still has to say something actionable.
+  assert.match(lsp.serverErrorText('', 502), /HTTP 502/);
+  assert.match(lsp.serverErrorText('   \n  ', 503), /HTTP 503/);
+  assert.match(lsp.serverErrorText(null, 500), /HTTP 500/);
+
+  // Long bodies are truncated rather than blowing out the tooltip.
+  const long = lsp.serverErrorText('x'.repeat(500), 502);
+  assert.ok(long.length <= 200, 'length = ' + long.length);
+  assert.ok(long.endsWith('…'));
+});

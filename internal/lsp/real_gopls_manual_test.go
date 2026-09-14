@@ -34,7 +34,7 @@ func TestRealGopls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir, context.Background())
+	m := NewManager(dir, "", context.Background())
 	defer m.Shutdown()
 
 	// Hover over "Println" (line 6 → 0-based 5; "\tfmt.Println" → char 5)
