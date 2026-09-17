@@ -6320,7 +6320,8 @@ body.crit-story-active .crit-story-rail-resizer { display: block; }
 }
 
 .diff-line.lsp-jump-flash,
-.diff-split-side.lsp-jump-flash {
+.diff-split-side.lsp-jump-flash,
+.code-document .line-block.lsp-jump-flash {
   animation: lsp-jump-flash 1.6s ease-out;
 }
 @keyframes lsp-jump-flash {

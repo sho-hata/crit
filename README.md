@@ -209,6 +209,7 @@ Opens a side panel listing every reference to the identifier (declaration includ
 
 Notes:
 
+- Works in both ways a code file can render: the **diff** (git mode) and the **whole-file document view** that file mode (`crit some.ts`) uses — in file mode the line you hover is the file's own line, so there is no diff to expand on a definition jump.
 - Language servers start **lazily** on the first hover and are stopped after 3 minutes of inactivity — running crit in many worktrees at once only keeps language servers alive for reviews you're actively hovering.
 - The very first hover after a cold start can take a few seconds while the server loads the workspace (the tooltip shows a loading placeholder).
 - Definition and reference targets are only read from your repo and each installed language's known source roots: `GOROOT` and `GOMODCACHE` for Go, the global `node_modules` (`npm root -g`) for TypeScript. There is deliberately no general file-read endpoint. (TypeScript definitions into a locally-installed `node_modules` live under your repo root; definitions into a globally-installed `typescript` — e.g. `lib.dom.d.ts` after the global install above — are covered by the global-`node_modules` root as long as `npm` is on PATH.)
