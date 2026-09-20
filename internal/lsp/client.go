@@ -37,6 +37,9 @@ type jsonrpcMessage struct {
 	Params  json.RawMessage  `json:"params,omitempty"`
 	Result  json.RawMessage  `json:"result,omitempty"`
 	Error   *ResponseError   `json:"error,omitempty"`
+
+	// raw is the frame body as received, kept for debug logging only.
+	raw []byte
 }
 
 // ResponseError is a JSON-RPC error object.
@@ -49,6 +52,11 @@ func (e *ResponseError) Error() string { return fmt.Sprintf("lsp: %s (code %d)",
 
 // Client is a JSON-RPC 2.0 client over a stdio-style transport.
 type Client struct {
+	// name is the registry language this client talks to, and debug whether
+	// CRIT_LSP_DEBUG was on when it was created; both only feed debug logging.
+	name  string
+	debug bool
+
 	stdin   io.WriteCloser
 	writeMu sync.Mutex // serializes frame writes to stdin
 
@@ -82,7 +90,15 @@ type Client struct {
 // reader loop. kill, when non-nil, force-terminates the server process; it is
 // invoked from Close after the polite shutdown handshake.
 func NewClient(stdin io.WriteCloser, stdout io.Reader, kill func()) *Client {
+	return newClient("", stdin, stdout, kill)
+}
+
+// newClient is NewClient for a server of the named language, so debug log
+// lines say which server they belong to.
+func newClient(name string, stdin io.WriteCloser, stdout io.Reader, kill func()) *Client {
 	c := &Client{
+		name:           name,
+		debug:          debugEnabled(),
 		stdin:          stdin,
 		pending:        make(map[int64]chan jsonrpcMessage),
 		done:           make(chan struct{}),
@@ -91,6 +107,10 @@ func NewClient(stdin io.WriteCloser, stdout io.Reader, kill func()) *Client {
 	}
 	go c.readLoop(stdout)
 	return c
+}
+
+func (c *Client) debugf(format string, args ...any) {
+	debugf(c.debug, c.name, format, args...)
 }
 
 // Dead reports whether the transport has closed (server exited or crashed).
@@ -110,7 +130,11 @@ func (c *Client) readLoop(stdout io.Reader) {
 	for {
 		msg, err := readFrame(r)
 		if err != nil {
+			c.debugf("reader stopped: %v", err)
 			return
+		}
+		if c.debug {
+			c.debugf("<- %s", truncateForLog(msg.raw))
 		}
 		c.dispatch(msg)
 	}
@@ -156,6 +180,7 @@ func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return msg, fmt.Errorf("lsp: parsing message: %w", err)
 	}
+	msg.raw = body
 	return msg, nil
 }
 
@@ -241,13 +266,15 @@ func (c *Client) progressState() (seen, busy bool) {
 // failing: a slow answer beats none.
 func (c *Client) WaitReady(grace, timeout time.Duration) {
 	const tick = 25 * time.Millisecond
-	deadline := time.Now().Add(grace)
+	start := time.Now()
+	deadline := start.Add(grace)
 	for {
 		seen, _ := c.progressState()
 		if seen {
 			break
 		}
 		if c.Dead() || time.Now().After(deadline) {
+			c.debugf("wait-ready: no progress reported within %s, treating as ready", grace)
 			return
 		}
 		time.Sleep(tick)
@@ -255,9 +282,11 @@ func (c *Client) WaitReady(grace, timeout time.Duration) {
 	deadline = time.Now().Add(timeout)
 	for {
 		if _, busy := c.progressState(); !busy {
+			c.debugf("wait-ready: startup work finished after %s", roundDuration(time.Since(start)))
 			return
 		}
 		if c.Dead() || time.Now().After(deadline) {
+			c.debugf("wait-ready: gave up after %s (dead=%v), answering anyway", roundDuration(time.Since(start)), c.Dead())
 			return
 		}
 		time.Sleep(tick)
@@ -285,6 +314,9 @@ func (c *Client) writeFrame(v any) error {
 	if err != nil {
 		return err
 	}
+	if c.debug {
+		c.debugf("-> %s", truncateForLog(body))
+	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	if _, err := fmt.Fprintf(c.stdin, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
@@ -296,13 +328,26 @@ func (c *Client) writeFrame(v any) error {
 
 // call performs a request and unmarshals the result into out (skipped when
 // out is nil or the result is null).
-func (c *Client) call(method string, params any, out any) error {
+func (c *Client) call(method string, params any, out any) (err error) {
 	c.mu.Lock()
 	c.nextID++
 	id := c.nextID
 	ch := make(chan jsonrpcMessage, 1)
 	c.pending[id] = ch
 	c.mu.Unlock()
+
+	if c.debug {
+		// The frame lines carry the payloads; this one ties a request to its
+		// method (responses only carry an id) and says how long it took.
+		start := time.Now()
+		defer func() {
+			outcome := "ok"
+			if err != nil {
+				outcome = "error: " + err.Error()
+			}
+			c.debugf("%s #%d finished in %s: %s", method, id, roundDuration(time.Since(start)), outcome)
+		}()
+	}
 
 	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 	if err := c.writeFrame(req); err != nil {
