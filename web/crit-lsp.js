@@ -4,7 +4,9 @@
 // Talks to the local Go server's /api/lsp/* endpoints (which proxy a
 // language server: gopls, typescript-language-server). Which file
 // extensions are eligible comes from /api/config's lsp_extensions.
-// Hover: rest the mouse over eligible code in a diff → documentation tooltip.
+// Hover: rest the mouse over eligible code → documentation tooltip. Both
+// renderings of a code file are covered: the diff view and file mode's
+// document view (whole file, one .line-block per source line).
 // Definition: Cmd/Ctrl+Click → jump within the review, or a peek popup when
 // the target lives outside the visible diff / session / repo.
 // References: Cmd/Ctrl+Shift+Click → side panel listing every reference,
@@ -156,22 +158,53 @@
     return window.crit.shared.escapeHTML(s);
   }
 
-  // eligibleLineEl walks up from an event target to the enclosing new-side
-  // diff line of an LSP-covered file, returning {lineEl, contentEl} or null.
-  // Unified view rows are .diff-line; split view sides are .diff-split-side —
-  // both carry the same data-diff-* attributes via tagDiffLine.
+  // eligibleLineEl walks up from an event target to the enclosing source line
+  // of an LSP-covered file, returning {contentEl, path, line} or null. Both
+  // renderings of a code file have to be recognized, or the feature silently
+  // does nothing in whichever one is missing:
+  //   - diff view (git mode, and any file whose viewMode is 'diff')
+  //   - document view (code files in file mode: `crit some.ts`), which has no
+  //     diff markup at all
   function eligibleLineEl(target) {
     if (!target || !target.closest) return null;
+    return diffLineHit(target) || documentLineHit(target);
+  }
+
+  // diffLineHit resolves a position inside the dual-gutter diff renderer.
+  // Unified view rows are .diff-line; split view sides are .diff-split-side —
+  // both carry the same data-diff-* attributes via tagDiffLine. Only the new
+  // side maps to the file the language server reads.
+  function diffLineHit(target) {
     const contentEl = target.closest('.diff-content');
     if (!contentEl) return null;
     const lineEl = contentEl.closest('.diff-line, .diff-split-side');
     if (!lineEl) return null;
-    const path = lineEl.dataset.diffFilePath;
-    if (!path || !st.extRe.test(path)) return null;
     if (lineEl.dataset.diffSide === 'old') return null;
-    const line = parseInt(lineEl.dataset.diffLineNum, 10);
+    return lineHit(contentEl, lineEl.dataset.diffFilePath, lineEl.dataset.diffLineNum);
+  }
+
+  // documentLineHit resolves a position inside a code file's document view.
+  // buildCodeLineBlocks emits one .line-block per source line, so the block's
+  // start line is the position's line and .line-content holds exactly that
+  // line's text — the same contract caretCharOffset needs from .diff-content.
+  // The .code-document scope keeps markdown document/rendered-diff blocks
+  // (same markup, multi-line ranges, rendered prose) out.
+  function documentLineHit(target) {
+    const contentEl = target.closest('.code-document .line-content');
+    if (!contentEl) return null;
+    const lineEl = contentEl.closest('.line-block');
+    if (!lineEl) return null;
+    if (lineEl.dataset.startLine !== lineEl.dataset.endLine) return null;
+    return lineHit(contentEl, lineEl.dataset.filePath, lineEl.dataset.startLine);
+  }
+
+  // lineHit builds the hit object once the renderer-specific lookup has found
+  // the file path and line number, dropping files no installed server covers.
+  function lineHit(contentEl, path, lineNum) {
+    if (!path || !st.extRe.test(path)) return null;
+    const line = parseInt(lineNum, 10);
     if (!line) return null;
-    return { lineEl: lineEl, contentEl: contentEl, path: path, line: line };
+    return { contentEl: contentEl, path: path, line: line };
   }
 
   // caretCharOffset computes the UTF-16 column under the pointer, or -1.

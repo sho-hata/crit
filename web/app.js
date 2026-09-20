@@ -3915,7 +3915,7 @@
       ignoreTreeObserverUntil = Date.now() + 200;
       suppressBodyMountObserver(500);
       const attempt = function () {
-        resolve(revealDiffLine(file, loc.path, loc.line));
+        resolve(revealLspLine(file, loc.path, loc.line));
       };
       if (file.lazy) {
         loadLazyFile(section, file, function () { requestAnimationFrame(attempt); });
@@ -3926,18 +3926,23 @@
     });
   }
 
-  // revealDiffLine scrolls a new-side line into view, expanding the collapsed
-  // gap that contains it first (same merge logic as the spacer click handler).
-  // Returns true when the line is now visible.
-  function revealDiffLine(file, path, line) {
-    const hunks = file.diffHunks || [];
-    if (window.crit.lsp.findHunkForLine(hunks, line) === -1) {
-      const gap = window.crit.lsp.findGapForLine(hunks, line);
-      if (!gap || !file.content) return false;
-      expandAll(file, gap.prevIdx, gap.nextIdx); // re-renders the file section
+  // revealLspLine scrolls a target line into view, in whichever view the file
+  // is rendered. Document view (code files in file mode) already shows every
+  // line; diff view has to expand the collapsed gap containing the line first
+  // (same merge logic as the spacer click handler). Returns true when the line
+  // is now visible.
+  function revealLspLine(file, path, line) {
+    let el = findDocumentLineEl(path, line);
+    if (!el) {
+      const hunks = file.diffHunks || [];
+      if (window.crit.lsp.findHunkForLine(hunks, line) === -1) {
+        const gap = window.crit.lsp.findGapForLine(hunks, line);
+        if (!gap || !file.content) return false;
+        expandAll(file, gap.prevIdx, gap.nextIdx); // re-renders the file section
+      }
+      el = findDiffLineEl(path, line);
+      if (!el) return false;
     }
-    const el = findDiffLineEl(path, line);
-    if (!el) return false;
     // 'instant': the page has CSS scroll-behavior: smooth, and a smooth
     // animation over a long jump gets cancelled by lazy-mount layout shifts.
     el.scrollIntoView({ block: 'center', behavior: 'instant' });
@@ -3947,6 +3952,15 @@
       el.removeEventListener('animationend', onEnd);
     });
     return true;
+  }
+
+  // findDocumentLineEl locates a code file's document-view block for
+  // path:line — one block per source line, so start and end line match.
+  function findDocumentLineEl(path, line) {
+    const section = document.getElementById('file-section-' + path);
+    if (!section) return null;
+    return section.querySelector('.code-document .line-block' +
+      '[data-start-line="' + line + '"][data-end-line="' + line + '"]');
   }
 
   // findDiffLineEl locates the rendered new-side diff line for path:line.
