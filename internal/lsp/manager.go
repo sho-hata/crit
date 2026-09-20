@@ -165,6 +165,7 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 		// Restart once when the transport died mid-request (server crash).
 		if srv.client.Dead() && !restarted {
 			restarted = true
+			debugf(debugEnabled(), lang.Name, "server died during the request (%v), restarting once", reqErr)
 			srv.client.Close()
 			srv.client = nil
 			srv.files = make(map[string]fileState)
@@ -173,6 +174,7 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 		// "no views" means gopls's workspace view isn't built yet — transient
 		// during startup, so retry briefly instead of surfacing an error.
 		if strings.Contains(reqErr.Error(), "no views") && time.Now().Before(deadline) {
+			debugf(debugEnabled(), lang.Name, "workspace not ready (no views), retrying")
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -298,6 +300,7 @@ func (m *Manager) touchIdleLocked() {
 func (m *Manager) idleShutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	debugf(debugEnabled(), "", "idle for %s, shutting down %d server(s)", m.idleTimeout, len(m.servers))
 	m.dropAllLocked()
 }
 
@@ -369,7 +372,14 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts m
 	}
 	cmd := exec.CommandContext(ctx, lang.Command[0], lang.Command[1:]...) //nolint:gosec // argv is fixed in the registry, never user input
 	cmd.Dir = rootDir
-	cmd.Stderr = io.Discard
+	debug := debugEnabled()
+	if debug {
+		// A server's own stderr is where it explains why it is not answering,
+		// so surface it when debugging instead of throwing it away.
+		cmd.Stderr = &stderrLogger{name: lang.Name}
+	} else {
+		cmd.Stderr = io.Discard
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -381,9 +391,14 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts m
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("lsp: starting %s: %w", lang.Command[0], err)
 	}
+	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(lang.Command, " "), cmd.Process.Pid, rootDir)
 	// Reap the process when it exits so it never zombies.
 	waitDone := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(waitDone) }()
+	go func() {
+		err := cmd.Wait()
+		debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
+		close(waitDone)
+	}()
 	// kill is invoked by Client.Close after the polite shutdown handshake
 	// already got its grace period, so don't wait again — reap or kill now.
 	kill := func() {
@@ -393,10 +408,12 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts m
 			_ = cmd.Process.Kill()
 		}
 	}
-	client := NewClient(stdin, stdout, kill)
+	client := newClient(lang.Name, stdin, stdout, kill)
+	initStart := time.Now()
 	if err := client.Initialize(rootDir, initOpts); err != nil {
 		client.Close()
 		return nil, fmt.Errorf("lsp: initializing %s: %w", lang.Command[0], err)
 	}
+	debugf(debug, lang.Name, "initialized in %s", roundDuration(time.Since(initStart)))
 	return client, nil
 }
