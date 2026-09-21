@@ -475,7 +475,8 @@ func classifyRoot(absPath, root string, extras []lsp.PeekRoot) int {
 
 // lspPathAllowed reports whether an absolute path lies under one of the
 // roots LSP features may touch: the LSP root or an installed language's
-// extra roots (GOROOT, GOMODCACHE, the global node_modules).
+// extra roots (GOROOT, GOMODCACHE, the global node_modules, Python's stdlib,
+// site-packages and pyright's typeshed).
 func (s *Server) lspPathAllowed(absPath, root string) bool {
 	return classifyRoot(absPath, root, s.lspManager().PeekRoots()) != rootNone
 }

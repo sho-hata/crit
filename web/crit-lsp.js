@@ -2,7 +2,7 @@
 // code-review mode.
 //
 // Talks to the local Go server's /api/lsp/* endpoints (which proxy a
-// language server: gopls, typescript-language-server). Which file
+// language server: gopls, typescript-language-server, pyright). Which file
 // extensions are eligible comes from /api/config's lsp_extensions.
 // Hover: rest the mouse over eligible code → documentation tooltip. Both
 // renderings of a code file are covered: the diff view and file mode's
@@ -125,6 +125,7 @@
     go: 'go',
     ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'typescript',
     js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    py: 'python', pyi: 'python',
   };
   function hljsLanguageForPath(path) {
     var m = /\.([a-z0-9]+)$/i.exec(path || '');

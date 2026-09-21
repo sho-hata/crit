@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -285,6 +286,139 @@ func TestClientAnswersServerRequests(t *testing.T) {
 	}
 	if len(result) != 2 || result[0] != nil || result[1] != nil {
 		t.Errorf("configuration response = %v, want [null null]", result)
+	}
+}
+
+// The capability is what makes a server pull configuration at all, and only a
+// language with settings may claim it: gopls and typescript-language-server
+// must keep seeing exactly the capabilities they always did.
+func TestClientInitializeDeclaresConfigurationOnlyWithSettings(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		settings map[string]any
+		want     bool
+	}{
+		{"no settings", nil, false},
+		{"empty settings", map[string]any{}, false},
+		{"settings", map[string]any{"python": map[string]any{}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var caps map[string]any
+			fs := startFake(func(method string, params json.RawMessage) any {
+				if method == "initialize" {
+					var p struct {
+						Capabilities map[string]any `json:"capabilities"`
+					}
+					if err := json.Unmarshal(params, &p); err != nil {
+						t.Errorf("bad initialize params: %v", err)
+					}
+					caps = p.Capabilities
+				}
+				return nil
+			})
+			defer fs.client.Close()
+			fs.client.SetSettings(tc.settings)
+			if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
+				t.Fatalf("Initialize: %v", err)
+			}
+			ws, declared := caps["workspace"].(map[string]any)
+			if declared != tc.want {
+				t.Fatalf("workspace capability declared = %v, want %v (caps=%v)", declared, tc.want, caps)
+			}
+			if tc.want && ws["configuration"] != true {
+				t.Errorf("workspace.configuration = %v, want true", ws["configuration"])
+			}
+		})
+	}
+}
+
+// workspace/configuration is answered from the language's settings, one entry
+// per requested item and in the same order; an item it has nothing for gets
+// null, which the server reads as "use your default".
+func TestClientAnswersConfigurationFromSettings(t *testing.T) {
+	t.Parallel()
+
+	fs := startFake(nil)
+	defer fs.client.Close()
+	extra := []string{"/venv/lib/python3.13/site-packages"}
+	fs.client.SetSettings(map[string]any{
+		"python": map[string]any{"analysis": map[string]any{"extraPaths": extra}},
+	})
+
+	id := json.RawMessage(`7`)
+	fs.send(map[string]any{
+		"jsonrpc": "2.0", "id": &id, "method": "workspace/configuration",
+		"params": map[string]any{"items": []any{
+			map[string]any{"section": "python"},
+			map[string]any{"section": "pyright"},
+			map[string]any{"section": "python.analysis"},
+			map[string]any{}, // no section: the whole tree, which we do not serve
+		}},
+	})
+	waitFor(t, "configuration response", func() bool {
+		fs.mu.Lock()
+		defer fs.mu.Unlock()
+		return len(fs.responses) == 1
+	})
+	fs.mu.Lock()
+	resp := fs.responses[0]
+	fs.mu.Unlock()
+	var result []any
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("parsing response result: %v", err)
+	}
+	if len(result) != 4 {
+		t.Fatalf("got %d entries, want 4 (one per item): %v", len(result), result)
+	}
+	analysis := map[string]any{"extraPaths": []any{extra[0]}}
+	if got, want := result[0], any(map[string]any{"analysis": analysis}); !reflect.DeepEqual(got, want) {
+		t.Errorf("python = %v, want %v", got, want)
+	}
+	if result[1] != nil {
+		t.Errorf("pyright = %v, want null", result[1])
+	}
+	if got := result[2]; !reflect.DeepEqual(got, any(analysis)) {
+		t.Errorf("python.analysis = %v, want %v", got, analysis)
+	}
+	if result[3] != nil {
+		t.Errorf("sectionless item = %v, want null", result[3])
+	}
+}
+
+func TestLookupSection(t *testing.T) {
+	t.Parallel()
+
+	settings := map[string]any{
+		"python": map[string]any{
+			"analysis": map[string]any{"extraPaths": []string{"/sp"}},
+			"leaf":     "text",
+		},
+		"gopls.ui": "flat key with a dot",
+	}
+	cases := []struct {
+		name     string
+		settings map[string]any
+		section  string
+		want     any
+	}{
+		{"top level", settings, "python", settings["python"]},
+		{"dotted path", settings, "python.analysis", settings["python"].(map[string]any)["analysis"]},
+		{"leaf value", settings, "python.leaf", "text"},
+		{"exact key beats the dotted walk", settings, "gopls.ui", "flat key with a dot"},
+		{"missing section", settings, "pyright", nil},
+		{"missing nested key", settings, "python.nope", nil},
+		{"path through a non-map", settings, "python.leaf.deeper", nil},
+		{"empty section", settings, "", nil},
+		{"nil settings", nil, "python", nil},
+	}
+	for _, tc := range cases {
+		if got := lookupSection(tc.settings, tc.section); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: lookupSection(%q) = %v, want %v", tc.name, tc.section, got, tc.want)
+		}
 	}
 }
 

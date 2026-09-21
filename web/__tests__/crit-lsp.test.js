@@ -153,6 +153,8 @@ test('hljsLanguageForPath: grammar follows the peeked file, not Go', function ()
   assert.strictEqual(lsp.hljsLanguageForPath('lib/util.MTS'), 'typescript');
   assert.strictEqual(lsp.hljsLanguageForPath('web/app.js'), 'javascript');
   assert.strictEqual(lsp.hljsLanguageForPath('web/mod.cjs'), 'javascript');
+  assert.strictEqual(lsp.hljsLanguageForPath('app/main.py'), 'python');
+  assert.strictEqual(lsp.hljsLanguageForPath('typeshed/stdlib/json/__init__.pyi'), 'python');
   // No grammar → null → escaped plain text, never the wrong grammar.
   assert.strictEqual(lsp.hljsLanguageForPath('runtime/asm_arm64.s'), null);
   assert.strictEqual(lsp.hljsLanguageForPath('README.md'), null);

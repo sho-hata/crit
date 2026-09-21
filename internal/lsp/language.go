@@ -38,12 +38,31 @@ type Language struct {
 	// nil to send none. Runs on the request path (once per server spawn) —
 	// keep it filesystem-cheap.
 	InitOptions func(root, absPath string) map[string]any
+	// ConfigSettings returns the settings the server pulls with
+	// workspace/configuration, keyed by section name ("python"), for a server
+	// rooted at root whose first request is about absPath, or nil when the
+	// language needs none. Some servers take settings only this way — pyright
+	// ignores initializationOptions and reads python.* from the pull — so this
+	// is separate from InitOptions. A nil result also leaves the capability
+	// undeclared, so a server that never needed it is never asked. Same cost
+	// rule as InitOptions: it runs once per server spawn, keep it
+	// filesystem-cheap, and never execute anything the repo supplies.
+	ConfigSettings func(root, absPath string) map[string]any
+	// SkipReadyWait skips the wait for startup progress after a document is
+	// opened (see Client.WaitReady). Right for a server that queues requests
+	// behind its own analysis and so never answers from a half-built project
+	// — pyright — and reports no progress for that analysis: the wait would
+	// only sit out its whole grace period. Wrong for one that answers early
+	// and wrong, like typescript-language-server.
+	SkipReadyWait bool
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for
-	// TypeScript). root is the workspace root the Manager is anchored to, for
-	// languages whose roots depend on the project rather than the machine.
-	// May run external commands; the Manager caches successful results per
-	// root. A nil result means the lookup failed and may be retried.
+	// TypeScript). root is the tree the language's dependencies live in — the
+	// workspace root, or the working tree backing it under range/PR focus —
+	// for languages whose roots depend on the project rather than the
+	// machine. May run external commands; the Manager caches successful
+	// results per root. A nil result means the lookup failed and may be
+	// retried.
 	ExtraRoots func(root string) []PeekRoot
 }
 
@@ -53,6 +72,10 @@ type Language struct {
 // sparse worktree has no dependencies — cross-package hover/definition
 // degrades there, while intra-repo symbols keep working. The normal
 // working-tree focus resolves node_modules as usual.
+//
+// Python note: the same holds for a virtualenv (.venv is untracked), and
+// Manager.depRoot covers it the same way. pyright does not discover a .venv
+// on its own, so pyConfigSettings tells it where the packages are.
 var languages = []*Language{
 	{
 		Name:    "go",
@@ -83,6 +106,17 @@ var languages = []*Language{
 		},
 		InitOptions: tsInitOptions,
 		ExtraRoots:  npmGlobalRoots,
+	},
+	{
+		Name:    "python",
+		Command: []string{"pyright-langserver", "--stdio"},
+		IDByExt: map[string]string{"py": "python", "pyi": "python"},
+		SparsePatterns: []string{
+			"*.py", "*.pyi", "pyproject.toml", "pyrightconfig.json",
+		},
+		ConfigSettings: pyConfigSettings,
+		SkipReadyWait:  true,
+		ExtraRoots:     pyExtraRoots,
 	},
 }
 

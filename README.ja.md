@@ -14,7 +14,7 @@
 
 > [!NOTE]
 > **これはフォークです。** [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) に、本家にはまだ入っていない機能を追加しています。フォーク独自の追加機能には **(fork-only)** を付けています。現時点では以下:
-> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go は gopls、TypeScript / JavaScript は typescript-language-server 経由）
+> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go は gopls、TypeScript / JavaScript は typescript-language-server、Python は pyright 経由）
 
 ![「notification-plan.md」を開いた Crit の画面。「Queue - Redis Streams, SQS, RabbitMQ」の行に「Just use SQS - we're in AWS」というコメントが付いている](docs/images/demo-overview.png)
 
@@ -166,7 +166,7 @@ crit cleanup                      # 古いレビューファイルを削除
 diff を読むというのは、エディタなしでコードを読むということです。この機能は、そこで実際に知りたくなる 3 つのこと — これは何か？　どこで定義されているか？　他にどこから呼ばれているか？ — をレビュー画面の中に持ち込みます。
 
 > [!NOTE]
-> 対応言語は **Go**（[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) 経由）と **TypeScript / JavaScript**（[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) 経由）です。それぞれのサーバーバイナリが `PATH` にあれば、言語ごとに独立して有効になります。
+> 対応言語は **Go**（[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) 経由）、**TypeScript / JavaScript**（[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) 経由）、**Python**（[pyright](https://github.com/microsoft/pyright) 経由）です。それぞれのサーバーバイナリが `PATH` にあれば、言語ごとに独立して有効になります。
 
 #### ホバー: シグネチャとドキュメント
 
@@ -202,6 +202,10 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
    # TypeScript / JavaScript
    npm install -g typescript-language-server typescript
    which typescript-language-server
+
+   # Python
+   npm install -g pyright
+   which pyright-langserver
    ```
 
 2. レビューを開始します。それだけです。LSP はデフォルトで有効で（`lsp` 設定キー。無効にするには `"lsp": false`）、インストールされているサーバーに応じて言語ごとに独立して有効になります。
@@ -219,9 +223,10 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
 - コードファイルの 2 つの表示方法のどちらでも動作します: **diff**（git モード）と、ファイルモード（`crit some.ts`）で使われる**ファイル全体のドキュメントビュー**です。ファイルモードではホバーした行がそのままファイルの行番号なので、定義ジャンプで diff を展開する必要もありません。
 - 言語サーバーは最初のホバー時に**遅延起動**し、3 分間リクエストがなければ停止します。多数の worktree で同時に crit を動かしていても、実際にホバーしているレビューの分しか言語サーバーは生きません。
 - コールドスタート直後の最初のホバーは、サーバーがワークスペースを読み込む数秒間かかることがあります（その間ツールチップにはローディング表示が出ます）。
-- 定義・参照のジャンプ先として読み取るのは、自分のリポジトリ・`GOROOT`・`GOMODCACHE` のみです。汎用のファイル読み取りエンドポイントは意図的に用意していません（TypeScript の `node_modules` 内への定義ジャンプはリポジトリルート配下なので、リポジトリルートのルールでカバーされます）。
-- **範囲 / PR レビュー**（`--range`、`--pr`）は、固定された SHA 時点のファイル内容を表示します。これはディスク上の内容と異なりうるため、作業ツリーを見て回答すると、読んでいる diff と静かに食い違ってしまいます。そこで crit は、その SHA をチェックアウトしたスパースな git worktree に言語サーバーをアンカーします。この worktree は最初の LSP リクエスト時に作られ、言語サーバーと同じアイドルタイムアウトで破棄されます。対応するのはローカル git のみで、`--remote` と Sapling / JJ の範囲レビューでは `lsp_available: false` になります。チェックアウトのサイズ上限は `lsp_worktree_max_mb`（デフォルト 500）で設定でき、推定サイズがこれを超えるコミットはチェックアウトせずスキップされます。TypeScript では `node_modules` は git 管理外のためチェックアウトに含まれず、範囲 / PR フォーカスではパッケージをまたぐホバー・定義ジャンプが劣化します（リポジトリ内のシンボルは引き続き動作します）。
-- **デバッグ。** ホバーが反応しない・結果がおかしいときは、`CRIT_LSP_DEBUG=1` を付けて crit を起動すると、crit と言語サーバーのやり取りがログに出ます。daemon は環境変数を引き継ぐので、すでに動いているレビューは再起動してください。出力先は daemon ログ（`~/.crit/sessions/<key>.log`）です（レビュー中に `tail -f` できます。セッション終了時に crit が削除します）。内容は、通常は捨てられる各サーバーの stderr、双方向のすべての JSON-RPC フレーム（ペイロードは 1 KB で切り詰め）、リクエストごとの所要時間と結果を示す 1 行のサマリ、サーバーのライフサイクル（起動・ハンドシェイク・終了・再起動・アイドル停止）です。各行には `lsp[go]` / `lsp[typescript]` のタグが付き、`grep 'finished in'` でリクエストごとの所要時間だけを見られます。フレームにはホバーしたファイルのソースが含まれるので、ログをそのまま公開の場に貼らないでください。
+- 定義・参照のジャンプ先として読み取るのは、自分のリポジトリと、インストール済みの各言語の既知のソースルートのみです: Go は `GOROOT` と `GOMODCACHE`、TypeScript はグローバルの `node_modules`（`npm root -g`）、Python は `PATH` 上の `python3` の標準ライブラリと site-packages・プロジェクトの `.venv`・pyright 同梱の typeshed。汎用のファイル読み取りエンドポイントは意図的に用意していません（リポジトリ内の `node_modules` や `.venv` への定義ジャンプはリポジトリルート配下なので、リポジトリルートのルールでカバーされます）。
+- **範囲 / PR レビュー**（`--range`、`--pr`）は、固定された SHA 時点のファイル内容を表示します。これはディスク上の内容と異なりうるため、作業ツリーを見て回答すると、読んでいる diff と静かに食い違ってしまいます。そこで crit は、その SHA をチェックアウトしたスパースな git worktree に言語サーバーをアンカーします。この worktree は最初の LSP リクエスト時に作られ、言語サーバーと同じアイドルタイムアウトで破棄されます。対応するのはローカル git のみで、`--remote` と Sapling / JJ の範囲レビューでは `lsp_available: false` になります。チェックアウトのサイズ上限は `lsp_worktree_max_mb`（デフォルト 500）で設定でき、推定サイズがこれを超えるコミットはチェックアウトせずスキップされます。TypeScript では `node_modules` は git 管理外のためチェックアウトに含まれず、範囲 / PR フォーカスではパッケージをまたぐホバー・定義ジャンプが劣化します（リポジトリ内のシンボルは引き続き動作します）。Python の `.venv` も git 管理外ですが、こちらは同じパスの作業ツリー側から読み取るため、サードパーティの import は範囲 / PR レビューでも解決されます。
+- **Python の仮想環境。** pyright は `.venv` を自動では見つけません。何もしないとサードパーティの import はすべて `Unknown` になり（ホバーに型が出ない、定義ジャンプが `import` 行に着地する）、エラーも一切出ません。そこで crit は、ファイルに最も近い `.venv/` または `venv/` の site-packages を pyright に教えます（サービスごとに venv を持つモノレポでも動作します）。渡すのはディレクトリだけで、インタプリタは渡しません: crit はレビュー対象リポジトリの Python を一切実行しないため、diff を開くだけでブランチ側のコードが実行されることはありません。この規約から外れる構成は pyright 自身の仕組みで扱えます: crit を起動する前に venv を activate する（pyright は `PATH` 上の `python` を辿ります。すでに動いているレビューは起動時の `PATH` のままなので再起動してください）、またはプロジェクトに `venvPath` と `venv` を指定した `pyrightconfig.json` を置きます。インタプリタにしか分からないもの — 編集可能インストールの `.pth` や、`PATH` 上のものと異なる Python バージョン — は、この方法では `.venv` から読み取れません。
+- **デバッグ。** ホバーが反応しない・結果がおかしいときは、`CRIT_LSP_DEBUG=1` を付けて crit を起動すると、crit と言語サーバーのやり取りがログに出ます。daemon は環境変数を引き継ぐので、すでに動いているレビューは再起動してください。出力先は daemon ログ（`~/.crit/sessions/<key>.log`）です（レビュー中に `tail -f` できます。セッション終了時に crit が削除します）。内容は、通常は捨てられる各サーバーの stderr、双方向のすべての JSON-RPC フレーム（ペイロードは 1 KB で切り詰め）、リクエストごとの所要時間と結果を示す 1 行のサマリ、サーバーのライフサイクル（起動・ハンドシェイク・終了・再起動・アイドル停止）です。各行には `lsp[go]` / `lsp[typescript]` / `lsp[python]` のタグが付き、`grep 'finished in'` でリクエストごとの所要時間だけを見られます。フレームにはホバーしたファイルのソースが含まれるので、ログをそのまま公開の場に貼らないでください。
 
 ### プログラムからのコメント投稿
 
@@ -366,7 +371,7 @@ crit config                                    # 解決後の設定を表示（�
 | `no_update_check`      | bool     | `false`                    | 起動時に新バージョンを確認しない。                                                                                                                                                      |
 | `no_integration_check` | bool     | `false`                    | 起動時の連携設定の鮮度チェックをスキップする。                                                                                                                                          |
 | `vcs`                  | string   | 自動検出                   | 使用する VCS バックエンド: `"git"`、`"sl"`、`"jj"`。設定した場合、自動検出の代わりにこれを使います。指定した VCS が利用できない場合は git にフォールバックします。`--vcs` CLI フラグでも指定でき、フラグが設定より優先されます。 |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Go・TypeScript / JavaScript ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。各言語のサーバー（`gopls`、`typescript-language-server`）が PATH にある場合に言語ごとに有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Go・TypeScript / JavaScript・Python ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。各言語のサーバー（`gopls`、`typescript-language-server`、`pyright-langserver`）が PATH にある場合に言語ごとに有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** 範囲 / PR レビューを対象 SHA 時点で解決するために LSP がチェックアウトする、スパースな git worktree のサイズ上限（MB）。推定サイズがこれを超えるコミットはチェックアウトせずスキップされます（そのレビューでは LSP が無効のままになります）。 |
 | `live_cookie`          | string   | `""`                       | ライブモードで上流アプリへ転送する Cookie ヘッダの値（例: `"_crit_key=..."`）。グローバル / プロジェクトどちらでも可。秘密情報は `live_cookie_file` を推奨。                            |
 | `live_cookie_file`     | string   | `""`                       | ライブモード用の上流 Cookie を記載したファイルのパス（生のヘッダ行、または Netscape 形式の cookie jar）。グローバル / プロジェクトどちらでも可。相対パスはリポジトリルートから解決されます。 |

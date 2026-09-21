@@ -23,7 +23,7 @@ func newManagerHarness(t *testing.T, handler func(method string, params json.Raw
 	t.Helper()
 	h := &managerHarness{handler: handler}
 	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, _ *Language, _ map[string]any) (*Client, error) {
+	m.start = func(_ context.Context, _ string, _ *Language, _, _ map[string]any) (*Client, error) {
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
 		h.mu.Lock()
@@ -185,7 +185,7 @@ func TestManagerColdStartDoesNotBlockOtherLanguage(t *testing.T) {
 
 	h := &managerHarness{handler: hoverOK}
 	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, lang *Language, _ map[string]any) (*Client, error) {
+	m.start = func(_ context.Context, _ string, lang *Language, _, _ map[string]any) (*Client, error) {
 		if lang.Name == "go" {
 			close(goStarted)
 			<-goRelease // park the Go cold start
@@ -226,7 +226,7 @@ func TestManagerColdStartDoesNotBlockOtherLanguage(t *testing.T) {
 // startCapture builds a start hook that records the initializationOptions the
 // Manager resolved for each spawn.
 func startCapture(h *managerHarness, got *map[string]any) startFunc {
-	return func(_ context.Context, _ string, _ *Language, initOpts map[string]any) (*Client, error) {
+	return func(_ context.Context, _ string, _ *Language, initOpts, _ map[string]any) (*Client, error) {
 		*got = initOpts
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
@@ -314,5 +314,182 @@ func TestManagerSendsNoInitOptionsWithoutAnyInstall(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("initializationOptions = %v, want nil", got)
+	}
+}
+
+// startCaptureSettings builds a start hook that records the
+// workspace/configuration settings the Manager resolved for each spawn.
+func startCaptureSettings(h *managerHarness, got *map[string]any) startFunc {
+	return func(_ context.Context, _ string, _ *Language, _, settings map[string]any) (*Client, error) {
+		*got = settings
+		h.spawns.Add(1)
+		fs := startFake(h.handler)
+		h.mu.Lock()
+		h.servers = append(h.servers, fs)
+		h.mu.Unlock()
+		return fs.client, nil
+	}
+}
+
+// extraPathsOf pulls python.analysis.extraPaths out of resolved settings.
+func extraPathsOf(t *testing.T, settings map[string]any) []string {
+	t.Helper()
+	py, _ := settings["python"].(map[string]any)
+	analysis, _ := py["analysis"].(map[string]any)
+	paths, _ := analysis["extraPaths"].([]string)
+	return paths
+}
+
+// Same failure as TypeScript's node_modules, one language over: a range/PR
+// focus roots pyright at a sparse worktree with no .venv (it is untracked), so
+// without the fallback every third-party import there resolves to Unknown —
+// with no error anywhere to say why.
+func TestManagerResolvesSettingsFromDepRootWhenWorktreeLacksVenv(t *testing.T) {
+	t.Parallel()
+
+	worktree, depRoot := t.TempDir(), t.TempDir()
+	sp := writeVenv(t, filepath.Join(depRoot, "services", "api"), ".venv")
+	file := filepath.Join(worktree, "services", "api", "app.py")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGoFile(t, filepath.Dir(file), "app.py", "import mylib\n")
+
+	h := &managerHarness{handler: hoverOK}
+	m := NewManager(worktree, depRoot, context.Background())
+	var got map[string]any
+	m.start = startCaptureSettings(h, &got)
+	t.Cleanup(m.Shutdown)
+
+	if _, err := m.Hover(file, 0, 0); err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if paths := extraPathsOf(t, got); len(paths) != 1 || paths[0] != sp {
+		t.Errorf("extraPaths = %v, want the working tree's venv %q", paths, sp)
+	}
+}
+
+// The worktree's own venv wins when it has one: depRoot is a fallback for what
+// git does not track, never an override of the checkout.
+func TestManagerPrefersWorkspaceVenvOverDepRoot(t *testing.T) {
+	t.Parallel()
+
+	worktree, depRoot := t.TempDir(), t.TempDir()
+	wsSP := writeVenv(t, worktree, ".venv")
+	writeVenv(t, depRoot, ".venv")
+	file := writeGoFile(t, worktree, "app.py", "import mylib\n")
+
+	h := &managerHarness{handler: hoverOK}
+	m := NewManager(worktree, depRoot, context.Background())
+	var got map[string]any
+	m.start = startCaptureSettings(h, &got)
+	t.Cleanup(m.Shutdown)
+
+	if _, err := m.Hover(file, 0, 0); err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if paths := extraPathsOf(t, got); len(paths) != 1 || paths[0] != wsSP {
+		t.Errorf("extraPaths = %v, want the workspace venv %q", paths, wsSP)
+	}
+}
+
+// No venv anywhere: send no settings at all, which also leaves the capability
+// undeclared, and leave pyright's own resolution (an activated venv on PATH, a
+// pyrightconfig.json) in charge.
+func TestManagerSendsNoSettingsWithoutAnyVenv(t *testing.T) {
+	t.Parallel()
+
+	worktree, depRoot := t.TempDir(), t.TempDir()
+	file := writeGoFile(t, worktree, "app.py", "import mylib\n")
+
+	h := &managerHarness{handler: hoverOK}
+	m := NewManager(worktree, depRoot, context.Background())
+	got := map[string]any{"sentinel": true}
+	m.start = startCaptureSettings(h, &got)
+	t.Cleanup(m.Shutdown)
+
+	if _, err := m.Hover(file, 0, 0); err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if got != nil {
+		t.Errorf("settings = %v, want nil", got)
+	}
+}
+
+// Go and TypeScript have no ConfigSettings, so their spawn must get nil
+// settings whatever sits in the tree — a stray .venv cannot change how gopls
+// or typescript-language-server are spoken to.
+func TestManagerSendsNoSettingsToLanguagesWithoutThem(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"main.go", "app.ts"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeVenv(t, root, ".venv")
+			file := writeGoFile(t, root, name, "\n")
+
+			h := &managerHarness{handler: hoverOK}
+			m := NewManager(root, "", context.Background())
+			got := map[string]any{"sentinel": true}
+			m.start = startCaptureSettings(h, &got)
+			t.Cleanup(m.Shutdown)
+
+			if _, err := m.Hover(file, 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+			if got != nil {
+				t.Errorf("settings for %s = %v, want nil", name, got)
+			}
+		})
+	}
+}
+
+func TestManagerDepBase(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		root, depRoot string
+		want          string
+	}{
+		{"working tree focus", "/repo", "", "/repo"},
+		{"range focus reads dependencies from the working tree", "/tmp/worktree", "/repo", "/repo"},
+	}
+	for _, tc := range cases {
+		m := NewManager(tc.root, tc.depRoot, context.Background())
+		if got := m.depBase(); got != tc.want {
+			t.Errorf("%s: depBase() = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// pyright reports no progress for its startup analysis and answers correctly
+// regardless, so waiting on progress is pure delay. Here the server starts a
+// piece of work it never ends: a Manager that waited would sit out the whole
+// warmup budget (15s) before answering.
+func TestManagerDoesNotWaitOnProgressForPython(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	file := writeGoFile(t, root, "app.py", "x = 1\n")
+
+	m := NewManager(root, "", context.Background())
+	m.start = func(_ context.Context, _ string, _ *Language, _, _ map[string]any) (*Client, error) {
+		fs := startFake(hoverOK)
+		fs.send(map[string]any{
+			"jsonrpc": "2.0", "method": "$/progress",
+			"params": map[string]any{"token": "t", "value": map[string]any{"kind": "begin", "title": "never ends"}},
+		})
+		return fs.client, nil
+	}
+	t.Cleanup(m.Shutdown)
+
+	start := time.Now()
+	if _, err := m.Hover(file, 0, 0); err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("Hover took %s, want it to skip the progress wait", took)
 	}
 }
