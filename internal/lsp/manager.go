@@ -340,7 +340,10 @@ func (m *Manager) Shutdown() {
 
 // PeekRoots returns the extra source roots (beyond the workspace root) that
 // definition/reference peeks may read, resolved per installed language:
-// GOROOT and GOMODCACHE for Go, the global node_modules for TypeScript.
+// GOROOT and GOMODCACHE for Go, the global node_modules for TypeScript. Each
+// language's ExtraRoots is asked about this Manager's workspace root, so the
+// cache is per Manager — i.e. per root — and a project-dependent language
+// never sees another workspace's answer.
 // Only a successful lookup is cached — a failure (e.g. the toolchain missing
 // from the daemon's PATH) is retried on the next call rather than pinning
 // empty roots for the daemon's lifetime.
@@ -354,7 +357,7 @@ func (m *Manager) PeekRoots() []PeekRoot {
 		}
 		cached, ok := m.extraRoots[l.Name]
 		if !ok {
-			cached = l.ExtraRoots()
+			cached = l.ExtraRoots(m.root)
 			if cached == nil {
 				continue
 			}
