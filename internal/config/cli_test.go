@@ -33,6 +33,7 @@ func TestPrintConfigHelp(t *testing.T) {
 		"plan_approve_mode",
 		"notify_on_round_ready",
 		"close_on_approve_after_ms",
+		"stale_review_days",
 		"reviews/<key>",
 	} {
 		if !strings.Contains(got, want) {

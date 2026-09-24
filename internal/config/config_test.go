@@ -800,6 +800,28 @@ func TestLoadConfig_OutputField(t *testing.T) {
 	}
 }
 
+func TestStaleReviewDaysOrDefault(t *testing.T) {
+	days := func(v int) *int { return &v }
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want int
+	}{
+		{name: "nil pointer defaults", cfg: Config{StaleReviewDays: nil}, want: DefaultStaleReviewDays},
+		{name: "zero defaults", cfg: Config{StaleReviewDays: days(0)}, want: DefaultStaleReviewDays},
+		{name: "negative defaults", cfg: Config{StaleReviewDays: days(-5)}, want: DefaultStaleReviewDays},
+		{name: "explicit value", cfg: Config{StaleReviewDays: days(90)}, want: 90},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.StaleReviewDaysOrDefault(); got != tt.want {
+				t.Errorf("StaleReviewDaysOrDefault() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCleanupOnApproveEnabled(t *testing.T) {
 	trueVal := true
 	falseVal := false

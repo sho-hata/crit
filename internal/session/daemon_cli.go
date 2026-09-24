@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/tomasz-tomczyk/crit/internal/browser"
+	"github.com/tomasz-tomczyk/crit/internal/config"
 	"github.com/tomasz-tomczyk/crit/internal/daemon"
 )
 
@@ -96,7 +97,8 @@ func killDaemonOnApproval(approved bool, pid int) {
 func backgroundCleanup() {
 	revDir, err := daemon.ReviewsDir()
 	if err == nil {
-		stale := findStaleReviews(revDir, 14)
+		global, _, _ := config.LoadConfigFile(config.GlobalConfigPath())
+		stale := findStaleReviews(revDir, global.StaleReviewDaysOrDefault())
 		deleteStaleReviewsSilent(stale)
 	}
 	daemon.CleanOrphanedSessions()

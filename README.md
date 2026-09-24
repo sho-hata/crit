@@ -412,6 +412,7 @@ These keys can only be set in `~/.crit.config.json` (global). Project-level `.cr
 | `proxy_auth`           | bool     | `false`                    | When `true`, share / pull / unpublish / re-share use the browser popup relay instead of the local Go server contacting crit-web directly. Use when crit-web is behind an SSO reverse proxy that the terminal cannot authenticate against. No flag or env var — this is a property of the deployment, not a per-invocation choice. |
 | `plan_approve_mode`    | string   | unset                      | Claude Code permission mode after Crit approves an `ExitPlanMode` hook: `default`, `manual`, `acceptEdits`, `plan`, `auto`, `dontAsk`, or `bypassPermissions`. The update uses `destination: "session"`, so it lasts only for the current Claude Code session. See [Claude Code plan approval mode](integrations/README.md#claude-code-plan-approval-mode). |
 | `close_on_approve_after_ms` | int | unset (disabled)          | Auto-close the review tab this many milliseconds after you Approve with no unresolved comments. Unset means no auto-close (current behavior); negative values are treated as unset. A Cancel button during the countdown skips the close for that approval. |
+| `stale_review_days`    | int      | `14`                       | Delete reviews untouched for this many days in the background sweep that runs when a review starts. Unset or non-positive values use the default. `crit cleanup --days N` is unaffected. |
 
 ### CLI flags
 

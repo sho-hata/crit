@@ -60,6 +60,10 @@ Keys worth knowing:
       Auto-close the review tab this many milliseconds after an Approve.
       Global-only. Omit it, or use a negative value, to keep the tab open.
 
+  stale_review_days <int>
+      Delete reviews untouched for this many days in the background sweep
+      that runs when a review starts. Global-only. Defaults to 14.
+
 Run 'crit config --generate' for the full key list with default values.
 `)
 }

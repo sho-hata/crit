@@ -1,9 +1,13 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/tomasz-tomczyk/crit/internal/testutil"
 )
 
 func TestDirArgs(t *testing.T) {
@@ -35,5 +39,51 @@ func TestDirArgs(t *testing.T) {
 				t.Errorf("dirArgs(%v) returned %d dirs, want %d", tt.paths, len(got), tt.want)
 			}
 		})
+	}
+}
+
+func TestBackgroundCleanupUsesGlobalStaleReviewDays(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+
+	if err := os.WriteFile(
+		filepath.Join(home, ".crit.config.json"),
+		[]byte(`{"stale_review_days":90}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	reviewsDir := filepath.Join(home, ".crit", "reviews")
+	if err := os.MkdirAll(reviewsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeReview := func(name string, age time.Duration) string {
+		t.Helper()
+		path := filepath.Join(reviewsDir, name+".json")
+		data, err := json.Marshal(CritJSON{
+			Branch:    name,
+			UpdatedAt: time.Now().Add(-age).UTC().Format(time.RFC3339),
+			Files:     map[string]CritJSONFile{},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	thirtyDaysOld := writeReview("thirty-days-old", 30*24*time.Hour)
+	hundredDaysOld := writeReview("hundred-days-old", 100*24*time.Hour)
+
+	backgroundCleanup()
+
+	if _, err := os.Stat(thirtyDaysOld); err != nil {
+		t.Fatalf("30-day-old review should remain with stale_review_days=90: %v", err)
+	}
+	if _, err := os.Stat(hundredDaysOld); !os.IsNotExist(err) {
+		t.Fatalf("100-day-old review should be deleted with stale_review_days=90, stat error: %v", err)
 	}
 }

@@ -56,6 +56,9 @@ type Config struct {
 	// becomes ready for the human. Defaults to false when unset (opt-in).
 	NotifyOnRoundReady *bool `json:"notify_on_round_ready,omitempty"`
 	DisableStats       bool  `json:"disable_stats,omitempty"`
+	// StaleReviewDays is global-only because the background sweep deletes
+	// reviews from every project, not just the current one.
+	StaleReviewDays *int `json:"stale_review_days,omitempty"`
 	// CloseOnApproveAfterMs, when set, auto-closes the review tab this many
 	// milliseconds after an Approve. Global-only (like open_cmd/agent_cmd) so
 	// a project repo cannot force tabs to close. Nil means disabled; the CLI
@@ -113,6 +116,19 @@ func (c Config) CloseOnApproveAfterMsEnabled() (ms int, enabled bool) {
 		return 0, false
 	}
 	return *c.CloseOnApproveAfterMs, true
+}
+
+// DefaultStaleReviewDays is the background sweep age when stale_review_days is unset.
+const DefaultStaleReviewDays = 14
+
+// StaleReviewDaysOrDefault returns the idle age in days after which the
+// background sweep deletes a review. Unset or non-positive values fall back to
+// DefaultStaleReviewDays.
+func (c Config) StaleReviewDaysOrDefault() int {
+	if c.StaleReviewDays == nil || *c.StaleReviewDays < 1 {
+		return DefaultStaleReviewDays
+	}
+	return *c.StaleReviewDays
 }
 
 // NotifyOnRoundReadyEnabled returns whether desktop notifications should fire
@@ -346,7 +362,9 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	// plan_approve_mode to prevent a repo from weakening the user's Claude Code
 	// permission policy after plan approval;
 	// close_on_approve_after_ms so a project repo cannot force the reviewer's
-	// tab to auto-close — that's a personal preference, not a repo policy.
+	// tab to auto-close — that's a personal preference, not a repo policy;
+	// stale_review_days so a project repo cannot shorten the retention of
+	// every other project's reviews.
 	// live_cookie/live_cookie_file/live_cdp_url DO merge from project config — common for local
 	// dev auth. Prefer live_cookie_file pointing at a gitignored path (e.g.
 	// .crit/live-cookies.txt) over committing live_cookie inline. live_cdp_url
