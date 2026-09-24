@@ -40,9 +40,11 @@ type Language struct {
 	InitOptions func(root, absPath string) map[string]any
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for
-	// TypeScript). May run external commands; the Manager caches successful
-	// results. A nil result means the lookup failed and may be retried.
-	ExtraRoots func() []PeekRoot
+	// TypeScript). root is the workspace root the Manager is anchored to, for
+	// languages whose roots depend on the project rather than the machine.
+	// May run external commands; the Manager caches successful results per
+	// root. A nil result means the lookup failed and may be retried.
+	ExtraRoots func(root string) []PeekRoot
 }
 
 // languages is the registry of supported language servers.
@@ -130,8 +132,9 @@ func findTSServer(root, absPath string) string {
 }
 
 // goExtraRoots resolves GOROOT and GOMODCACHE, where Go definitions outside
-// the repo land (stdlib, module cache).
-func goExtraRoots() []PeekRoot {
+// the repo land (stdlib, module cache). Both are machine-wide, so the
+// workspace root is not consulted.
+func goExtraRoots(_ string) []PeekRoot {
 	out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
 	if err != nil {
 		return nil
@@ -153,8 +156,9 @@ func goExtraRoots() []PeekRoot {
 // npmGlobalRoots resolves the global node_modules directory, where the
 // typescript lib.*.d.ts files land when typescript-language-server and
 // typescript are installed globally (the README's install command) and the
-// repo has no local typescript dependency.
-func npmGlobalRoots() []PeekRoot {
+// repo has no local typescript dependency. The global root is machine-wide,
+// so the workspace root is not consulted.
+func npmGlobalRoots(_ string) []PeekRoot {
 	out, err := exec.Command("npm", "root", "-g").Output()
 	if err != nil {
 		return nil
