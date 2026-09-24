@@ -14,11 +14,9 @@ import (
 type PeekRoot struct {
 	Path  string // absolute directory
 	Label string // display prefix, e.g. "$GOROOT"
-	// LocalEnv marks a root that holds the packages installed in the
-	// reviewer's own environment (a virtualenv's site-packages). Under
-	// range/PR focus that is not the environment of the SHA being reviewed, so
-	// what the peek shows there can differ from the dependencies the reviewed
-	// code was written against.
+	// LocalEnv marks a root holding packages installed in the reviewer's own
+	// environment (e.g. a virtualenv's site-packages). Under range/PR focus
+	// these can differ from the dependencies of the SHA being reviewed.
 	LocalEnv bool
 }
 
@@ -54,10 +52,10 @@ type Language struct {
 	ConfigSettings func(root, absPath string) map[string]any
 	// LocalEnv says third-party answers (types, definitions) for this
 	// language come from the reviewer's own environment. Under range/PR focus
-	// the reviewed SHA is checked out separately but its dependencies are not
-	// part of git, so they resolve against whatever is installed locally: a
-	// bumped version shows the old API, a newly added dependency shows Unknown.
-	// The UI notes this so the answers are not mistaken for the PR's.
+	// the reviewed SHA's dependencies are not part of git, so they resolve
+	// against whatever is installed locally: a bumped version shows the old
+	// API, a newly added dependency shows Unknown. The UI notes this so the
+	// answers are not mistaken for the PR's.
 	LocalEnv bool
 	// SkipReadyWait skips the wait for startup progress after a document is
 	// opened (see Client.WaitReady). Set it for a server that queues requests

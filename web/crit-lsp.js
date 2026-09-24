@@ -135,8 +135,8 @@
 
   // composeTooltip assembles the hover tooltip: the documentation, then an
   // optional one-line note, then the fixed key hint. The note is a quiet
-  // footnote — same muted size as the hint — so it informs without competing
-  // with the documentation the reviewer hovered for. esc escapes text.
+  // footnote (same muted size as the hint), not part of the documentation.
+  // esc escapes text.
   function composeTooltip(docHtml, noteText, hintText, esc) {
     return docHtml +
       (noteText ? '<div class="lsp-tooltip-note">' + esc(noteText) + '</div>' : '') +
