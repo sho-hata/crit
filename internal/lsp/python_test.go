@@ -135,17 +135,19 @@ func TestParsePythonEnv(t *testing.T) {
 		out  string
 		want []PeekRoot
 	}{
+		// Only site-packages is the reviewer's local environment; the stdlib
+		// is the same for every checkout of the code.
 		{"stdlib and site-packages", "/py/lib/python3.13\n/py/lib/python3.13/site-packages\n", []PeekRoot{
 			{Path: "/py/lib/python3.13", Label: "$PYTHON_STDLIB"},
-			{Path: "/py/lib/python3.13/site-packages", Label: "$SITE_PACKAGES"},
+			{Path: "/py/lib/python3.13/site-packages", Label: "$SITE_PACKAGES", LocalEnv: true},
 		}},
 		{"no trailing newline", "/py/lib\n/py/site", []PeekRoot{
 			{Path: "/py/lib", Label: "$PYTHON_STDLIB"},
-			{Path: "/py/site", Label: "$SITE_PACKAGES"},
+			{Path: "/py/site", Label: "$SITE_PACKAGES", LocalEnv: true},
 		}},
 		{"windows line endings", "C:\\py\\Lib\r\nC:\\py\\Lib\\site-packages\r\n", []PeekRoot{
 			{Path: "C:\\py\\Lib", Label: "$PYTHON_STDLIB"},
-			{Path: "C:\\py\\Lib\\site-packages", Label: "$SITE_PACKAGES"},
+			{Path: "C:\\py\\Lib\\site-packages", Label: "$SITE_PACKAGES", LocalEnv: true},
 		}},
 		{"stdlib only", "/py/lib\n", []PeekRoot{{Path: "/py/lib", Label: "$PYTHON_STDLIB"}}},
 		{"empty output", "", nil},
@@ -175,6 +177,9 @@ func TestPyExtraRootsIncludesTheVenvOfRoot(t *testing.T) {
 			if r.Label != "$SITE_PACKAGES" {
 				t.Errorf("venv label = %q, want $SITE_PACKAGES", r.Label)
 			}
+			if !r.LocalEnv {
+				t.Error("the venv is the reviewer's local environment and must be marked LocalEnv")
+			}
 		}
 	}
 	if !found {
@@ -193,11 +198,12 @@ func TestRegisteredLanguageHooks(t *testing.T) {
 		lang           string
 		configSettings bool
 		skipReadyWait  bool
+		localEnv       bool
 	}{
-		{"main.go", "go", false, false},
-		{"App.tsx", "typescript", false, false},
-		{"app.py", "python", true, true},
-		{"stubs.pyi", "python", true, true},
+		{"main.go", "go", false, false, false},
+		{"App.tsx", "typescript", false, false, false},
+		{"app.py", "python", true, true, true},
+		{"stubs.pyi", "python", true, true, true},
 	}
 	for _, tc := range cases {
 		lang := LanguageForPath(tc.path)
@@ -209,6 +215,9 @@ func TestRegisteredLanguageHooks(t *testing.T) {
 		}
 		if lang.SkipReadyWait != tc.skipReadyWait {
 			t.Errorf("%s: SkipReadyWait = %v, want %v", lang.Name, lang.SkipReadyWait, tc.skipReadyWait)
+		}
+		if lang.LocalEnv != tc.localEnv {
+			t.Errorf("%s: LocalEnv = %v, want %v", lang.Name, lang.LocalEnv, tc.localEnv)
 		}
 	}
 }

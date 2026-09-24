@@ -182,3 +182,48 @@ test('serverErrorText: keeps the server reason, one line, bounded', function () 
   assert.ok(long.length <= 200, 'length = ' + long.length);
   assert.ok(long.endsWith('…'));
 });
+
+// ===== local-environment note (range/PR focus, Python) =====
+
+function escapeHTML(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+test('composeTooltip: the note sits between the docs and the key hint', function () {
+  const html = lsp.composeTooltip('<p>docs</p>', 'local env', 'click hint', escapeHTML);
+  const docs = html.indexOf('<p>docs</p>');
+  const note = html.indexOf('class="lsp-tooltip-note">local env<');
+  const hint = html.indexOf('class="lsp-tooltip-hint">click hint<');
+  assert.ok(docs !== -1 && note !== -1 && hint !== -1, html);
+  assert.ok(docs < note && note < hint, 'order must be docs, note, hint: ' + html);
+});
+
+test('composeTooltip: without a note there is no note element at all', function () {
+  for (const note of ['', undefined, null]) {
+    const html = lsp.composeTooltip('<p>docs</p>', note, 'click hint', escapeHTML);
+    assert.ok(html.indexOf('lsp-tooltip-note') === -1, 'note ' + note + ' rendered: ' + html);
+    assert.ok(html.indexOf('class="lsp-tooltip-hint">click hint<') !== -1, html);
+  }
+});
+
+test('composeTooltip: escapes the note and the hint', function () {
+  const html = lsp.composeTooltip('', '<b>x</b>', 'a & b', escapeHTML);
+  assert.ok(html.indexOf('<b>x</b>') === -1, 'unescaped markup in note: ' + html);
+  assert.ok(html.indexOf('&lt;b&gt;x&lt;/b&gt;') !== -1, html);
+  assert.ok(html.indexOf('a &amp; b') !== -1, html);
+});
+
+test('peekNoteHTML: only a local_env target with note text gets a strip', function () {
+  const cases = [
+    { name: 'local_env target', loc: { local_env: true }, text: 'note', want: true },
+    { name: 'ordinary target', loc: { local_env: false }, text: 'note', want: false },
+    { name: 'flag absent', loc: {}, text: 'note', want: false },
+    { name: 'no text', loc: { local_env: true }, text: '', want: false },
+    { name: 'no location', loc: null, text: 'note', want: false },
+  ];
+  for (const tc of cases) {
+    const html = lsp.peekNoteHTML(tc.loc, tc.text, escapeHTML);
+    assert.strictEqual(html !== '', tc.want, tc.name + ': ' + JSON.stringify(html));
+    if (tc.want) assert.ok(html.indexOf('class="lsp-peek-note">note<') !== -1, html);
+  }
+});

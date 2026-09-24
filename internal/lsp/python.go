@@ -124,7 +124,7 @@ const pythonEnvScript = `import sysconfig; p = sysconfig.get_paths(); print(p["s
 func pyExtraRoots(root string) []PeekRoot {
 	var roots []PeekRoot
 	if sp := venvSitePackages(root); sp != "" {
-		roots = append(roots, PeekRoot{Path: sp, Label: "$SITE_PACKAGES"})
+		roots = append(roots, PeekRoot{Path: sp, Label: "$SITE_PACKAGES", LocalEnv: true})
 	}
 	roots = append(roots, pythonEnvRoots()...)
 	if dir := pyrightTypeshed(); dir != "" {
@@ -160,14 +160,17 @@ func pythonEnvRoots() []PeekRoot {
 // per line — into peek roots.
 func parsePythonEnv(out string) []PeekRoot {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	labels := []string{"$PYTHON_STDLIB", "$SITE_PACKAGES"}
+	// Only site-packages is the local environment: the stdlib is the same
+	// for every checkout of the code.
+	labels := []PeekRoot{{Label: "$PYTHON_STDLIB"}, {Label: "$SITE_PACKAGES", LocalEnv: true}}
 	var roots []PeekRoot
-	for i, label := range labels {
+	for i, root := range labels {
 		if i >= len(lines) {
 			break
 		}
 		if dir := strings.TrimSpace(lines[i]); dir != "" {
-			roots = append(roots, PeekRoot{Path: dir, Label: label})
+			root.Path = dir
+			roots = append(roots, root)
 		}
 	}
 	return roots

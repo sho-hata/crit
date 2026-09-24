@@ -493,7 +493,25 @@ func (s *Server) handleLSPHover(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("lsp hover: %v", err), http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, map[string]any{"contents": contents})
+	resp := map[string]any{"contents": contents}
+	if s.lspLocalEnv(absPath) {
+		resp["local_env"] = true
+	}
+	writeJSON(w, resp)
+}
+
+// lspLocalEnv reports whether an answer about absPath should carry the
+// local-environment note: the reviewer is looking at a SHA (range/PR focus)
+// and the file's language resolves third-party packages against their own
+// environment, which is not that SHA's. In working-tree focus the code under
+// review and the environment are the same tree, so there is nothing to say.
+func (s *Server) lspLocalEnv(absPath string) bool {
+	sess := s.session.Load()
+	if sess == nil || sess.Focus.Kind != FocusRange {
+		return false
+	}
+	lang := lsp.LanguageForPath(absPath)
+	return lang != nil && lang.LocalEnv
 }
 
 // lspLocationResponse is one definition target sent to the frontend.
@@ -509,6 +527,10 @@ type lspLocationResponse struct {
 	// PeekTruncated is true when the file was too large to send in full and
 	// Peek is a ±peekContextLines window instead.
 	PeekTruncated bool `json:"peek_truncated,omitempty"`
+	// LocalEnv is true when the target sits in the reviewer's own installed
+	// packages while a range/PR focus is showing a different SHA: the source
+	// shown is their local copy, which can differ from what the PR uses.
+	LocalEnv bool `json:"local_env,omitempty"`
 }
 
 // handleLSPDefinition returns definition locations for a position, each with
@@ -635,6 +657,7 @@ func resolveLocation(sess *Session, loc lsp.Location, fullMaxLines, contextLines
 	if kind != rootNone {
 		out.PeekStart, out.Peek, out.PeekTruncated = readPeek(loc.Path, loc.Line+1, fullMaxLines, contextLines)
 	}
+	out.LocalEnv = sess.Focus.Kind == FocusRange && kind >= 0 && kind < len(rc.extras) && rc.extras[kind].LocalEnv
 	return out
 }
 
