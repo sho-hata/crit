@@ -2,7 +2,7 @@
 // code-review mode.
 //
 // Talks to the local Go server's /api/lsp/* endpoints (which proxy a
-// language server: gopls, typescript-language-server, pyright). Which file
+// language server). Which file
 // extensions are eligible comes from /api/config's lsp_extensions.
 // Hover: rest the mouse over eligible code → documentation tooltip. Both
 // renderings of a code file are covered: the diff view and file mode's

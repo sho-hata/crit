@@ -340,10 +340,9 @@ func extraPathsOf(t *testing.T, settings map[string]any) []string {
 	return paths
 }
 
-// Same failure as TypeScript's node_modules, one language over: a range/PR
-// focus roots pyright at a sparse worktree with no .venv (it is untracked), so
-// without the fallback every third-party import there resolves to Unknown —
-// with no error anywhere to say why.
+// A range/PR focus roots pyright at a sparse worktree with no .venv (it is
+// untracked), so without the depRoot fallback every third-party import there
+// resolves to Unknown, with no error to say why.
 func TestManagerResolvesSettingsFromDepRootWhenWorktreeLacksVenv(t *testing.T) {
 	t.Parallel()
 
@@ -416,9 +415,9 @@ func TestManagerSendsNoSettingsWithoutAnyVenv(t *testing.T) {
 	}
 }
 
-// Go and TypeScript have no ConfigSettings, so their spawn must get nil
-// settings whatever sits in the tree — a stray .venv cannot change how gopls
-// or typescript-language-server are spoken to.
+// A language without ConfigSettings (Go and TypeScript here) must get nil
+// settings whatever sits in the tree: a stray .venv must not change its
+// handshake.
 func TestManagerSendsNoSettingsToLanguagesWithoutThem(t *testing.T) {
 	t.Parallel()
 
@@ -465,9 +464,9 @@ func TestManagerDepBase(t *testing.T) {
 }
 
 // pyright reports no progress for its startup analysis and answers correctly
-// regardless, so waiting on progress is pure delay. Here the server starts a
-// piece of work it never ends: a Manager that waited would sit out the whole
-// warmup budget (15s) before answering.
+// regardless, so waiting on progress is pure delay. The fake server starts a
+// piece of work and never ends it: a Manager that waited would sit out the
+// whole warmup budget (15s) before answering.
 func TestManagerDoesNotWaitOnProgressForPython(t *testing.T) {
 	t.Parallel()
 

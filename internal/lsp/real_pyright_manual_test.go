@@ -1,7 +1,7 @@
 package lsp
 
-// Opt-in integration tests against a real pyright (same env gate as the gopls
-// one). Skipped unless enabled:
+// Opt-in integration tests against a real pyright (same CRIT_LSP_REAL gate as
+// the other real-server tests). Skipped unless enabled:
 //
 //	CRIT_LSP_REAL=1 go test ./internal/lsp -run TestRealPyright -v
 //
@@ -109,9 +109,8 @@ func TestRealPyrightResolvesInTreeVenv(t *testing.T) {
 	}
 }
 
-// Control: no .venv, so nothing tells pyright where mylib is. This is the
-// silent degradation the settings exist to prevent — it must look exactly like
-// this, or the test above proves nothing.
+// Control: no .venv, so nothing tells pyright where mylib is. hover must come
+// back Unknown, otherwise the resolving tests above would pass vacuously.
 func TestRealPyrightWithoutVenvCannotResolveThirdParty(t *testing.T) {
 	t.Parallel()
 	requireRealPyright(t)

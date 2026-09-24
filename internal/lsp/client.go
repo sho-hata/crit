@@ -1,8 +1,8 @@
 // Package lsp implements a minimal Language Server Protocol client used to
 // provide hover, go-to-definition, and find-references in the review UI. It
 // speaks just enough LSP (initialize, didOpen/didChange, hover, definition,
-// references, shutdown) to drive gopls, typescript-language-server and pyright
-// over stdio; it is not a general-purpose LSP library.
+// references, shutdown) to drive language servers over stdio; it is not a
+// general-purpose LSP library.
 package lsp
 
 import (
@@ -300,7 +300,7 @@ func (c *Client) WaitReady(grace, timeout time.Duration) {
 }
 
 // respondToServerRequest answers server->client requests with a minimal
-// default so gopls never blocks waiting on us. workspace/configuration gets
+// default so a server never blocks waiting on us. workspace/configuration gets
 // the language's setting for each requested section (see SetSettings), and a
 // null for any section it has none for; everything else gets a null result.
 func (c *Client) respondToServerRequest(msg jsonrpcMessage) {
@@ -324,10 +324,8 @@ func (c *Client) respondToServerRequest(msg jsonrpcMessage) {
 
 // lookupSection resolves a workspace/configuration section against settings:
 // an exact key first, then a dotted path through nested maps ("python.analysis"
-// finds settings["python"]["analysis"]), which is how editors serve a settings
-// tree. nil when there is no such section — a null answer means "use your
-// default", which is what every language here relied on before settings
-// existed.
+// finds settings["python"]["analysis"]). nil when there is no such section,
+// which the server reads as "use your default".
 func lookupSection(settings map[string]any, section string) any {
 	if v, ok := settings[section]; ok {
 		return v
@@ -420,11 +418,10 @@ func (c *Client) notify(method string, params any) error {
 }
 
 // SetSettings sets what the server gets when it pulls workspace/configuration,
-// keyed by section name. Call it before Initialize: a non-empty set is also
-// what makes Initialize declare the capability, because a server only pulls
-// configuration from a client that says it can be asked. Left unset, the
-// capability stays undeclared and nothing changes on the wire — which is how
-// gopls and typescript-language-server are still spoken to exactly as before.
+// keyed by section name. Call it before Initialize: a non-empty set also makes
+// Initialize declare the capability, since a server only pulls configuration
+// from a client that says it can be asked. Without settings the capability is
+// not declared, so a server that needs none is never asked.
 func (c *Client) SetSettings(settings map[string]any) {
 	c.settings = settings
 }

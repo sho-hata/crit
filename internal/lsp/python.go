@@ -13,23 +13,19 @@ var venvDirs = []string{".venv", "venv"}
 
 // pyConfigSettings tells pyright where a project's third-party packages live.
 //
-// pyright does not discover a virtualenv on its own: without this, every
-// import that resolves into a .venv comes back Unknown, hovers carry no type
-// and definitions land on the import statement. Nothing errors, so nothing
-// retries. It reads the answer from a workspace/configuration pull — it
-// ignores initializationOptions — as python.analysis.extraPaths.
+// pyright does not find a virtualenv on its own: without this, imports that
+// resolve into a .venv come back Unknown (no type on hover, definitions land
+// on the import line) and nothing reports an error. It reads the answer from a
+// workspace/configuration request, not initializationOptions.
 //
-// extraPaths, not python.pythonPath, on purpose. pythonPath makes pyright
-// execute that interpreter to learn its search paths, and here the interpreter
-// would come from the tree under review: a branch that commits
-// .venv/bin/python would run code just by being opened in a diff. extraPaths
-// is a directory and nothing else. What it does not carry is what only the
-// interpreter knows (.pth files, the exact Python version); an activated venv
-// is already first on PATH, which pyright follows by itself, and a project's
-// own pyrightconfig.json venv is read by pyright directly.
+// It sends python.analysis.extraPaths, not python.pythonPath: pythonPath makes
+// pyright execute that interpreter, and here it would come from the tree under
+// review, so a branch committing .venv/bin/python would run code just by being
+// opened in a diff. A directory is safe. extraPaths cannot carry what only the
+// interpreter knows (.pth files, the Python version); an activated venv on
+// PATH and a pyrightconfig.json venv are handled by pyright itself.
 //
-// Returns nil when there is no in-tree virtualenv, which leaves everything to
-// pyright's own resolution.
+// Returns nil when there is no in-tree virtualenv.
 func pyConfigSettings(root, absPath string) map[string]any {
 	sp := findSitePackages(root, absPath)
 	if sp == "" {
@@ -112,9 +108,9 @@ func isDir(path string) bool {
 const pythonEnvScript = `import sysconfig; p = sysconfig.get_paths(); print(p["stdlib"]); print(p["purelib"])`
 
 // pyExtraRoots resolves where Python definitions outside the repo land:
-//   - the project's virtualenv, when it is not already under the LSP root
-//     (range/PR focus roots the server at a sparse worktree, and the venv
-//     stays in the working tree that root is given as)
+//   - the project's virtualenv in root, the tree dependencies live in (under
+//     range/PR focus the working tree, which is outside the sparse worktree
+//     the server runs in)
 //   - the PATH interpreter's stdlib and site-packages
 //   - the typeshed bundled with pyright, where stdlib stubs live: a
 //     definition into the stdlib answers with both the .pyi there and the
@@ -142,9 +138,9 @@ func pyExtraRoots(root string) []PeekRoot {
 // interpreter: only PATH is consulted.
 func pythonEnvRoots() []PeekRoot {
 	for _, bin := range []string{"python3", "python"} {
-		// -I (isolated mode) is not decoration. Without it the interpreter puts
-		// the working directory first on sys.path, and the daemon runs inside
-		// the repo under review — a sysconfig.py committed there would run.
+		// -I (isolated mode) is required: without it the interpreter puts the
+		// working directory first on sys.path, and the daemon runs inside the
+		// repo under review, so a committed sysconfig.py would run.
 		out, err := exec.Command(bin, "-I", "-c", pythonEnvScript).Output()
 		if err != nil {
 			continue
@@ -177,9 +173,9 @@ func parsePythonEnv(out string) []PeekRoot {
 }
 
 // pyrightTypeshed locates the typeshed stubs bundled with the installed
-// pyright, or "" when they cannot be found (a pip-installed wrapper keeps them
-// in its own cache; peeks into stdlib stubs then fall outside the readable
-// roots, while the real stdlib source still opens).
+// pyright, or "" when the binary is not laid out like the npm package. Peeks
+// into stdlib stubs then fall outside the readable roots; the real stdlib
+// source still opens.
 func pyrightTypeshed() string {
 	bin, err := exec.LookPath("pyright-langserver")
 	if err != nil {

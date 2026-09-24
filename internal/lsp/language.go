@@ -47,12 +47,10 @@ type Language struct {
 	// ConfigSettings returns the settings the server pulls with
 	// workspace/configuration, keyed by section name ("python"), for a server
 	// rooted at root whose first request is about absPath, or nil when the
-	// language needs none. Some servers take settings only this way — pyright
-	// ignores initializationOptions and reads python.* from the pull — so this
-	// is separate from InitOptions. A nil result also leaves the capability
-	// undeclared, so a server that never needed it is never asked. Same cost
-	// rule as InitOptions: it runs once per server spawn, keep it
-	// filesystem-cheap, and never execute anything the repo supplies.
+	// language needs none. Some servers take settings only this way (pyright
+	// ignores initializationOptions), hence separate from InitOptions. A nil
+	// result leaves the capability undeclared. Runs once per server spawn, so
+	// keep it filesystem-cheap, and never execute anything the repo supplies.
 	ConfigSettings func(root, absPath string) map[string]any
 	// LocalEnv says third-party answers (types, definitions) for this
 	// language come from the reviewer's own environment. Under range/PR focus
@@ -62,11 +60,10 @@ type Language struct {
 	// The UI notes this so the answers are not mistaken for the PR's.
 	LocalEnv bool
 	// SkipReadyWait skips the wait for startup progress after a document is
-	// opened (see Client.WaitReady). Right for a server that queues requests
-	// behind its own analysis and so never answers from a half-built project
-	// — pyright — and reports no progress for that analysis: the wait would
-	// only sit out its whole grace period. Wrong for one that answers early
-	// and wrong, like typescript-language-server.
+	// opened (see Client.WaitReady). Set it for a server that queues requests
+	// until its analysis is done and reports no progress for it (pyright): the
+	// wait would only sit out its grace period. Don't set it for a server that
+	// answers from a half-built project.
 	SkipReadyWait bool
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for

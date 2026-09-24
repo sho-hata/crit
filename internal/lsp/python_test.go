@@ -187,9 +187,9 @@ func TestPyExtraRootsIncludesTheVenvOfRoot(t *testing.T) {
 	}
 }
 
-// Go and TypeScript keep the wire exactly as it was: neither takes
-// workspace/configuration, and TypeScript still waits for startup progress
-// because it answers from a half-built project.
+// Which hooks each language has. Only Python takes workspace/configuration
+// settings, marks its answers as local-environment, and skips the startup
+// progress wait.
 func TestRegisteredLanguageHooks(t *testing.T) {
 	t.Parallel()
 

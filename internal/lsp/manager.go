@@ -214,9 +214,8 @@ func (m *Manager) serverFor(lang *Language) *serverState {
 
 // ensureClient spawns + initializes lang's server if srv has no live client.
 // absPath is the file the triggering request is about; a language whose
-// handshake settings depend on where the file sits in the tree (TypeScript
-// picking the nearest node_modules/typescript, Python the nearest .venv)
-// resolves them from it. Caller holds srv.mu.
+// handshake settings depend on where the file sits in the tree (see
+// tsInitOptions, pyConfigSettings) resolves them from it. Caller holds srv.mu.
 func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string) error {
 	if srv.client != nil && !srv.client.Dead() {
 		return nil
@@ -251,11 +250,10 @@ func (m *Manager) handshake(hook func(root, absPath string) map[string]any, absP
 
 // depHandshake retries a handshake hook against depRoot, for the file at the
 // same repo-relative path. In range/PR focus the server is rooted at a sparse
-// worktree that by design contains tracked files only, so TypeScript finds no
-// installation there and the server exits at initialize, and Python finds no
-// virtualenv and answers every third-party import with Unknown. Borrowing just
-// the dependency location from the working tree keeps the server useful while
-// the reviewed sources still come from the checkout.
+// worktree that by design contains tracked files only, so untracked dependency
+// directories (node_modules, .venv) are missing there. Borrowing just the
+// dependency location from the working tree keeps third-party code resolvable
+// while the reviewed sources still come from the checkout.
 func (m *Manager) depHandshake(hook func(root, absPath string) map[string]any, absPath string) map[string]any {
 	if m.depRoot == "" || m.depRoot == m.root {
 		return nil
@@ -359,13 +357,12 @@ func (m *Manager) depBase() string {
 }
 
 // PeekRoots returns the extra source roots (beyond the workspace root) that
-// definition/reference peeks may read, resolved per installed language:
-// GOROOT and GOMODCACHE for Go, the global node_modules for TypeScript, the
-// interpreter's stdlib, site-packages and pyright's typeshed for Python. Each
-// language's ExtraRoots is asked about the tree its dependencies live in —
-// the working tree under range/PR focus, the workspace root otherwise — so
-// the cache is per Manager, i.e. per root, and a project-dependent language
-// never sees another workspace's answer.
+// definition/reference peeks may read: each installed language's ExtraRoots
+// (stdlib, module caches, installed packages). Each is asked about the tree
+// the language's dependencies live in — the working tree under range/PR
+// focus, the workspace root otherwise — so the cache is per Manager, i.e.
+// per root, and a project-dependent language never sees another workspace's
+// answer.
 // Only a successful lookup is cached — a failure (e.g. the toolchain missing
 // from the daemon's PATH) is retried on the next call rather than pinning
 // empty roots for the daemon's lifetime.

@@ -290,8 +290,8 @@ func TestClientAnswersServerRequests(t *testing.T) {
 }
 
 // The capability is what makes a server pull configuration at all, and only a
-// language with settings may claim it: gopls and typescript-language-server
-// must keep seeing exactly the capabilities they always did.
+// language with settings may declare it: a server with none must not be sent
+// a capability it will never use.
 func TestClientInitializeDeclaresConfigurationOnlyWithSettings(t *testing.T) {
 	t.Parallel()
 
