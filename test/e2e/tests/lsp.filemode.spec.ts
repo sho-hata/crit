@@ -114,3 +114,89 @@ test.describe('LSP — File Mode — document view', () => {
     await expect(page.locator('.lsp-peek')).toHaveCount(0);
   });
 });
+
+// The local-environment note: shown when the server says an answer comes from
+// the reviewer's own environment (range/PR focus + Python). It must be a quiet
+// footnote — present exactly when the server asks for it, never otherwise.
+test.describe('LSP — local environment note', () => {
+  let calls: { hover: Recorded[]; definition: Recorded[] };
+
+  test.beforeEach(async ({ page, request }) => {
+    await clearAllComments(request);
+    calls = { hover: [], definition: [] };
+    await mockLSP(page, calls);
+  });
+
+  async function hoverAuthMiddleware(page: Page) {
+    await loadPage(page);
+    const line = authMiddlewareLine(page);
+    await expect(line).toHaveCount(1);
+    await line.locator('code').scrollIntoViewIfNeeded();
+    await line.locator('code').hover();
+    const tooltip = page.locator('.lsp-tooltip');
+    await expect(tooltip).toBeVisible();
+    return { tooltip, line };
+  }
+
+  test('hover shows the note between the docs and the key hint when local_env is set', async ({ page }) => {
+    await page.route('**/api/lsp/hover*', route =>
+      route.fulfill({ json: { contents: HOVER_MARKDOWN, local_env: true } }));
+
+    const { tooltip } = await hoverAuthMiddleware(page);
+
+    const note = tooltip.locator('.lsp-tooltip-note');
+    await expect(note).toHaveCount(1);
+    await expect(note).toContainText('local environment');
+    // Order: docs, then note, then the key hint.
+    const children = await tooltip.evaluate(el =>
+      Array.from(el.children).map(c => c.className || c.tagName.toLowerCase()));
+    expect(children.indexOf('lsp-tooltip-note')).toBeGreaterThan(-1);
+    expect(children.indexOf('lsp-tooltip-note')).toBeLessThan(children.indexOf('lsp-tooltip-hint'));
+  });
+
+  test('hover has no note without local_env', async ({ page }) => {
+    const { tooltip } = await hoverAuthMiddleware(page);
+    await expect(tooltip).toContainText('authMiddleware checks for a valid API key');
+    await expect(tooltip.locator('.lsp-tooltip-note')).toHaveCount(0);
+  });
+
+  for (const tc of [
+    { name: 'a local_env target shows the note above the source', localEnv: true },
+    { name: 'an ordinary target shows no note', localEnv: false },
+  ]) {
+    test(`peek: ${tc.name}`, async ({ page }) => {
+      // Not in the review, so the jump falls back to the peek popup.
+      await page.route('**/api/lsp/definition*', route => route.fulfill({
+        json: {
+          locations: [{
+            path: '/site-packages/mylib/__init__.py',
+            display_path: '$SITE_PACKAGES/mylib/__init__.py',
+            line: 1,
+            in_session: false,
+            in_repo: false,
+            peek_start: 1,
+            peek: ['def greet(name: str) -> str:', '    return "hi"'],
+            ...(tc.localEnv ? { local_env: true } : {}),
+          }],
+        },
+      }));
+
+      await loadPage(page);
+      const line = authMiddlewareLine(page);
+      await expect(line).toHaveCount(1);
+      await line.locator('code').scrollIntoViewIfNeeded();
+      await line.locator('code').click({ modifiers: ['ControlOrMeta'] });
+
+      const peek = page.locator('.lsp-peek');
+      await expect(peek).toBeVisible();
+      await expect(peek.locator('.lsp-peek-code').first()).toContainText('def greet');
+      const note = peek.locator('.lsp-peek-note');
+      if (tc.localEnv) {
+        await expect(note).toHaveCount(1);
+        await expect(note).toContainText('local copy');
+      } else {
+        await expect(note).toHaveCount(0);
+      }
+    });
+  }
+});

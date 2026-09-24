@@ -2,7 +2,7 @@
 // code-review mode.
 //
 // Talks to the local Go server's /api/lsp/* endpoints (which proxy a
-// language server: gopls, typescript-language-server). Which file
+// language server). Which file
 // extensions are eligible comes from /api/config's lsp_extensions.
 // Hover: rest the mouse over eligible code → documentation tooltip. Both
 // renderings of a code file are covered: the diff view and file mode's
@@ -125,11 +125,31 @@
     go: 'go',
     ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'typescript',
     js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    py: 'python', pyi: 'python',
   };
   function hljsLanguageForPath(path) {
     var m = /\.([a-z0-9]+)$/i.exec(path || '');
     if (!m) return null;
     return HLJS_LANG_BY_EXT[m[1].toLowerCase()] || null;
+  }
+
+  // composeTooltip assembles the hover tooltip: the documentation, then an
+  // optional one-line note, then the fixed key hint. The note is a quiet
+  // footnote (same muted size as the hint), not part of the documentation.
+  // esc escapes text.
+  function composeTooltip(docHtml, noteText, hintText, esc) {
+    return docHtml +
+      (noteText ? '<div class="lsp-tooltip-note">' + esc(noteText) + '</div>' : '') +
+      '<div class="lsp-tooltip-hint">' + esc(hintText) + '</div>';
+  }
+
+  // peekNoteHTML is the strip shown above a peeked file's source when that
+  // file is the reviewer's own local copy of a package (the server marks such
+  // targets local_env under range/PR focus): what they read may not be the
+  // version the PR uses. '' for every other target.
+  function peekNoteHTML(loc, noteText, esc) {
+    if (!loc || !loc.local_env || !noteText) return '';
+    return '<div class="lsp-peek-note">' + esc(noteText) + '</div>';
   }
 
   // refSnippet extracts the reference's own source line from its peek window,
@@ -285,9 +305,9 @@
     }
   }
 
-  function showTooltip(html, x, y) {
+  function showTooltip(html, x, y, note) {
     const tip = ensureTooltip();
-    tip.innerHTML = html + '<div class="lsp-tooltip-hint">' + esc(st.defHintText) + '</div>';
+    tip.innerHTML = composeTooltip(html, note, st.defHintText, esc);
     tip.hidden = false;
     // Position after layout so we can clamp to the viewport: prefer above
     // the cursor, fall back to below.
@@ -371,7 +391,7 @@
           hideTooltip();
           return;
         }
-        showTooltip(st.renderMarkdown(data.contents), x, y);
+        showTooltip(st.renderMarkdown(data.contents), x, y, data.local_env ? st.localEnvText : '');
       })
       .catch(function (err) {
         clearTimeout(loadingTimer);
@@ -569,7 +589,7 @@
       body.innerHTML = '<div class="lsp-peek-empty">' + esc(st.noPreviewText) + '</div>';
       return;
     }
-    let html = '';
+    let html = peekNoteHTML(loc, st.localEnvPeekText, esc);
     if (loc.peek_truncated) {
       html += '<div class="lsp-peek-truncated">' + esc(st.truncatedText) + '</div>';
     }
@@ -820,6 +840,10 @@
       openFullText: opts.openFullText || 'Open full file ↗',
       noPreviewText: opts.noPreviewText || 'No preview available',
       truncatedText: opts.truncatedText || 'Large file — showing an excerpt around the definition',
+      localEnvText: opts.localEnvText ||
+        'ⓘ Third-party types come from your local environment, not this PR\'s dependencies',
+      localEnvPeekText: opts.localEnvPeekText ||
+        'ⓘ Your local copy of this package — it may differ from the version this PR uses',
       peekHintText: opts.peekHintText || '⌘/Ctrl+Click: follow definition · Esc: back / close',
       peekStack: [],
       peekLocs: null,
@@ -853,6 +877,8 @@
     refSnippet: refSnippet,
     makeExtensionMatcher: makeExtensionMatcher,
     hljsLanguageForPath: hljsLanguageForPath,
+    composeTooltip: composeTooltip,
+    peekNoteHTML: peekNoteHTML,
   };
   if (typeof window !== 'undefined') {
     window.crit = window.crit || {};

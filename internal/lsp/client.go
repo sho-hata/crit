@@ -1,7 +1,7 @@
 // Package lsp implements a minimal Language Server Protocol client used to
 // provide hover, go-to-definition, and find-references in the review UI. It
 // speaks just enough LSP (initialize, didOpen/didChange, hover, definition,
-// references, shutdown) to drive gopls over stdio; it is not a
+// references, shutdown) to drive language servers over stdio; it is not a
 // general-purpose LSP library.
 package lsp
 
@@ -80,6 +80,12 @@ type Client struct {
 	progressMu     sync.Mutex
 	progressActive map[string]bool
 	progressSeen   bool
+
+	// settings answers the server's workspace/configuration pulls, keyed by
+	// section name. Set before Initialize (see SetSettings) and read-only
+	// after, so the reader goroutine needs no lock. Nil for a language that
+	// takes none.
+	settings map[string]any
 
 	// kill terminates the underlying subprocess. Nil for in-memory pipe
 	// transports (tests).
@@ -294,19 +300,47 @@ func (c *Client) WaitReady(grace, timeout time.Duration) {
 }
 
 // respondToServerRequest answers server->client requests with a minimal
-// default so gopls never blocks waiting on us. workspace/configuration gets a
-// null per requested item; everything else gets a null result.
+// default so a server never blocks waiting on us. workspace/configuration gets
+// the language's setting for each requested section (see SetSettings), and a
+// null for any section it has none for; everything else gets a null result.
 func (c *Client) respondToServerRequest(msg jsonrpcMessage) {
 	var result any
 	if msg.Method == "workspace/configuration" {
 		var params struct {
-			Items []json.RawMessage `json:"items"`
+			Items []struct {
+				Section string `json:"section"`
+			} `json:"items"`
 		}
 		_ = json.Unmarshal(msg.Params, &params)
-		result = make([]any, len(params.Items))
+		out := make([]any, len(params.Items))
+		for i, item := range params.Items {
+			out[i] = lookupSection(c.settings, item.Section)
+		}
+		result = out
 	}
 	resp := map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result}
 	_ = c.writeFrame(resp)
+}
+
+// lookupSection resolves a workspace/configuration section against settings:
+// an exact key first, then a dotted path through nested maps ("python.analysis"
+// finds settings["python"]["analysis"]). nil when there is no such section,
+// which the server reads as "use your default".
+func lookupSection(settings map[string]any, section string) any {
+	if v, ok := settings[section]; ok {
+		return v
+	}
+	var cur any = settings
+	for _, part := range strings.Split(section, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		if cur, ok = m[part]; !ok {
+			return nil
+		}
+	}
+	return cur
 }
 
 func (c *Client) writeFrame(v any) error {
@@ -383,30 +417,43 @@ func (c *Client) notify(method string, params any) error {
 	return c.writeFrame(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
 
+// SetSettings sets what the server gets when it pulls workspace/configuration,
+// keyed by section name. Call it before Initialize: a non-empty set also makes
+// Initialize declare the capability, since a server only pulls configuration
+// from a client that says it can be asked. Without settings the capability is
+// not declared, so a server that needs none is never asked.
+func (c *Client) SetSettings(settings map[string]any) {
+	c.settings = settings
+}
+
 // Initialize performs the LSP initialize handshake for the given workspace
 // root. initOpts, when non-nil, is sent as initializationOptions — the
 // server-specific settings a language needs at handshake time (see
 // Language.InitOptions).
 func (c *Client) Initialize(rootDir string, initOpts map[string]any) error {
 	rootURI := PathToURI(rootDir)
+	caps := map[string]any{
+		// Opting in is what makes the server report its startup work at
+		// all — WaitReady has nothing to wait on without this.
+		"window": map[string]any{"workDoneProgress": true},
+		"textDocument": map[string]any{
+			"hover": map[string]any{
+				"contentFormat": []string{"markdown", "plaintext"},
+			},
+			"definition": map[string]any{},
+			"references": map[string]any{},
+		},
+	}
+	if len(c.settings) > 0 {
+		caps["workspace"] = map[string]any{"configuration": true}
+	}
 	params := map[string]any{
 		"processId": nil,
 		"rootUri":   rootURI,
 		"workspaceFolders": []map[string]any{
 			{"uri": rootURI, "name": filepath.Base(rootDir)},
 		},
-		"capabilities": map[string]any{
-			// Opting in is what makes the server report its startup work at
-			// all — WaitReady has nothing to wait on without this.
-			"window": map[string]any{"workDoneProgress": true},
-			"textDocument": map[string]any{
-				"hover": map[string]any{
-					"contentFormat": []string{"markdown", "plaintext"},
-				},
-				"definition": map[string]any{},
-				"references": map[string]any{},
-			},
-		},
+		"capabilities": caps,
 	}
 	if initOpts != nil {
 		params["initializationOptions"] = initOpts

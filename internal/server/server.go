@@ -480,9 +480,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"auto_viewed_patterns": s.cfg.AutoViewedPatterns,
 
 		// Language-server features (hover / go-to-definition / find-references). True only when
-		// enabled in config AND at least one language server (gopls,
-		// typescript-language-server) is on PATH AND the session has a repo
-		// root. lsp_extensions lists the file extensions those servers cover.
+		// enabled in config AND at least one language server is on PATH AND
+		// the session has a repo root. lsp_extensions lists the file extensions
+		// those servers cover.
 		"lsp_available":  s.lspAvailable(),
 		"lsp_extensions": s.lspExtensions(),
 

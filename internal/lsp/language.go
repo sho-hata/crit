@@ -14,6 +14,10 @@ import (
 type PeekRoot struct {
 	Path  string // absolute directory
 	Label string // display prefix, e.g. "$GOROOT"
+	// LocalEnv marks a root holding packages installed in the reviewer's own
+	// environment (e.g. a virtualenv's site-packages). Under range/PR focus
+	// these can differ from the dependencies of the SHA being reviewed.
+	LocalEnv bool
 }
 
 // Language describes one language-server integration: which files it covers,
@@ -38,12 +42,35 @@ type Language struct {
 	// nil to send none. Runs on the request path (once per server spawn) —
 	// keep it filesystem-cheap.
 	InitOptions func(root, absPath string) map[string]any
+	// ConfigSettings returns the settings the server pulls with
+	// workspace/configuration, keyed by section name ("python"), for a server
+	// rooted at root whose first request is about absPath, or nil when the
+	// language needs none. Some servers take settings only this way (pyright
+	// ignores initializationOptions), hence separate from InitOptions. A nil
+	// result leaves the capability undeclared. Runs once per server spawn, so
+	// keep it filesystem-cheap, and never execute anything the repo supplies.
+	ConfigSettings func(root, absPath string) map[string]any
+	// LocalEnv says third-party answers (types, definitions) for this
+	// language come from the reviewer's own environment. Under range/PR focus
+	// the reviewed SHA's dependencies are not part of git, so they resolve
+	// against whatever is installed locally: a bumped version shows the old
+	// API, a newly added dependency shows Unknown. The UI notes this so the
+	// answers are not mistaken for the PR's.
+	LocalEnv bool
+	// SkipReadyWait skips the wait for startup progress after a document is
+	// opened (see Client.WaitReady). Set it for a server that queues requests
+	// until its analysis is done and reports no progress for it (pyright): the
+	// wait would only sit out its grace period. Don't set it for a server that
+	// answers from a half-built project.
+	SkipReadyWait bool
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for
-	// TypeScript). root is the workspace root the Manager is anchored to, for
-	// languages whose roots depend on the project rather than the machine.
-	// May run external commands; the Manager caches successful results per
-	// root. A nil result means the lookup failed and may be retried.
+	// TypeScript). root is the tree the language's dependencies live in — the
+	// workspace root, or the working tree backing it under range/PR focus —
+	// for languages whose roots depend on the project rather than the
+	// machine. May run external commands; the Manager caches successful
+	// results per root. A nil result means the lookup failed and may be
+	// retried.
 	ExtraRoots func(root string) []PeekRoot
 }
 
@@ -53,6 +80,10 @@ type Language struct {
 // sparse worktree has no dependencies — cross-package hover/definition
 // degrades there, while intra-repo symbols keep working. The normal
 // working-tree focus resolves node_modules as usual.
+//
+// Python note: the same holds for a virtualenv (.venv is untracked), and
+// Manager.depRoot covers it the same way. pyright does not discover a .venv
+// on its own, so pyConfigSettings tells it where the packages are.
 var languages = []*Language{
 	{
 		Name:    "go",
@@ -83,6 +114,18 @@ var languages = []*Language{
 		},
 		InitOptions: tsInitOptions,
 		ExtraRoots:  npmGlobalRoots,
+	},
+	{
+		Name:    "python",
+		Command: []string{"pyright-langserver", "--stdio"},
+		IDByExt: map[string]string{"py": "python", "pyi": "python"},
+		SparsePatterns: []string{
+			"*.py", "*.pyi", "pyproject.toml", "pyrightconfig.json",
+		},
+		ConfigSettings: pyConfigSettings,
+		LocalEnv:       true,
+		SkipReadyWait:  true,
+		ExtraRoots:     pyExtraRoots,
 	},
 }
 

@@ -6318,6 +6318,14 @@ body.crit-story-active .crit-story-rail-resizer { display: block; }
   font-size: 11px;
   color: var(--crit-fg-muted);
 }
+/* One quiet footnote between the docs and the key hint (e.g. "types come
+   from your local environment"): same muted size as the hint, no border, so
+   it reads as a caveat rather than content. */
+.lsp-tooltip-note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--crit-fg-muted);
+}
 
 .diff-line.lsp-jump-flash,
 .diff-split-side.lsp-jump-flash,
@@ -6436,6 +6444,12 @@ html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
   padding: 4px 12px;
   font-size: 11px;
   font-style: italic;
+  color: var(--crit-fg-muted);
+}
+/* Strip above a peeked file that is the reviewer's local copy of a package. */
+.lsp-peek-note {
+  padding: 4px 12px;
+  font-size: 11px;
   color: var(--crit-fg-muted);
 }
 

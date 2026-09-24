@@ -1099,3 +1099,133 @@ func TestLSPUninstalledLanguageRejected(t *testing.T) {
 		t.Errorf("status = %d, want 200 for installed language; body = %s", w.Code, w.Body.String())
 	}
 }
+
+// addPythonFile puts app.py into the repo and the session so a request for it
+// resolves. In range focus the file is committed and the focus moved to that
+// commit, since the LSP worktree is a checkout of HeadSHA.
+func addPythonFile(t *testing.T, sess *Session, repo string, rangeFocus bool) {
+	t.Helper()
+	const src = "import mylib\n\nmylib.greet()\n"
+	entry := &FileEntry{Path: "app.py", AbsPath: filepath.Join(repo, "app.py"), Status: "added", FileType: "code"}
+	if rangeFocus {
+		head := vcs.CommitAtForTest(t, repo, "app.py", src, "add app.py")
+		sess.Focus = Focus{Kind: FocusRange, BaseSHA: sess.Focus.BaseSHA, HeadSHA: head}
+	} else if err := os.WriteFile(entry.AbsPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess.Files = append(sess.Files, entry)
+}
+
+// The local-environment note is for one situation only: a range/PR focus
+// showing a SHA whose third-party packages come from the reviewer's own
+// environment. Anywhere else it would be noise on every hover.
+func TestLSPHoverLocalEnvNote(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		rangeFocus bool
+		path       string
+		want       bool
+	}{
+		{"python under range focus", true, "app.py", true},
+		{"python in the working tree", false, "app.py", false},
+		{"go under range focus", true, "main.go", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeLSPProvider{hoverContents: "doc"}
+			var srv *Server
+			var sess *Session
+			var repo string
+			if tc.rangeFocus {
+				srv, sess, repo, _ = newRangeLSPTestServer(t, fake)
+			} else {
+				srv, sess = newLSPTestServer(t, fake)
+				repo = sess.RepoRoot
+			}
+			addPythonFile(t, sess, repo, tc.rangeFocus)
+
+			w := doLSPRequest(t, srv, "/api/lsp/hover?path="+tc.path+"&line=1&char=0")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var resp struct {
+				Contents string `json:"contents"`
+				LocalEnv bool   `json:"local_env"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.Contents != "doc" {
+				t.Errorf("contents = %q, want the hover text untouched", resp.Contents)
+			}
+			if resp.LocalEnv != tc.want {
+				t.Errorf("local_env = %v, want %v", resp.LocalEnv, tc.want)
+			}
+		})
+	}
+}
+
+// A definition target gets the note only when it sits in a local-environment
+// root AND the focus is showing a different SHA. The stdlib is identical for
+// every checkout, so it never does.
+func TestLSPDefinitionLocalEnvNote(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		rangeFocus   bool
+		rootLocalEnv bool
+		want         bool
+	}{
+		{"local package under range focus", true, true, true},
+		{"stdlib under range focus", true, false, false},
+		{"local package in the working tree", false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pkgRoot := t.TempDir()
+			pkgFile := filepath.Join(pkgRoot, "mylib", "__init__.py")
+			if err := os.MkdirAll(filepath.Dir(pkgFile), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(pkgFile, []byte("def greet():\n    pass\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fake := &fakeLSPProvider{
+				locations: []lsp.Location{{Path: pkgFile, Line: 0}},
+				peekRoots: []lsp.PeekRoot{{Path: pkgRoot, Label: "$SITE_PACKAGES", LocalEnv: tc.rootLocalEnv}},
+			}
+			var srv *Server
+			if tc.rangeFocus {
+				srv, _, _, _ = newRangeLSPTestServer(t, fake)
+			} else {
+				srv, _ = newLSPTestServer(t, fake)
+			}
+
+			w := doLSPRequest(t, srv, "/api/lsp/definition?path=main.go&line=1&char=0")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var resp struct {
+				Locations []lspLocationResponse `json:"locations"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if len(resp.Locations) != 1 {
+				t.Fatalf("locations = %+v, want 1", resp.Locations)
+			}
+			loc := resp.Locations[0]
+			if loc.LocalEnv != tc.want {
+				t.Errorf("local_env = %v, want %v (%+v)", loc.LocalEnv, tc.want, loc)
+			}
+			if len(loc.Peek) == 0 {
+				t.Error("the note annotates a peek; the target must still carry its source")
+			}
+		})
+	}
+}

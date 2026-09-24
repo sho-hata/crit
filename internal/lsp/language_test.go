@@ -23,6 +23,9 @@ func TestLanguageForPath(t *testing.T) {
 		{"web/src/component.jsx", "typescript", "javascriptreact"},
 		{"web/src/mod.mts", "typescript", "typescript"},
 		{"UPPER.TS", "typescript", "typescript"},
+		{"app/main.py", "python", "python"},
+		{"stubs/types.pyi", "python", "python"},
+		{"UPPER.PY", "python", "python"},
 		{"README.md", "", ""},
 		{"Makefile", "", ""},
 		{"noext", "", ""},
@@ -54,7 +57,7 @@ func TestManagerSpawnsOneServerPerLanguage(t *testing.T) {
 	var langs []string
 	h := &managerHarness{handler: hoverOK}
 	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, lang *Language, _ map[string]any) (*Client, error) {
+	m.start = func(_ context.Context, _ string, lang *Language, _, _ map[string]any) (*Client, error) {
 		langs = append(langs, lang.Name)
 		fs := startFake(h.handler)
 		h.mu.Lock()

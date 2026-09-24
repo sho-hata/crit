@@ -20,9 +20,10 @@ import (
 const DefaultIdleTimeout = 3 * time.Minute
 
 // startFunc spawns an initialized LSP client for a workspace root and
-// language, sending initOpts as initializationOptions. Overridden in tests to
+// language, sending initOpts as initializationOptions and answering the
+// server's workspace/configuration pulls from settings. Overridden in tests to
 // avoid spawning a real server.
-type startFunc func(ctx context.Context, rootDir string, lang *Language, initOpts map[string]any) (*Client, error)
+type startFunc func(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error)
 
 // fileState tracks the sync state of one open document.
 type fileState struct {
@@ -53,8 +54,9 @@ type Manager struct {
 	root string
 	// depRoot is the working tree backing root, set only when root is the
 	// sparse worktree of a range/PR focus. That checkout holds tracked files
-	// only — node_modules is absent — so a language whose handshake needs a
-	// dependency resolves it from depRoot at the same repo-relative path.
+	// only — node_modules and .venv are absent — so a language whose handshake
+	// needs a dependency resolves it from depRoot at the same repo-relative
+	// path.
 	depRoot     string
 	baseCtx     context.Context
 	idleTimeout time.Duration
@@ -151,7 +153,7 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 		if err != nil {
 			return err
 		}
-		if opened {
+		if opened && !lang.SkipReadyWait {
 			// Opening a document is what makes a TypeScript server build the
 			// project around it, and it answers from a half-built one without
 			// saying so (see WaitReady). Only the didOpen pays this wait: on
@@ -212,9 +214,8 @@ func (m *Manager) serverFor(lang *Language) *serverState {
 
 // ensureClient spawns + initializes lang's server if srv has no live client.
 // absPath is the file the triggering request is about; a language whose
-// handshake settings depend on where the file sits in the tree (TypeScript
-// picking the nearest node_modules/typescript) resolves them from it.
-// Caller holds srv.mu.
+// handshake settings depend on where the file sits in the tree (see
+// tsInitOptions, pyConfigSettings) resolves them from it. Caller holds srv.mu.
 func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string) error {
 	if srv.client != nil && !srv.client.Dead() {
 		return nil
@@ -224,14 +225,9 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 		srv.client = nil
 		srv.files = make(map[string]fileState)
 	}
-	var initOpts map[string]any
-	if lang.InitOptions != nil {
-		initOpts = lang.InitOptions(m.root, absPath)
-		if initOpts == nil {
-			initOpts = m.depInitOptions(lang, absPath)
-		}
-	}
-	client, err := m.start(m.baseCtx, m.root, lang, initOpts)
+	initOpts := m.handshake(lang.InitOptions, absPath)
+	settings := m.handshake(lang.ConfigSettings, absPath)
+	client, err := m.start(m.baseCtx, m.root, lang, initOpts, settings)
 	if err != nil {
 		return err
 	}
@@ -239,13 +235,26 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 	return nil
 }
 
-// depInitOptions retries lang's handshake lookup against depRoot, for the
-// file at the same repo-relative path. In range/PR focus the server is rooted
-// at a sparse worktree that by design contains tracked files only, so
-// TypeScript finds no installation there and the server exits at initialize.
-// Borrowing just the dependency location from the working tree keeps the
-// server alive while the reviewed sources still come from the checkout.
-func (m *Manager) depInitOptions(lang *Language, absPath string) map[string]any {
+// handshake runs one of lang's handshake hooks (InitOptions, ConfigSettings)
+// against the workspace root and, when that finds nothing, against the working
+// tree behind it. A nil hook, or nothing found in either place, yields nil.
+func (m *Manager) handshake(hook func(root, absPath string) map[string]any, absPath string) map[string]any {
+	if hook == nil {
+		return nil
+	}
+	if v := hook(m.root, absPath); v != nil {
+		return v
+	}
+	return m.depHandshake(hook, absPath)
+}
+
+// depHandshake retries a handshake hook against depRoot, for the file at the
+// same repo-relative path. In range/PR focus the server is rooted at a sparse
+// worktree that by design contains tracked files only, so untracked dependency
+// directories (node_modules, .venv) are missing there. Borrowing just the
+// dependency location from the working tree keeps third-party code resolvable
+// while the reviewed sources still come from the checkout.
+func (m *Manager) depHandshake(hook func(root, absPath string) map[string]any, absPath string) map[string]any {
 	if m.depRoot == "" || m.depRoot == m.root {
 		return nil
 	}
@@ -253,7 +262,7 @@ func (m *Manager) depInitOptions(lang *Language, absPath string) map[string]any 
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil
 	}
-	return lang.InitOptions(m.depRoot, filepath.Join(m.depRoot, rel))
+	return hook(m.depRoot, filepath.Join(m.depRoot, rel))
 }
 
 // syncFile makes the server's view of absPath match the disk content:
@@ -338,12 +347,22 @@ func (m *Manager) Shutdown() {
 	m.dropAllLocked()
 }
 
+// depBase is the tree a language's dependencies live in: depRoot when the
+// server is rooted at a range/PR focus worktree, the workspace root otherwise.
+func (m *Manager) depBase() string {
+	if m.depRoot != "" {
+		return m.depRoot
+	}
+	return m.root
+}
+
 // PeekRoots returns the extra source roots (beyond the workspace root) that
-// definition/reference peeks may read, resolved per installed language:
-// GOROOT and GOMODCACHE for Go, the global node_modules for TypeScript. Each
-// language's ExtraRoots is asked about this Manager's workspace root, so the
-// cache is per Manager — i.e. per root — and a project-dependent language
-// never sees another workspace's answer.
+// definition/reference peeks may read: each installed language's ExtraRoots
+// (stdlib, module caches, installed packages). Each is asked about the tree
+// the language's dependencies live in — the working tree under range/PR
+// focus, the workspace root otherwise — so the cache is per Manager, i.e.
+// per root, and a project-dependent language never sees another workspace's
+// answer.
 // Only a successful lookup is cached — a failure (e.g. the toolchain missing
 // from the daemon's PATH) is retried on the next call rather than pinning
 // empty roots for the daemon's lifetime.
@@ -357,7 +376,7 @@ func (m *Manager) PeekRoots() []PeekRoot {
 		}
 		cached, ok := m.extraRoots[l.Name]
 		if !ok {
-			cached = l.ExtraRoots(m.root)
+			cached = l.ExtraRoots(m.depBase())
 			if cached == nil {
 				continue
 			}
@@ -369,7 +388,7 @@ func (m *Manager) PeekRoots() []PeekRoot {
 }
 
 // startServer spawns a real language-server subprocess rooted at rootDir.
-func startServer(ctx context.Context, rootDir string, lang *Language, initOpts map[string]any) (*Client, error) {
+func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
 	}
@@ -412,6 +431,7 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts m
 		}
 	}
 	client := newClient(lang.Name, stdin, stdout, kill)
+	client.SetSettings(settings)
 	initStart := time.Now()
 	if err := client.Initialize(rootDir, initOpts); err != nil {
 		client.Close()
