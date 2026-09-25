@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -718,6 +719,28 @@ func TestLoadConfig_OutputField(t *testing.T) {
 	}
 }
 
+func TestStaleReviewDaysOrDefault(t *testing.T) {
+	days := func(v int) *int { return &v }
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want int
+	}{
+		{name: "nil pointer defaults", cfg: Config{StaleReviewDays: nil}, want: DefaultStaleReviewDays},
+		{name: "zero defaults", cfg: Config{StaleReviewDays: days(0)}, want: DefaultStaleReviewDays},
+		{name: "negative defaults", cfg: Config{StaleReviewDays: days(-5)}, want: DefaultStaleReviewDays},
+		{name: "explicit value", cfg: Config{StaleReviewDays: days(90)}, want: 90},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.StaleReviewDaysOrDefault(); got != tt.want {
+				t.Errorf("StaleReviewDaysOrDefault() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCleanupOnApproveEnabled(t *testing.T) {
 	t.Parallel()
 
@@ -812,6 +835,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.NotifyOnRoundReady {
 		t.Error("NotifyOnRoundReady should be false")
+	}
+	if cfg.StaleReviewDays != DefaultStaleReviewDays {
+		t.Errorf("StaleReviewDays = %d, want %d", cfg.StaleReviewDays, DefaultStaleReviewDays)
 	}
 	if len(cfg.IgnorePatterns) != 4 {
 		t.Fatalf("IgnorePatterns has %d entries, want 4", len(cfg.IgnorePatterns))
@@ -1035,5 +1061,107 @@ func TestDefaultConfig_DoesNotIncludeCloseOnApproveAfterMs(t *testing.T) {
 	s := DefaultConfigString()
 	if strings.Contains(s, "close_on_approve_after_ms") {
 		t.Errorf("DefaultConfigString() contains close_on_approve_after_ms, want omitted:\n%s", s)
+	}
+}
+
+func TestDefaultConfig_IncludesStaleReviewDays(t *testing.T) {
+	// Unlike close_on_approve_after_ms, scaffolding stale_review_days with the
+	// default is safe — the background sweep already uses 14 when unset.
+	s := DefaultConfigString()
+	if !strings.Contains(s, `"stale_review_days"`) {
+		t.Errorf("DefaultConfigString() missing stale_review_days:\n%s", s)
+	}
+	want := fmt.Sprintf(`"stale_review_days": %d`, DefaultStaleReviewDays)
+	if !strings.Contains(s, want) {
+		t.Errorf("DefaultConfigString() missing %q:\n%s", want, s)
+	}
+}
+
+func TestLoadConfigFile_DefaultMarkdownView(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, ".crit.config.json")
+	os.WriteFile(configPath, []byte(`{"default_markdown_view": "document"}`), 0644)
+
+	cfg, _, err := LoadConfigFile(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DefaultMarkdownView != "document" {
+		t.Errorf("default_markdown_view = %q, want document", cfg.DefaultMarkdownView)
+	}
+}
+
+func TestLoadConfigFile_DefaultMarkdownViewInvalid(t *testing.T) {
+	// Invalid values are ignored (cleared to unset) with a stderr warning,
+	// matching how unknown vcs/forge values fall back instead of failing load.
+	for _, raw := range []string{`{"default_markdown_view": "DOC"}`, `{"default_markdown_view": "markdown"}`, `{"default_markdown_view": "side-by-side"}`} {
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, ".crit.config.json")
+		os.WriteFile(configPath, []byte(raw), 0644)
+
+		cfg, _, err := LoadConfigFile(configPath)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", raw, err)
+		}
+		if cfg.DefaultMarkdownView != "" {
+			t.Errorf("%s: default_markdown_view = %q, want empty (ignored)", raw, cfg.DefaultMarkdownView)
+		}
+	}
+}
+
+func TestMergeConfigs_DefaultMarkdownViewProjectOverrides(t *testing.T) {
+	tests := []struct {
+		name    string
+		global  string
+		project string
+		want    string
+	}{
+		{"project overrides global", "diff", "document", "document"},
+		{"project can set diff over global document", "document", "diff", "diff"},
+		{"empty project keeps global", "document", "", "document"},
+		{"both empty stays unset", "", "", ""},
+		{"global alone applies", "document", "", "document"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			merged := mergeConfigs(Config{DefaultMarkdownView: tt.global}, Config{DefaultMarkdownView: tt.project}, ConfigPresence{})
+			if merged.DefaultMarkdownView != tt.want {
+				t.Errorf("merged = %q, want %q", merged.DefaultMarkdownView, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_DefaultMarkdownViewEndToEnd(t *testing.T) {
+	homeDir := t.TempDir()
+	testutil.SetHome(t, homeDir)
+	if err := os.WriteFile(
+		filepath.Join(homeDir, ".crit.config.json"),
+		[]byte(`{"default_markdown_view":"diff"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	projectDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(projectDir, ".crit.config.json"),
+		[]byte(`{"default_markdown_view":"document"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := LoadConfig(projectDir).DefaultMarkdownView; got != "document" {
+		t.Errorf("DefaultMarkdownView = %q, want project value document", got)
+	}
+}
+
+func TestLoadConfig_DefaultMarkdownViewUnset(t *testing.T) {
+	homeDir := t.TempDir()
+	testutil.SetHome(t, homeDir)
+	projectDir := t.TempDir()
+
+	if got := LoadConfig(projectDir).DefaultMarkdownView; got != "" {
+		t.Errorf("DefaultMarkdownView = %q, want empty when unset", got)
 	}
 }

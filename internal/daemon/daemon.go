@@ -3,7 +3,9 @@ package daemon
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sho-hata/crit/internal/config"
@@ -56,6 +59,21 @@ var aliveClient = &http.Client{Timeout: time.Second}
 // browserClient is used by DaemonHasBrowser which is called once per
 // daemon lifecycle and can tolerate a longer timeout.
 var browserClient = &http.Client{Timeout: 2 * time.Second}
+
+// terminateProc is the function StopDaemon uses to request graceful
+// termination. Tests may override it to simulate signal failures.
+var terminateProc = terminateProcess
+
+// killProcess force-kills a process that outlived the graceful-termination poll.
+func killProcess(proc *os.Process) error { return proc.Kill() }
+
+// killProc is the function StopDaemon uses to force-kill a process that
+// outlives the graceful-termination poll. Tests may override it.
+var killProc = killProcess
+
+// procExists is the function StopDaemon uses to poll for process exit.
+// Tests may override it to avoid killing real processes.
+var procExists = processExists
 
 const daemonFailureRetention = 10 * time.Minute
 
@@ -159,7 +177,7 @@ func SessionKey(cwd string, branch string, args []string) string {
 		h.Write([]byte{0})
 		h.Write([]byte(a))
 	}
-	return fmt.Sprintf("%x", h.Sum(nil))[:12]
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // LiveSessionKey returns the session/review key for a live-mode session.
@@ -171,7 +189,7 @@ func LiveSessionKey(cwd, origin string) string {
 	h.Write([]byte(cwd))
 	h.Write([]byte("\x00live\x00"))
 	h.Write([]byte(origin))
-	return fmt.Sprintf("%x", h.Sum(nil))[:12]
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // ValidSessionKey reports whether key looks like a crit session ID (12 lowercase hex chars).
@@ -592,7 +610,7 @@ func releaseSessionLock(f *os.File) {
 // readiness via os.Stdout and the parent reads it via the pipe's read end.
 // _CRIT_READY_STDOUT=1 tells the child to treat stdout as the readiness pipe
 // (otherwise stdout is the user's terminal and we must not emit the port).
-func setupDaemonCmd(key string, args []string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
+func setupDaemonCmd(key string, args []string, dir string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
 	selfPath, err := os.Executable()
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("finding executable: %w", err)
@@ -601,11 +619,13 @@ func setupDaemonCmd(key string, args []string) (*exec.Cmd, *os.File, *os.File, *
 	cmdArgs := append([]string{"_serve"}, args...)
 	cmd := exec.Command(selfPath, cmdArgs...)
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("getting working directory: %w", err)
+	if dir == "" {
+		dir, err = os.Getwd()
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("getting working directory: %w", err)
+		}
 	}
-	cmd.Dir = cwd
+	cmd.Dir = dir
 	cmd.Stdin = nil
 
 	logPath, err := sessionLogPath(key)
@@ -633,9 +653,9 @@ func setupDaemonCmd(key string, args []string) (*exec.Cmd, *os.File, *os.File, *
 // prepareDaemonCmd removes stale session state before creating the log that
 // the new daemon inherits. This keeps fatal initialization errors readable by
 // the client after the daemon exits.
-func prepareDaemonCmd(key string, args []string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
+func prepareDaemonCmd(key string, args []string, dir string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
 	RemoveSessionFile(key)
-	return setupDaemonCmd(key, args)
+	return setupDaemonCmd(key, args, dir)
 }
 
 func readPortFromPipe(readEnd *os.File) (portCh chan int, errCh chan error) {
@@ -705,6 +725,14 @@ func handleDaemonPipeError(key string, readErr error, readEnd *os.File, cmd *exe
 // Raw args (including flags) are passed through to _serve which parses them itself.
 // Uses an OS pipe (FD 3) for the daemon to signal readiness by writing its port number.
 func StartDaemon(key string, args []string) (SessionEntry, error) {
+	return StartDaemonInDir(key, args, "")
+}
+
+// StartDaemonInDir is StartDaemon with an explicit working directory for the
+// daemon process. An empty dir means "inherit ours", which is what a review
+// started from the current directory wants. `crit resume` passes the directory
+// recorded in the review file so a session can be restarted from anywhere.
+func StartDaemonInDir(key string, args []string, dir string) (SessionEntry, error) {
 	lock, err := acquireSessionLock(key)
 	if err != nil {
 		return SessionEntry{}, err
@@ -715,7 +743,7 @@ func StartDaemon(key string, args []string) (SessionEntry, error) {
 		return entry, nil
 	}
 
-	cmd, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, args)
+	cmd, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, args, dir)
 	if err != nil {
 		return SessionEntry{}, err
 	}
@@ -871,6 +899,13 @@ func DaemonFatal(pipe *os.File, format string, args ...interface{}) {
 	os.Exit(1)
 }
 
+// terminationProvesGone reports whether a failed termination attempt is
+// evidence that the process no longer exists. EPERM and other failures are
+// evidence about our privileges, not about the process.
+func terminationProvesGone(err error) bool {
+	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
+}
+
 // StopDaemon stops the daemon for the given session key.
 func StopDaemon(key string) error {
 	entry, err := ReadSessionFile(key)
@@ -890,21 +925,22 @@ func StopDaemon(key string) error {
 		return nil //nolint:nilerr // process not found, session already cleaned up
 	}
 
-	if err := terminateProcess(proc); err != nil {
-		RemoveSessionFile(key)
-		return nil //nolint:nilerr // process already gone, cleanup is sufficient
+	if err := terminateProc(proc); err != nil && !terminationProvesGone(err) {
+		return fmt.Errorf("could not stop daemon %s (pid %d): %w; session file kept so you can retry", key, entry.PID, err)
 	}
 
 	// Poll for process exit, escalate to Kill if still alive after the deadline.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
-		if !processExists(proc) {
+		if !procExists(proc) {
 			break
 		}
 	}
-	if processExists(proc) {
-		proc.Kill()
+	if procExists(proc) {
+		if err := killProc(proc); err != nil && !terminationProvesGone(err) {
+			return fmt.Errorf("could not stop daemon %s (pid %d): %w; session file kept so you can retry", key, entry.PID, err)
+		}
 	}
 	RemoveSessionFile(key)
 	return nil

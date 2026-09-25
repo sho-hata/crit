@@ -828,8 +828,9 @@ func TestHintMissingIntegrationsFor_SkipsWhenInstalled(t *testing.T) {
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest, sourceContent, 0o644)
 
-	// Create .gemini to simulate a detected-but-missing agent
+	// Create a Gemini config file to simulate a detected-but-missing agent
 	os.MkdirAll(filepath.Join(homeDir, ".gemini"), 0o755)
+	os.WriteFile(filepath.Join(homeDir, ".gemini", "settings.json"), []byte(`{}`), 0o644)
 
 	// Should not panic and should not print (installed agent exists)
 	hintMissingIntegrationsFor(projectDir, homeDir)
@@ -841,11 +842,52 @@ func TestHintMissingIntegrationsFor_PrintsWhenNoneInstalled(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
-	// Create .gemini to simulate detection
+	// Create a Gemini config file to simulate detection
 	os.MkdirAll(filepath.Join(homeDir, ".gemini"), 0o755)
+	os.WriteFile(filepath.Join(homeDir, ".gemini", "settings.json"), []byte(`{}`), 0o644)
 
 	// Should print hint (no installed agents, gemini detected)
 	hintMissingIntegrationsFor(projectDir, homeDir)
+}
+
+func TestDetectPresentAgents_IgnoresEmptyAmbiguousConfigDirs(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	if err := os.Mkdir(filepath.Join(homeDir, ".gemini"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, agent := range detectPresentAgents(homeDir) {
+		if agent == "gemini" {
+			t.Fatal("empty .gemini directory should not detect Gemini CLI")
+		}
+	}
+}
+
+func TestDetectPresentAgents_JunkFileInAmbiguousConfigDirCountsAsPresent(t *testing.T) {
+	// Documents current behavior: any entry (e.g. .DS_Store) makes an
+	// ambiguous config dir count as "present". Tightening would require
+	// sniffing known config filenames per agent.
+	homeDir := t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	geminiDir := filepath.Join(homeDir, ".gemini")
+	if err := os.Mkdir(geminiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(geminiDir, ".DS_Store"), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, agent := range detectPresentAgents(homeDir) {
+		if agent == "gemini" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("ambiguous config dir with only .DS_Store currently counts as present")
+	}
 }
 
 func TestHintMissingIntegrations_EnvDisable(t *testing.T) {

@@ -3,6 +3,7 @@ package vcs
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -56,6 +57,199 @@ func TestDedup(t *testing.T) {
 	if result[0].Status != "modified" {
 		t.Error("should keep first occurrence")
 	}
+}
+
+func TestParseNormalUntrackedStatus(t *testing.T) {
+	t.Run("returns explicit untracked files", func(t *testing.T) {
+		out := []byte("1 .M N... 100644 100644 100644 abc abc tracked.go\x00? root file.txt\x00? line\nbreak.txt\x00")
+		changes, needsFullScan := parseNormalUntrackedStatus(out)
+
+		if needsFullScan {
+			t.Fatal("needsFullScan = true, want false")
+		}
+		want := []FileChange{
+			{Path: "root file.txt", Status: "untracked"},
+			{Path: "line\nbreak.txt", Status: "untracked"},
+		}
+		if !reflect.DeepEqual(changes, want) {
+			t.Fatalf("changes = %#v, want %#v", changes, want)
+		}
+	})
+
+	t.Run("requests full scan for collapsed directory", func(t *testing.T) {
+		changes, needsFullScan := parseNormalUntrackedStatus([]byte("? root.txt\x00? nested/\x00"))
+
+		if !needsFullScan {
+			t.Fatal("needsFullScan = false, want true")
+		}
+		if changes != nil {
+			t.Fatalf("changes = %#v, want nil because the full scan supersedes them", changes)
+		}
+	})
+}
+
+func TestParseGitStatusSnapshot(t *testing.T) {
+	out := []byte("1 M. N... 100644 100644 100644 head index staged file.go\x00" +
+		"1 .D N... 100644 100644 000000 head index deleted.go\x00" +
+		"2 R. N... 100644 100644 100644 head index R100 renamed.go\x00old.go\x00" +
+		"u UU N... 100644 100644 100644 100644 one two three conflict.go\x00" +
+		"? root file.txt\x00? nested/\x00")
+
+	snapshot := parseGitStatusSnapshot(out)
+	wantStaged := []FileChange{
+		{Path: "staged file.go", Status: "modified"},
+		{Path: "renamed.go", OldPath: "old.go", Status: "renamed"},
+		{Path: "conflict.go", Status: "modified"},
+	}
+	wantUnstaged := []FileChange{
+		{Path: "deleted.go", Status: "deleted"},
+		{Path: "conflict.go", Status: "modified"},
+	}
+	wantUntracked := []FileChange{{Path: "root file.txt", Status: "untracked"}}
+	if !reflect.DeepEqual(snapshot.staged, wantStaged) {
+		t.Errorf("staged = %#v, want %#v", snapshot.staged, wantStaged)
+	}
+	if !reflect.DeepEqual(snapshot.unstaged, wantUnstaged) {
+		t.Errorf("unstaged = %#v, want %#v", snapshot.unstaged, wantUnstaged)
+	}
+	if !reflect.DeepEqual(snapshot.untracked, wantUntracked) {
+		t.Errorf("untracked = %#v, want %#v", snapshot.untracked, wantUntracked)
+	}
+	if !snapshot.needsUntrackedScan {
+		t.Error("needsUntrackedScan = false, want true")
+	}
+}
+
+func TestInitialGitChangesAndScopes(t *testing.T) {
+	dir := initTestRepo(t)
+	baseRef := gitT(t, dir, "rev-parse", "HEAD")
+	gitT(t, dir, "checkout", "-b", "feature/snapshot")
+
+	writeFile(t, filepath.Join(dir, "branch.go"), "package branch\n")
+	gitT(t, dir, "add", "branch.go")
+	gitT(t, dir, "commit", "-m", "branch change")
+	writeFile(t, filepath.Join(dir, "staged.go"), "package staged\n")
+	gitT(t, dir, "add", "staged.go")
+	writeFile(t, filepath.Join(dir, "README.md"), "unstaged\n")
+	writeFile(t, filepath.Join(dir, "untracked.go"), "package untracked\n")
+
+	changes, scopes, ok, err := initialGitChangesAndScopes(baseRef, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	got := make(map[string]string)
+	for _, change := range changes {
+		got[change.Path] = change.Status
+	}
+	want := map[string]string{
+		"README.md":    "modified",
+		"branch.go":    "added",
+		"staged.go":    "added",
+		"untracked.go": "untracked",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("changes = %v, want %v", got, want)
+	}
+	if wantScopes := []string{"all", "branch", "staged", "unstaged"}; !reflect.DeepEqual(scopes, wantScopes) {
+		t.Errorf("scopes = %v, want %v", scopes, wantScopes)
+	}
+}
+
+func TestInitialGitChangesAndScopesFallsBackForOverlappingLayers(t *testing.T) {
+	dir := initTestRepo(t)
+	baseRef := gitT(t, dir, "rev-parse", "HEAD")
+	original, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, dir, "checkout", "-b", "feature/overlap")
+	writeFile(t, filepath.Join(dir, "README.md"), "committed\n")
+	gitT(t, dir, "add", "README.md")
+	gitT(t, dir, "commit", "-m", "change readme")
+	writeFile(t, filepath.Join(dir, "kept.go"), "package kept\n")
+	gitT(t, dir, "add", "kept.go")
+	gitT(t, dir, "commit", "-m", "keep change")
+	writeFile(t, filepath.Join(dir, "README.md"), string(original))
+
+	changes, scopes, ok, err := initialGitChangesAndScopes(baseRef, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []FileChange{{Path: "kept.go", Status: "added"}}
+	if !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %#v, want %#v", changes, want)
+	}
+	if wantScopes := []string{"all", "branch", "unstaged"}; !reflect.DeepEqual(scopes, wantScopes) {
+		t.Errorf("scopes = %v, want %v", scopes, wantScopes)
+	}
+}
+
+func TestInitialGitChangesAndScopesPreservesStagedRename(t *testing.T) {
+	dir := initTestRepo(t)
+	gitT(t, dir, "mv", "README.md", "renamed readme.md")
+
+	changes, scopes, ok, err := initialGitChangesAndScopes("", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []FileChange{{Path: "renamed readme.md", OldPath: "README.md", Status: "renamed"}}
+	if !reflect.DeepEqual(changes, want) {
+		t.Errorf("changes = %#v, want %#v", changes, want)
+	}
+	if wantScopes := []string{"all", "staged"}; !reflect.DeepEqual(scopes, wantScopes) {
+		t.Errorf("scopes = %v, want %v", scopes, wantScopes)
+	}
+}
+
+func TestUntrackedFilesInDir(t *testing.T) {
+	t.Run("returns standalone files and excludes ignored files", func(t *testing.T) {
+		dir := initTestRepo(t)
+		writeFile(t, filepath.Join(dir, ".gitignore"), "*.log\n")
+		gitT(t, dir, "add", ".gitignore")
+		gitT(t, dir, "commit", "-m", "add ignores")
+		writeFile(t, filepath.Join(dir, "root file.txt"), "review me")
+		writeFile(t, filepath.Join(dir, "ignored.log"), "ignore me")
+
+		changes, err := untrackedFilesInDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []FileChange{{Path: "root file.txt", Status: "untracked"}}
+		if !reflect.DeepEqual(changes, want) {
+			t.Fatalf("changes = %#v, want %#v", changes, want)
+		}
+	})
+
+	t.Run("expands files inside an untracked directory", func(t *testing.T) {
+		dir := initTestRepo(t)
+		writeFile(t, filepath.Join(dir, ".gitignore"), "*.log\n")
+		gitT(t, dir, "add", ".gitignore")
+		gitT(t, dir, "commit", "-m", "add ignores")
+		writeFile(t, filepath.Join(dir, "new-dir", "a.txt"), "a")
+		writeFile(t, filepath.Join(dir, "new-dir", "sub", "b.txt"), "b")
+		writeFile(t, filepath.Join(dir, "new-dir", "sub", "ignored.log"), "ignored")
+
+		changes, err := untrackedFilesInDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []FileChange{
+			{Path: "new-dir/a.txt", Status: "untracked"},
+			{Path: "new-dir/sub/b.txt", Status: "untracked"},
+		}
+		if !reflect.DeepEqual(changes, want) {
+			t.Fatalf("changes = %#v, want %#v", changes, want)
+		}
+	})
 }
 
 func TestParseUnifiedDiff_Simple(t *testing.T) {
@@ -791,66 +985,6 @@ func TestChangedFilesScoped_Dispatcher(t *testing.T) {
 	}
 	if len(defaultChanges) == 0 {
 		t.Error("default scope should return changes via ChangedFiles()")
-	}
-}
-
-func TestFileDiffScoped_Branch(t *testing.T) {
-	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
-
-	baseRef := testutil.Git(t, dir, "rev-parse", "HEAD")
-
-	// Create feature branch with a change to README.md
-	testutil.Git(t, dir, "checkout", "-b", "feature/diff-scope")
-	testutil.WriteFile(t, filepath.Join(dir, "README.md"), "# Modified on branch\n\nNew content\n")
-	testutil.Git(t, dir, "add", "README.md")
-	testutil.Git(t, dir, "commit", "-m", "modify readme")
-
-	hunks, err := FileDiffScoped("README.md", "branch", baseRef, dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hunks) == 0 {
-		t.Error("expected diff hunks for branch scope")
-	}
-}
-
-func TestFileDiffScoped_Staged(t *testing.T) {
-	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
-
-	// Stage a change
-	testutil.WriteFile(t, filepath.Join(dir, "README.md"), "# Staged content\n")
-	testutil.Git(t, dir, "add", "README.md")
-
-	hunks, err := FileDiffScoped("README.md", "staged", "", dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hunks) == 0 {
-		t.Error("expected diff hunks for staged scope")
-	}
-}
-
-func TestFileDiffScoped_Unstaged(t *testing.T) {
-	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
-
-	// Modify without staging
-	testutil.WriteFile(t, filepath.Join(dir, "README.md"), "# Unstaged content\n")
-
-	hunks, err := FileDiffScoped("README.md", "unstaged", "", dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hunks) == 0 {
-		t.Error("expected diff hunks for unstaged scope")
 	}
 }
 

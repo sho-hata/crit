@@ -496,25 +496,18 @@ func TestResolveCommandReviewPathPrecedence(t *testing.T) {
 		}
 	})
 
-	t.Run("keeps using a legacy output layout and warns", func(t *testing.T) {
+	t.Run("ignores a leftover .crit under the data root", func(t *testing.T) {
 		dataRoot := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(dataRoot, ".crit"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		var got string
-		stderr := captureStderr(t, func() {
-			var err error
-			got, err = ResolveReviewPathWithArgs(dataRoot, nil)
-			if err != nil {
-				t.Fatalf("ResolveReviewPathWithArgs: %v", err)
-			}
-		})
-		want := filepath.Join(dataRoot, ".crit")
-		if got != want {
-			t.Fatalf("review path = %q, want pre-existing legacy path %q", got, want)
+		got, err := ResolveReviewPathWithArgs(dataRoot, nil)
+		if err != nil {
+			t.Fatalf("ResolveReviewPathWithArgs: %v", err)
 		}
-		if !strings.Contains(stderr, "legacy .crit review") {
-			t.Fatalf("stderr = %q, want legacy warning", stderr)
+		want := filepath.Join(dataRoot, "reviews", daemon.SessionKey(resolvedCWD, "", nil))
+		if got != want {
+			t.Fatalf("review path = %q, want keyed path %q", got, want)
 		}
 	})
 }
@@ -1046,5 +1039,42 @@ func TestMatchingLiveSessionsBranchFilterAndAmbiguity(t *testing.T) {
 	_, err = ResolveReviewPathFromSessions(sessions, keys)
 	if err == nil || !strings.Contains(err.Error(), "multiple active review sessions") {
 		t.Fatalf("error = %v, want ambiguity", err)
+	}
+}
+
+// A review created headlessly by `crit comment` must record its directory too,
+// otherwise `crit resume` would restart its daemon wherever the user happens to
+// be standing and then overwrite the recorded directory with that wrong value.
+func TestLoadCritJSON_NewReviewRecordsCWD(t *testing.T) {
+	testutil.SetHome(t, t.TempDir())
+	identity := filepath.Join(t.TempDir(), "reviews", "aaaaaaaaaaaa")
+
+	cj, err := LoadCritJSON(identity)
+	if err != nil {
+		t.Fatalf("LoadCritJSON: %v", err)
+	}
+
+	want, err := daemon.ResolvedCWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cj.CWD != want {
+		t.Errorf("CWD = %q, want %q", cj.CWD, want)
+	}
+}
+
+func TestLoadCritJSON_ExistingReviewKeepsRecordedCWD(t *testing.T) {
+	testutil.SetHome(t, t.TempDir())
+	identity := filepath.Join(t.TempDir(), "reviews", "aaaaaaaaaaaa")
+	if err := SaveCritJSON(identity, CritJSON{CWD: "/work/app", Branch: "feature"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cj, err := LoadCritJSON(identity)
+	if err != nil {
+		t.Fatalf("LoadCritJSON: %v", err)
+	}
+	if cj.CWD != "/work/app" {
+		t.Errorf("CWD = %q, want the recorded directory to survive a load", cj.CWD)
 	}
 }

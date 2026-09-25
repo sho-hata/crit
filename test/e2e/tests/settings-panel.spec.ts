@@ -39,10 +39,28 @@ test.describe('Settings Panel', () => {
     await page.click('#settingsToggle');
     await page.click('.settings-tab[data-tab="shortcuts"]');
     await expect(page.locator('.settings-pane[data-pane="shortcuts"]')).toHaveClass(/active/);
+    await page.click('.settings-tab[data-tab="updates"]');
+    await expect(page.locator('.settings-pane[data-pane="updates"]')).toHaveClass(/active/);
     await page.click('.settings-tab[data-tab="about"]');
     await expect(page.locator('.settings-pane[data-pane="about"]')).toHaveClass(/active/);
     await page.click('.settings-tab[data-tab="settings"]');
     await expect(page.locator('.settings-pane[data-pane="settings"]')).toHaveClass(/active/);
+  });
+
+  test('tab switching resets the shared content scroll position', async ({ page }) => {
+    await page.click('#settingsToggle');
+    const content = page.locator('.settings-content');
+    const scrolled = await content.evaluate((element) => {
+      const spacer = document.createElement('div');
+      spacer.style.height = '2000px';
+      element.appendChild(spacer);
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(scrolled).toBeGreaterThan(0);
+
+    await page.click('.settings-tab[data-tab="about"]');
+    await expect.poll(() => content.evaluate((element) => element.scrollTop)).toBe(0);
   });
 
   test('? key toggles shortcuts tab when panel is open on shortcuts', async ({ page }) => {
@@ -219,12 +237,18 @@ test.describe('Settings Panel', () => {
   test('settings pane shows configuration cards', async ({ page }) => {
     await page.click('#settingsToggle');
     const pane = page.locator('.settings-pane[data-pane="settings"]');
-    // Core cards — always rendered (in various states). Integration title varies
-    // (AI Integration vs Integration Available).
+    // Agent Command is the only core card (rendered in various states).
+    // Update and integration status live on the Updates tab.
     await expect(pane.locator('.config-card-title', { hasText: 'Agent Command' })).toBeVisible();
-    await expect(
-      pane.locator('.config-card-title', { hasText: /AI Integration|Integration Available/ }).first(),
-    ).toBeVisible();
+  });
+
+  test('updates pane shows Crit status and AI integrations', async ({ page }) => {
+    await page.click('#settingsToggle');
+    await page.click('.settings-tab[data-tab="updates"]');
+    const pane = page.locator('.settings-pane[data-pane="updates"]');
+    await expect(pane.locator('.settings-section-label', { hasText: 'Crit' })).toBeVisible();
+    await expect(pane.locator('.updates-crit-row')).toBeVisible();
+    await expect(pane.locator('.settings-section-label', { hasText: 'AI integrations' })).toBeVisible();
   });
 
   test('about pane shows version and session info', async ({ page }) => {

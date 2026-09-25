@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -576,6 +577,167 @@ func changedFilesFromBaseInDir(baseRef, dir string) ([]FileChange, error) {
 	return dedup(changes), nil
 }
 
+type gitStatusSnapshot struct {
+	staged             []FileChange
+	unstaged           []FileChange
+	untracked          []FileChange
+	needsUntrackedScan bool
+}
+
+// initialGitChangesAndScopes uses one status snapshot for staged, unstaged,
+// and untracked state. A tree-only diff supplies committed branch changes.
+// When status cannot produce a snapshot, ok=false tells the caller to fall
+// back to collecting each change scope separately.
+func initialGitChangesAndScopes(baseRef, dir string) ([]FileChange, []string, bool, error) {
+	snapshot, err := gitStatusSnapshotInDir(dir)
+	if err != nil {
+		return nil, nil, false, nil //nolint:nilerr // unavailable snapshot uses the regular discovery path
+	}
+	if snapshot.needsUntrackedScan {
+		snapshot.untracked, err = untrackedFilesFullScanInDir(dir)
+		if err != nil {
+			return nil, nil, true, err
+		}
+	}
+
+	var branch []FileChange
+	if baseRef != "" {
+		out, diffErr := runGit(context.Background(), dir, "diff", baseRef+"..HEAD", "--name-status")
+		if diffErr != nil {
+			return nil, nil, true, fmt.Errorf("git diff %s..HEAD failed: %w", baseRef, diffErr)
+		}
+		branch = parseNameStatus(string(out))
+	}
+
+	comparisonBase := baseRef
+	if comparisonBase == "" {
+		comparisonBase = "HEAD"
+	}
+	tracked, err := mergeGitChangeLayers(comparisonBase, dir, branch, snapshot.staged, snapshot.unstaged)
+	if err != nil {
+		if baseRef == "" {
+			return nil, nil, false, nil
+		}
+		return nil, nil, true, err
+	}
+	tracked = append(tracked, snapshot.untracked...)
+
+	scopes := []string{"all"}
+	if baseRef != "" && len(branch) > 0 {
+		scopes = append(scopes, "branch")
+	}
+	if len(snapshot.staged) > 0 {
+		scopes = append(scopes, "staged")
+	}
+	if len(snapshot.unstaged) > 0 || len(snapshot.untracked) > 0 {
+		scopes = append(scopes, "unstaged")
+	}
+	return dedup(tracked), scopes, true, nil
+}
+
+func gitStatusSnapshotInDir(dir string) (gitStatusSnapshot, error) {
+	cmd := exec.Command("git", "--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=normal")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return gitStatusSnapshot{}, err
+	}
+	return parseGitStatusSnapshot(out), nil
+}
+
+func parseGitStatusSnapshot(out []byte) gitStatusSnapshot {
+	var snapshot gitStatusSnapshot
+	records := bytes.Split(out, []byte{0})
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+		if len(record) < 2 {
+			continue
+		}
+		switch record[0] {
+		case '1':
+			fields := bytes.SplitN(record, []byte{' '}, 9)
+			if len(fields) == 9 {
+				appendGitStatusXY(&snapshot, fields[1], string(fields[8]), "")
+			}
+		case '2':
+			fields := bytes.SplitN(record, []byte{' '}, 10)
+			if len(fields) == 10 && i+1 < len(records) {
+				i++
+				appendGitStatusXY(&snapshot, fields[1], string(fields[9]), string(records[i]))
+			}
+		case 'u':
+			fields := bytes.SplitN(record, []byte{' '}, 11)
+			if len(fields) == 11 {
+				appendGitStatusXY(&snapshot, fields[1], string(fields[10]), "")
+			}
+		case '?':
+			if record[1] != ' ' {
+				continue
+			}
+			path := string(record[2:])
+			if strings.HasSuffix(path, "/") {
+				snapshot.needsUntrackedScan = true
+				continue
+			}
+			snapshot.untracked = append(snapshot.untracked, FileChange{Path: path, Status: "untracked"})
+		}
+	}
+	return snapshot
+}
+
+func appendGitStatusXY(snapshot *gitStatusSnapshot, xy []byte, path, oldPath string) {
+	if len(xy) != 2 {
+		return
+	}
+	if xy[0] != '.' {
+		snapshot.staged = append(snapshot.staged, gitStatusChange(xy[0], path, oldPath))
+	}
+	if xy[1] != '.' {
+		snapshot.unstaged = append(snapshot.unstaged, gitStatusChange(xy[1], path, oldPath))
+	}
+}
+
+func gitStatusChange(code byte, path, oldPath string) FileChange {
+	switch code {
+	case 'A':
+		return FileChange{Path: path, Status: "added"}
+	case 'D':
+		return FileChange{Path: path, Status: "deleted"}
+	case 'R':
+		return FileChange{Path: path, OldPath: oldPath, Status: "renamed"}
+	default:
+		return FileChange{Path: path, Status: "modified"}
+	}
+}
+
+func mergeGitChangeLayers(baseRef, dir string, layers ...[]FileChange) ([]FileChange, error) {
+	seenPaths := make(map[string]bool)
+	var merged []FileChange
+	for _, layer := range layers {
+		for _, change := range layer {
+			if seenPaths[change.Path] || (change.OldPath != "" && seenPaths[change.OldPath]) {
+				out, err := runGit(context.Background(), dir, "diff", baseRef, "--name-status")
+				if err != nil {
+					return nil, fmt.Errorf("git diff failed: %w", err)
+				}
+				return parseNameStatus(string(out)), nil
+			}
+			seenPaths[change.Path] = true
+			if change.OldPath != "" {
+				seenPaths[change.OldPath] = true
+			}
+			merged = append(merged, change)
+		}
+	}
+
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].Path < merged[j].Path
+	})
+	return merged, nil
+}
+
 // HeadSHAInDir returns the full SHA of HEAD in dir.
 func HeadSHAInDir(dir string) (string, error) {
 	out, err := RunGitInDir(dir, "rev-parse", "HEAD")
@@ -943,6 +1105,17 @@ func ReadFileAtSHA(sha, path, dir string) ([]byte, error) {
 			if strings.Contains(lower, "path") || strings.Contains(lower, "does not exist") {
 				return nil, nil
 			}
+			// A submodule (gitlink) entry hits a third message shape: "fatal:
+			// bad object <sha>:<path>". Gitlinks aren't blobs — git can never
+			// show their "content" this way, regardless of whether the
+			// submodule is initialized locally — so this isn't the "sha
+			// missing entirely" case the branch above guards against (that one
+			// reads "fatal: invalid object name '<sha>'", with no path
+			// suffix). Treat it like a missing path rather than failing the
+			// whole focus rebuild.
+			if strings.Contains(lower, "bad object") && strings.Contains(msg, sha+":"+path) {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("git show %s:%s: %s", sha, path, msg)
 		}
 		return nil, fmt.Errorf("git show %s:%s: %w", sha, path, err)
@@ -964,11 +1137,42 @@ func untrackedFiles() ([]FileChange, error) {
 	return untrackedFilesInDir("")
 }
 
-// untrackedFilesInDir returns untracked files, running from the specified directory.
-// git ls-files returns paths relative to cwd, so dir should be the repo root
-// to get repo-root-relative paths.
+// untrackedFilesInDir returns untracked files, running from the specified
+// directory. Start with status's cache-aware normal mode: it reports standalone
+// files exactly and collapses wholly-untracked directories with a trailing slash.
+// Only those directories require the slower full enumeration.
 func untrackedFilesInDir(dir string) ([]FileChange, error) {
-	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	cmd := exec.Command("git", "--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=normal")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
+	if err == nil {
+		changes, needsFullScan := parseNormalUntrackedStatus(out)
+		if !needsFullScan {
+			return changes, nil
+		}
+	}
+	return untrackedFilesFullScanInDir(dir)
+}
+
+func parseNormalUntrackedStatus(out []byte) ([]FileChange, bool) {
+	var changes []FileChange
+	for _, record := range bytes.Split(out, []byte{0}) {
+		if !bytes.HasPrefix(record, []byte("? ")) {
+			continue
+		}
+		path := string(record[2:])
+		if strings.HasSuffix(path, "/") {
+			return nil, true
+		}
+		changes = append(changes, FileChange{Path: path, Status: "untracked"})
+	}
+	return changes, false
+}
+
+func untrackedFilesFullScanInDir(dir string) ([]FileChange, error) {
+	cmd := exec.Command("git", "ls-files", "-z", "--others", "--exclude-standard")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -977,11 +1181,10 @@ func untrackedFilesInDir(dir string) ([]FileChange, error) {
 		return nil, fmt.Errorf("ls-files failed: %w", err)
 	}
 	var changes []FileChange
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
+	for _, path := range bytes.Split(out, []byte{0}) {
+		if len(path) > 0 {
+			changes = append(changes, FileChange{Path: string(path), Status: "untracked"})
 		}
-		changes = append(changes, FileChange{Path: line, Status: "untracked"})
 	}
 	return changes, nil
 }

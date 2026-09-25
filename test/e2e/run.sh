@@ -13,6 +13,7 @@ NOGIT_PORT="${CRIT_TEST_NOGIT_PORT:-3126}"
 MULTI_PORT="${CRIT_TEST_MULTI_PORT:-3127}"
 RANGE_PORT="${CRIT_TEST_RANGE_PORT:-3128}"
 LIVE_PORT="${CRIT_TEST_LIVE_PORT:-3129}"
+PERF_PORT="${CRIT_TEST_PERF_PORT:-3134}"
 
 # Build crit once (skip if CRIT_BIN already points to an existing binary, e.g. CI coverage builds)
 if [ -n "${CRIT_BIN:-}" ] && [ -f "$CRIT_BIN" ]; then
@@ -33,7 +34,7 @@ fi
 (cd "$SCRIPT_DIR" && npx playwright install chromium)
 
 # Kill any stale processes on our test ports before starting fresh
-for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT"; do
+for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT" "$PERF_PORT"; do
   e2e_kill_port "$port"
 done
 
@@ -55,10 +56,12 @@ bash setup-fixtures-range-mode.sh "$RANGE_PORT" &
 RANGE_PID=$!
 bash setup-fixtures-livemode.sh "$LIVE_PORT" &
 LIVE_PID=$!
+bash setup-fixtures-perf.sh "$PERF_PORT" &
+PERF_PID=$!
 
 cleanup() {
-  kill "$GIT_PID" "$GIT2_PID" "$FILE_PID" "$SINGLE_PID" "$NOGIT_PID" "$MULTI_PID" "$RANGE_PID" "$LIVE_PID" 2>/dev/null || true
-  wait "$GIT_PID" "$GIT2_PID" "$FILE_PID" "$SINGLE_PID" "$NOGIT_PID" "$MULTI_PID" "$RANGE_PID" "$LIVE_PID" 2>/dev/null || true
+  kill "$GIT_PID" "$GIT2_PID" "$FILE_PID" "$SINGLE_PID" "$NOGIT_PID" "$MULTI_PID" "$RANGE_PID" "$LIVE_PID" "$PERF_PID" 2>/dev/null || true
+  wait "$GIT_PID" "$GIT2_PID" "$FILE_PID" "$SINGLE_PID" "$NOGIT_PID" "$MULTI_PID" "$RANGE_PID" "$LIVE_PID" "$PERF_PID" 2>/dev/null || true
   # On Git Bash `kill <bash-pid>` doesn't reap the spawned crit.exe child;
   # taskkill /T flushes the whole tree.
   e2e_kill_stray_crit
@@ -67,7 +70,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Wait for servers to be ready
-for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT"; do
+for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT" "$PERF_PORT"; do
   while ! curl -sf "http://localhost:$port/api/session" >/dev/null 2>&1; do
     sleep 0.1
   done
@@ -78,6 +81,16 @@ if [ $# -eq 0 ]; then
   # No args: run all projects in parallel (mobile after git-mode; see below)
   PWLOGS=$(mktemp -d)
   FAILED=0
+
+  # Record each project's real exit code. Playwright exits 0 when a test only
+  # flaked and passed on retry, so the log text alone can't tell a recovered
+  # flake from a hard failure — both print "failed" in the error detail.
+  reap() { # name pid
+    local rc=0
+    wait "$2" || rc=$?
+    echo "$rc" > "$PWLOGS/$1.rc"
+    [ "$rc" -eq 0 ] || FAILED=1
+  }
 
   npx playwright test --project=git-mode --shard=1/2 > "$PWLOGS/git-1.log" 2>&1 &
   PW_GIT1=$!
@@ -95,38 +108,45 @@ if [ $# -eq 0 ]; then
   PW_RANGE=$!
   npx playwright test --project=live-mode > "$PWLOGS/live.log" 2>&1 &
   PW_LIVE=$!
+  npx playwright test --project=perf > "$PWLOGS/perf.log" 2>&1 &
+  PW_PERF=$!
 
   # Mobile shares the git-mode fixture (port 3123) and both projects call
   # DELETE /api/comments in beforeEach, so they must not overlap. Wait for
   # both git-mode shards, then launch mobile against the first fixture.
   # Skip on Windows — touch emulation is a Chromium feature identical across
   # OS, and Windows headless has reliability issues with touchscreen.tap().
-  wait $PW_GIT1 || FAILED=1
-  wait $PW_GIT2 || FAILED=1
+  reap git-1 $PW_GIT1
+  reap git-2 $PW_GIT2
   if [[ "$OSTYPE" != msys && "$OSTYPE" != cygwin ]]; then
     npx playwright test --project=mobile > "$PWLOGS/mobile.log" 2>&1 &
     PW_MOBILE=$!
   fi
 
   # Now wait for everything else.
-  wait $PW_FILE   || FAILED=1
-  wait $PW_SINGLE || FAILED=1
-  wait $PW_NOGIT  || FAILED=1
-  wait $PW_MULTI  || FAILED=1
-  wait $PW_RANGE  || FAILED=1
-  wait $PW_LIVE   || FAILED=1
+  reap file   $PW_FILE
+  reap single $PW_SINGLE
+  reap nogit  $PW_NOGIT
+  reap multi  $PW_MULTI
+  reap range  $PW_RANGE
+  reap live   $PW_LIVE
+  reap perf   $PW_PERF
   if [ -n "${PW_MOBILE:-}" ]; then
-    wait $PW_MOBILE || FAILED=1
+    reap mobile $PW_MOBILE
   fi
 
   # Print results — show summary for passing projects, full output for failures
   for f in "$PWLOGS"/*.log; do
     name=$(basename "$f" .log)
-    if grep -q "failed" "$f"; then
+    rc=$(cat "$PWLOGS/$name.rc" 2>/dev/null || echo 0)
+    if [ "$rc" -ne 0 ]; then
       echo "=== $name (FAILED) ==="
       # Dump the full project log on failure so CI shows every error message
       # (a 30-line tail buries per-test errors when many tests fail).
       cat "$f"
+    elif grep -q "flaky" "$f"; then
+      echo "=== $name (passed, flaky on first attempt) ==="
+      tail -5 "$f"
     else
       echo "=== $name ==="
       tail -5 "$f"

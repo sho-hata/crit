@@ -112,9 +112,17 @@ func init() {
 			IgnorePatterns: sc.IgnorePatterns,
 		})
 	}
+	wirePRResolveHooks()
+}
+
+func wirePRResolveHooks() {
 	focus.SetPRResolveHooks(
-		func(prNum int) (focus.PRResolveInfo, error) {
-			info, err := github.FetchPRByNumber(prNum)
+		func(spec string) (focus.PRResolveInfo, error) {
+			id, err := github.ParsePRSpec(spec)
+			if err != nil {
+				return focus.PRResolveInfo{}, err
+			}
+			info, err := github.FetchPR(id)
 			if err != nil {
 				return focus.PRResolveInfo{}, err
 			}

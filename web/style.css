@@ -453,7 +453,8 @@ body {
   padding: 3px 10px;
 }
 
-.theme-toggle {
+.theme-toggle,
+.ft-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -465,8 +466,10 @@ body {
   color: var(--crit-editor-fg-muted);
   transition: all 0.15s;
 }
-.theme-toggle svg { width: 16px; height: 16px; display: block; }
-.theme-toggle:hover { color: var(--crit-editor-fg); background: var(--crit-editor-bg-hover); }
+.theme-toggle svg,
+.ft-toggle svg { width: 16px; height: 16px; display: block; }
+.theme-toggle:hover,
+.ft-toggle:hover { color: var(--crit-editor-fg); background: var(--crit-editor-bg-hover); }
 
 /* ===== Toast Notifications ===== */
 .toast-container {
@@ -1056,10 +1059,115 @@ body.dragging { user-select: none; cursor: grabbing; }
   margin: 6px 0;
   text-align: center;
   min-height: 60px;
+  position: relative;
 }
 .mermaid svg {
   max-width: 100%;
   height: auto;
+}
+
+/* Expand affordance on rendered diagrams. Always rendered (so keyboard
+   users can Tab to it) but transparent and non-interactive until the
+   diagram is hovered or the button itself takes focus; touch gets an
+   always-visible 44px target. Absolute positioning keeps it out of the
+   document flow, so showing it never shifts diagram layout. */
+.mermaid-expand {
+  display: flex;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--crit-editor-fg-secondary);
+  background: var(--crit-editor-bg-elevated);
+  border: 1px solid var(--crit-border-strong);
+  border-radius: 6px;
+  cursor: pointer;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--crit-dur-fast) var(--crit-ease);
+}
+.mermaid-expand:hover {
+  color: var(--crit-editor-fg);
+  background: var(--crit-editor-bg-hover);
+}
+.mermaid-expand:focus-visible { box-shadow: var(--crit-focus); }
+.line-content.mermaid-block:hover .mermaid-expand,
+.mermaid-expand:focus,
+.mermaid-expand:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (pointer: coarse) {
+  .mermaid-expand {
+    opacity: 1;
+    pointer-events: auto;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ===== Mermaid fullscreen overlay (GitHub-style pan/zoom) ===== */
+.mermaid-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: var(--crit-overlay-bg);
+  z-index: 500;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 16px;
+}
+.mermaid-overlay.active { display: flex; }
+.mermaid-overlay-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--crit-bg-card);
+  border: 1px solid var(--crit-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  box-shadow: var(--crit-shadow);
+}
+.mermaid-overlay-zoom {
+  min-width: 52px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--crit-fg-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.mermaid-overlay-viewport {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  background: var(--crit-editor-bg-card);
+  border: 1px solid var(--crit-border);
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+}
+.mermaid-overlay-viewport.panning { cursor: grabbing; }
+.mermaid-overlay-canvas {
+  transform-origin: 0 0;
+  will-change: transform;
+  width: max-content;
+}
+.mermaid-overlay-canvas svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+@media (max-width: 768px) {
+  .mermaid-overlay { padding: 8px; }
+  .mermaid-overlay-toolbar { flex-wrap: wrap; justify-content: center; }
 }
 
 /* ===== Images ===== */
@@ -1758,10 +1866,9 @@ body.dragging { user-select: none; cursor: grabbing; }
   border-top: 1px solid var(--crit-border);
 }
 
-/* Compact shape: the form already supplies the padding. */
+/* Compact (unfocused): only the input shows; Cancel/Reply appear on expand. */
 .reply-form:not(.expanded) .reply-form-buttons {
-  padding: 8px 0 0;
-  border-top: none;
+  display: none;
 }
 
 .comment-textarea {
@@ -2376,6 +2483,19 @@ textarea.drag-active {
   line-height: 1.4;
   vertical-align: baseline;
 }
+.tip-text a {
+  color: var(--crit-brand);
+  text-decoration: none;
+  border-bottom: 1px solid var(--crit-brand-subtle);
+  transition: color 0.15s, border-color 0.15s;
+}
+.tip-text a:visited {
+  color: var(--crit-brand);
+}
+.tip-text a:hover {
+  color: var(--crit-brand-hover);
+  border-bottom-color: var(--crit-brand-hover);
+}
 
 @keyframes tipFadeIn {
   from { opacity: 0; transform: translateY(4px); }
@@ -2500,8 +2620,10 @@ textarea.drag-active {
   height: 2px;
   background: var(--crit-brand);
   border-radius: 1px;
-  transition: left 0.2s ease, width 0.2s ease;
   pointer-events: none;
+}
+.settings-tab-underline.is-positioned {
+  transition: left 0.2s ease, width 0.2s ease;
 }
 .settings-tab {
   padding: 12px 16px;
@@ -2884,6 +3006,220 @@ body.hide-resolved .comment-block:not(.panel-comment-block):has(.resolved-card) 
   color: var(--crit-editor-fg-muted);
 }
 
+/* Updates tab — compact integration rows expand into the shared command
+   surface. The Crit release card stays open because it has one clear action. */
+.updates-list {
+  border: 1px solid var(--crit-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.updates-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  margin-bottom: 7px;
+}
+.updates-section-head:first-child { margin-top: 0; }
+.updates-section-head .settings-section-label { margin: 0; }
+.updates-section-state {
+  margin-left: auto;
+  color: var(--crit-editor-fg-muted);
+  font-size: 12px;
+}
+.updates-crit-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--crit-border);
+  border-radius: 8px;
+}
+.updates-crit-row--open {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.updates-version {
+  color: var(--crit-editor-fg-muted);
+  font-family: var(--crit-font-mono);
+  font-size: 13px;
+}
+.updates-release-link {
+  margin-left: auto;
+  font-size: 12px;
+}
+.updates-release-notes {
+  color: var(--crit-brand);
+  font-size: 13px;
+  text-decoration: none;
+}
+.updates-release-notes:hover {
+  color: var(--crit-editor-fg);
+  text-decoration: none;
+}
+.updates-crit-row .updates-status { margin-left: auto; }
+.updates-crit-row .updates-release-link + .updates-status { margin-left: 4px; }
+.updates-crit-detail {
+  padding: 9px 12px 9px 52px;
+  border: 1px solid var(--crit-border);
+  border-top: 0;
+  color: var(--crit-editor-fg-secondary);
+  font-size: 13px;
+}
+.updates-crit-detail + .config-card-actions {
+  margin-top: 0;
+  padding: 9px 12px 11px 52px;
+  border: 1px solid var(--crit-border);
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+.updates-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.updates-status--ok { background: var(--crit-green-subtle); color: var(--crit-green); }
+.updates-status--stale { background: var(--crit-yellow-bg); color: var(--crit-yellow); }
+.updates-status--missing { background: var(--crit-brand-bg); color: var(--crit-brand); }
+.updates-status--muted { background: var(--crit-bg-elevated); color: var(--crit-editor-fg-muted); }
+.updates-copy-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--crit-brand);
+  cursor: pointer;
+  font-size: 12px;
+}
+.updates-copy-all:hover { background: var(--crit-brand-subtle); }
+.updates-copy-all svg { width: 13px; height: 13px; }
+.updates-empty {
+  padding: 12px;
+  color: var(--crit-editor-fg-muted);
+  font-size: 13px;
+}
+.updates-list-item + .updates-list-item {
+  border-top: 1px solid var(--crit-border);
+}
+.updates-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--crit-editor-fg);
+  cursor: pointer;
+  text-align: left;
+}
+.updates-row:hover,
+.updates-row[aria-expanded="true"] {
+  background: var(--crit-editor-bg-hover);
+}
+.updates-row:focus-visible {
+  outline: none;
+  box-shadow: inset var(--crit-focus);
+}
+.updates-row-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.updates-crit-row .updates-row-icon--status {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.updates-row-icon--ok {
+  background: var(--crit-green-subtle);
+  color: var(--crit-green);
+}
+.updates-row-icon--warning {
+  background: var(--crit-yellow-bg);
+  color: var(--crit-yellow);
+}
+.updates-agent-icon,
+.updates-agent-icon img,
+.updates-agent-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  object-fit: contain;
+}
+.updates-agent-icon-light { display: none !important; }
+html[data-theme="light"] .updates-agent-icon-dark { display: none !important; }
+html[data-theme="light"] .updates-agent-icon-light { display: block !important; }
+@media (prefers-color-scheme: light) {
+  html:not([data-theme]) .updates-agent-icon-dark { display: none !important; }
+  html:not([data-theme]) .updates-agent-icon-light { display: block !important; }
+}
+.updates-agent-icon--fallback {
+  color: var(--crit-editor-fg-muted);
+}
+.updates-row-name {
+  flex: 0 0 auto;
+  color: var(--crit-editor-fg);
+  font-size: 14px;
+  font-weight: 600;
+}
+.updates-row-preview {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--crit-editor-fg-muted);
+  font-family: var(--crit-font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.updates-row .updates-status { margin-left: auto; }
+.updates-row-detail {
+  padding: 9px 10px 10px;
+}
+.updates-row-note {
+  margin: 2px 0 8px;
+  color: var(--crit-editor-fg-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.updates-command {
+  margin-top: 6px;
+}
+.updates-command-copy {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  place-items: center;
+  border: 1px solid var(--crit-border);
+  color: var(--crit-editor-fg-muted);
+}
+.updates-command-copy:hover {
+  color: var(--crit-editor-fg);
+  border-color: var(--crit-border-strong);
+  background: var(--crit-editor-bg-hover);
+}
+.updates-command-copy svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* Shortcuts table (inside settings panel) */
 .shortcuts-toolbar {
   display: flex;
@@ -3198,10 +3534,20 @@ body.hide-resolved .comment-block:not(.panel-comment-block):has(.resolved-card) 
 .main-layout {
   display: flex;
   min-height: calc(100vh - var(--header-height, 49px));
+  /* Clip the comments panel when it slides past the right edge (margin-right:-W).
+     Without this the off-canvas box extends scrollWidth and shows a horizontal
+     scrollbar. clip (not hidden) avoids creating a scroll container that can
+     break position:sticky descendants. */
+  overflow-x: clip;
 }
 .main-content {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
+  /* Flush-left: when the file tree collapses the content grows into the
+     freed space instead of recentering (dual-edge motion feels uncanny on
+     diffs). margin-right:auto keeps any future max-width cap left-anchored. */
+  margin: 0 auto 0 0;
 }
 
 /* ===== Sidebar Resize Handles ===== */
@@ -3225,9 +3571,29 @@ body.hide-resolved .comment-block:not(.panel-comment-block):has(.resolved-card) 
   background: var(--crit-brand);
   outline: none;
 }
-/* Hide the comments-panel resizer when its panel is hidden. */
+/* Comments panel collapsed — slide off the right edge.
+   margin-right:-W zeros the flex contribution so main-content expands, and
+   parks the box past the container's right edge (mirrored by the file tree's
+   margin-left:-W on the left). .main-layout { overflow-x: clip } prevents that
+   off-canvas box from creating a page scrollbar.
+   (margin-left:-W was tried first; it collapses space without moving the panel,
+   so there was nothing to animate.) */
+.comments-panel-hidden {
+  margin-right: calc(-1 * var(--comments-panel-width, 480px));
+  visibility: hidden;
+}
 .main-layout:has(#commentsPanel.comments-panel-hidden) #commentsPanelResizer {
-  display: none;
+  flex-basis: 0;
+  /* visibility:hidden drops tabindex=0 from the tab order (flex-basis:0 alone does not). */
+  visibility: hidden;
+}
+body.comments-panel-anim .comments-panel {
+  transition: margin-right 0.22s ease, visibility 0.22s;
+}
+body.comments-panel-anim #commentsPanelResizer { transition: flex-basis 0.22s ease; }
+@media (prefers-reduced-motion: reduce) {
+  body.comments-panel-anim .comments-panel,
+  body.comments-panel-anim #commentsPanelResizer { transition: none; }
 }
 /* Suppress text selection and force resize cursor while dragging. */
 body.sidebar-resizing,
@@ -3237,6 +3603,36 @@ body.sidebar-resizing * {
 }
 
 /* ===== File Tree Sidebar ===== */
+/* Collapsed via the header toggle: a negative margin equal to the panel's own
+   width pulls it off the left edge, so animating that one property slides the
+   panel out and expands the content in lockstep. --file-tree-width is written
+   by app.js from the measured width, so the distance tracks a user-resized
+   sidebar. `visibility` is in the transition list on purpose: it interpolates
+   discretely, so the panel stays visible for the whole slide out and reappears
+   instantly on the way back — and once hidden it's out of the tab order. */
+body.file-tree-collapsed .file-tree-panel {
+  margin-left: calc(-1 * var(--file-tree-width, 280px));
+  visibility: hidden;
+}
+body.file-tree-collapsed #fileTreeResizer {
+  flex-basis: 0;
+  /* visibility:hidden drops tabindex=0 from the tab order (flex-basis:0 alone does not). */
+  visibility: hidden;
+}
+/* Transitions only exist after the first user toggle (app.js adds
+   .file-tree-anim on click, never on load) so a collapsed sidebar doesn't
+   animate in on page load. The content's left edge stays put; only the
+   sidebar margin animates, so the diff expands into the freed space. */
+body.file-tree-anim .file-tree-panel {
+  transition: margin-left 0.22s ease, visibility 0.22s;
+}
+body.file-tree-anim #fileTreeResizer { transition: flex-basis 0.22s ease; }
+@media (prefers-reduced-motion: reduce) {
+  body.file-tree-anim .file-tree-panel,
+  body.file-tree-anim #fileTreeResizer { transition: none; }
+}
+#fileTreeToggle .ft-toggle-fill { opacity: 0.35; transition: opacity 0.15s ease; }
+#fileTreeToggle[aria-expanded="false"] .ft-toggle-fill { opacity: 0; }
 .file-tree-panel {
   width: 280px;
   flex-shrink: 0;
@@ -3472,7 +3868,6 @@ body.sidebar-resizing * {
 }
 .comments-panel::-webkit-scrollbar { width: 5px; }
 .comments-panel::-webkit-scrollbar-thumb { background: var(--crit-editor-scrollbar-thumb); border-radius: 3px; }
-.comments-panel-hidden { display: none; }
 
 /* Two-row panel header */
 .comments-panel-header {
@@ -3536,16 +3931,18 @@ body.sidebar-resizing * {
 /* Comments filter — reuses .scope-toggle + .toggle-btn */
 .comments-filter-toggle {
   display: inline-flex;
-  background: var(--crit-editor-bg-elevated);
+  align-items: center;
+  gap: 2px;
+  background: var(--crit-seg-track);
   border: 1px solid var(--crit-border);
-  border-radius: 6px;
-  padding: 2px;
-  gap: 1px;
+  border-radius: 8px;
+  padding: 3px;
 }
 .comments-filter-toggle .toggle-btn {
-  font-size: 11px;
-  padding: 3px 10px;
-  display: flex;
+  font-size: 12px;
+  height: 26px;
+  padding: 0 10px;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
 }
@@ -4074,38 +4471,63 @@ body.sidebar-resizing * {
   color: var(--crit-brand);
 }
 
-/* Shared toggle-btn base (used by file-header-toggle, scope-toggle, diff-mode-toggle) */
+/* Shared toggle-btn base (used by file-header-toggle, scope-toggle, diff-mode-toggle).
+   Segmented control: soft track + lifted active pill. */
 .toggle-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   background: transparent;
-  border: none;
-  border-radius: 0;
-  color: var(--crit-editor-fg-muted);
+  border: 0;
+  border-radius: 6px;
+  color: var(--crit-editor-fg-secondary);
   cursor: pointer;
   font-family: var(--crit-font-body);
-  transition: all 0.15s;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
-.toggle-btn:first-child { border-radius: 4px 0 0 4px; }
-.toggle-btn:last-child { border-radius: 0 4px 4px 0; }
 .toggle-btn.active {
-  background: var(--crit-brand-subtle);
-  color: var(--crit-brand);
+  background: var(--crit-seg-active);
+  color: var(--crit-seg-active-fg);
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px color-mix(in srgb, var(--crit-brand) 22%, transparent);
 }
-.toggle-btn:hover:not(.active):not(:disabled) { background: var(--crit-editor-bg-hover); }
+[data-theme="light"] .toggle-btn.active,
+html[data-theme="light"] .toggle-btn.active {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 1px color-mix(in srgb, var(--crit-brand) 18%, transparent);
+}
+.toggle-btn:hover:not(.active):not(:disabled) {
+  color: var(--crit-editor-fg);
+  background: color-mix(in srgb, var(--crit-editor-fg) 4%, transparent);
+}
+.toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.toggle-btn:focus-visible {
+  outline: 2px solid var(--crit-brand);
+  outline-offset: 1px;
+}
 
 .file-header-toggle {
   display: inline-flex;
-  background: var(--crit-editor-bg);
+  align-items: center;
+  gap: 2px;
+  background: var(--crit-seg-track);
   border: 1px solid var(--crit-border);
-  border-radius: 6px;
-  padding: 2px;
-  gap: 1px;
+  border-radius: 8px;
+  padding: 3px;
   margin-left: 4px;
 }
 .file-header-toggle .toggle-btn {
   font-size: 10px;
-  padding: 2px 8px;
+  height: 22px;
+  padding: 0 8px;
 }
 
 /* Change navigation widget (document view) */
@@ -4144,17 +4566,19 @@ body.sidebar-resizing * {
 /* Scope toggle in header (all/branch/staged/unstaged) */
 .scope-toggle {
   display: inline-flex;
-  background: var(--crit-editor-bg-elevated);
+  align-items: center;
+  gap: 2px;
+  background: var(--crit-seg-track);
   border: 1px solid var(--crit-border);
-  border-radius: 6px;
-  padding: 2px;
-  gap: 1px;
+  border-radius: 8px;
+  padding: 3px;
 }
 .scope-toggle .toggle-btn {
-  font-size: 11px;
-  padding: 3px 10px;
+  font-size: 12px;
+  height: 26px;
+  padding: 0 10px;
 }
-.scope-toggle .toggle-btn:disabled { opacity: 0.35; cursor: default; }
+.scope-toggle .toggle-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* Commit picker (sidebar dropdown) */
 .commit-picker {
@@ -4331,15 +4755,17 @@ body.sidebar-resizing * {
 /* Diff mode toggle in header (split/unified) */
 .diff-mode-toggle {
   display: inline-flex;
-  background: var(--crit-editor-bg-elevated);
+  align-items: center;
+  gap: 2px;
+  background: var(--crit-seg-track);
   border: 1px solid var(--crit-border);
-  border-radius: 6px;
-  padding: 2px;
-  gap: 1px;
+  border-radius: 8px;
+  padding: 3px;
 }
 .diff-mode-toggle .toggle-btn {
-  font-size: 11px;
-  padding: 3px 10px;
+  font-size: 12px;
+  height: 26px;
+  padding: 0 10px;
 }
 
 /* ===== Diff Shared Styles ===== */
@@ -5646,6 +6072,9 @@ body.sidebar-resizing .diff-split-row {
    regardless of viewport, which would otherwise win over the stylesheet. */
 @media (max-width: 768px) {
   .file-tree-panel { display: none !important; }
+  #fileTreeToggle { display: none !important; }
+  /* Story mode reuses the left sidebar toggle for the chapter drawer. */
+  body.crit-story-active #fileTreeToggle { display: flex !important; }
   .sidebar-resize-handle { display: none !important; }
   .comments-panel { display: none !important; }
   .scope-toggle { display: none !important; }
@@ -5825,6 +6254,7 @@ body.sidebar-resizing .diff-split-row {
   }
   .reply-actions button {
     padding: 10px 8px;
+    min-width: 44px;
     min-height: 44px;
   }
   .toc-close {
@@ -5925,7 +6355,8 @@ body.crit-story-active #storyRoot {
   overflow: hidden;
 }
 /* When story view is active, hide the flat file layout + its tree,
-   but keep header, comments panel, PR panel functional. */
+   but keep header, comments panel, PR panel functional.
+   #fileTreeToggle stays visible — it toggles the chapter rail instead. */
 body.crit-story-active #filesContainer,
 body.crit-story-active #reviewConversation,
 body.crit-story-active .file-tree-panel,
@@ -5961,6 +6392,29 @@ body.crit-story-active #branchContext { display: none !important; }
 }
 .crit-story-rail-resizer { display: none; }
 body.crit-story-active .crit-story-rail-resizer { display: block; }
+/* Desktop story: collapse the chapter rail with the same left-edge slide as
+   the file tree. --story-rail-width is measured in app.js. Mobile keeps the
+   existing off-canvas drawer (crit-story-rail-open) instead — these rules MUST
+   stay min-width scoped so a leftover collapsed class can't keep the fixed
+   mobile drawer visibility:hidden under an open scrim. */
+@media (min-width: 769px) {
+  body.crit-story-rail-collapsed .crit-story-rail {
+    margin-left: calc(-1 * var(--story-rail-width, 280px));
+    visibility: hidden;
+  }
+  body.crit-story-rail-collapsed #storyRailResizer {
+    flex-basis: 0;
+    visibility: hidden;
+  }
+  body.story-rail-anim .crit-story-rail {
+    transition: margin-left 0.22s ease, visibility 0.22s;
+  }
+  body.story-rail-anim #storyRailResizer { transition: flex-basis 0.22s ease; }
+  @media (prefers-reduced-motion: reduce) {
+    body.story-rail-anim .crit-story-rail,
+    body.story-rail-anim #storyRailResizer { transition: none; }
+  }
+}
 .crit-story-rail__title { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 2px; }
 .crit-story-rail__title h2 { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 .crit-story-rail__meta { padding: 0 8px 10px; font-size: 11.5px; color: var(--crit-fg-muted); font-variant-numeric: tabular-nums; }
@@ -6250,8 +6704,7 @@ body.crit-story-active .crit-story-rail-resizer { display: block; }
 .crit-story-next.prev .body { margin-right: auto; }
 .crit-story-next.done .idx { color: var(--crit-green); background: var(--crit-badge-resolved-bg); }
 
-/* ---------- Rail toggle (mobile) ---------- */
-.crit-story-rail-toggle { display: none; }
+/* ---------- Rail toggle (mobile drawer) ---------- */
 .crit-story-rail-scrim { display: none; }
 
 /* ---------- Mobile pass ---------- */
@@ -6268,7 +6721,6 @@ body.crit-story-active .crit-story-rail-resizer { display: block; }
     display: none; position: fixed; inset: var(--header-height, 44px) 0 0 0; background: var(--crit-overlay-bg); z-index: 39;
   }
   body.crit-story-rail-open .crit-story-rail-scrim { display: block; }
-  body.crit-story-active .crit-story-rail-toggle { display: inline-flex; }
   .crit-story-pane__inner { padding: 18px 16px 60px; }
   .crit-story-prologue__bullets { grid-template-columns: 1fr; }
   .crit-story-chapter__summary { margin-left: 0; }

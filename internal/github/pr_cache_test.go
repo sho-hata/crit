@@ -2,6 +2,8 @@ package github
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,24 +12,26 @@ import (
 
 // newTestCache builds an isolated cache wired to a counting fetchFn so the
 // production singleton is untouched between tests.
-func newTestCache(fn func(int) (*PRInfo, error)) *prMetadataCache {
+func newTestCache(fn func(ChangeID) (*PRInfo, error)) *prMetadataCache {
 	return &prMetadataCache{
-		entries: make(map[int]*prCacheEntry),
+		entries: make(map[string]*prCacheEntry),
 		cap:     prMetadataCacheCap,
 		fetchFn: fn,
 	}
 }
 
+func numID(n int) ChangeID { return ChangeID{Number: n} }
+
 func TestPRMetadataCache_FirstGetIsMiss(t *testing.T) {
 	t.Parallel()
 
 	var calls int32
-	c := newTestCache(func(num int) (*PRInfo, error) {
+	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
-		return &PRInfo{Number: num, Title: "first"}, nil
+		return &PRInfo{Number: id.Number, Title: "first"}, nil
 	})
 
-	info, err := c.get(42)
+	info, err := c.get(numID(42))
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -43,15 +47,15 @@ func TestPRMetadataCache_SecondGetIsHit(t *testing.T) {
 	t.Parallel()
 
 	var calls int32
-	c := newTestCache(func(num int) (*PRInfo, error) {
+	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
-		return &PRInfo{Number: num}, nil
+		return &PRInfo{Number: id.Number}, nil
 	})
 
-	if _, err := c.get(42); err != nil {
+	if _, err := c.get(numID(42)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.get(42); err != nil {
+	if _, err := c.get(numID(42)); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
@@ -63,15 +67,15 @@ func TestPRMetadataCache_DistinctPRsAreIndependent(t *testing.T) {
 	t.Parallel()
 
 	var calls int32
-	c := newTestCache(func(num int) (*PRInfo, error) {
+	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
-		return &PRInfo{Number: num}, nil
+		return &PRInfo{Number: id.Number}, nil
 	})
 
-	if _, err := c.get(1); err != nil {
+	if _, err := c.get(numID(1)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.get(2); err != nil {
+	if _, err := c.get(numID(2)); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -79,20 +83,47 @@ func TestPRMetadataCache_DistinctPRsAreIndependent(t *testing.T) {
 	}
 }
 
+func TestPRMetadataCache_SameNumberDifferentProjectsAreIndependent(t *testing.T) {
+	t.Parallel()
+
+	var calls int32
+	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
+		atomic.AddInt32(&calls, 1)
+		return &PRInfo{Number: id.Number, URL: "https://github.com/" + id.Project + "/pull/" + strconv.Itoa(id.Number)}, nil
+	})
+
+	a := ChangeID{Number: 1, Project: "org/repo-a"}
+	b := ChangeID{Number: 1, Project: "org/repo-b"}
+	infoA, err := c.get(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoB, err := c.get(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if infoA.URL == infoB.URL {
+		t.Fatalf("same-number PRs in different repos collided: %q", infoA.URL)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("fetchFn calls=%d want 2", got)
+	}
+}
+
 func TestPRMetadataCache_InvalidateRemovesEntry(t *testing.T) {
 	t.Parallel()
 
 	var calls int32
-	c := newTestCache(func(num int) (*PRInfo, error) {
+	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
-		return &PRInfo{Number: num}, nil
+		return &PRInfo{Number: id.Number}, nil
 	})
 
-	if _, err := c.get(42); err != nil {
+	if _, err := c.get(numID(42)); err != nil {
 		t.Fatal(err)
 	}
-	c.invalidate(42)
-	if _, err := c.get(42); err != nil {
+	c.invalidate(numID(42))
+	if _, err := c.get(numID(42)); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -103,8 +134,8 @@ func TestPRMetadataCache_InvalidateRemovesEntry(t *testing.T) {
 func TestPRMetadataCache_InvalidateMissingNumberIsNoOp(t *testing.T) {
 	t.Parallel()
 
-	c := newTestCache(func(int) (*PRInfo, error) { return &PRInfo{}, nil })
-	c.invalidate(99) // must not panic
+	c := newTestCache(func(ChangeID) (*PRInfo, error) { return &PRInfo{}, nil })
+	c.invalidate(numID(99)) // must not panic
 }
 
 func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
@@ -112,19 +143,18 @@ func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
 
 	var calls int32
 	wantErr := errors.New("boom")
-	c := newTestCache(func(num int) (*PRInfo, error) {
+	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
 		if atomic.LoadInt32(&calls) == 1 {
 			return nil, wantErr
 		}
-		return &PRInfo{Number: num}, nil
+		return &PRInfo{Number: id.Number}, nil
 	})
 
-	if _, err := c.get(7); !errors.Is(err, wantErr) {
+	if _, err := c.get(numID(7)); !errors.Is(err, wantErr) {
 		t.Fatalf("first get err=%v want %v", err, wantErr)
 	}
-	// Second call must hit fetchFn again because errors don't populate the cache.
-	info, err := c.get(7)
+	info, err := c.get(numID(7))
 	if err != nil {
 		t.Fatalf("second get: %v", err)
 	}
@@ -136,19 +166,13 @@ func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
 	}
 }
 
-// TestPRMetadataCache_ConcurrentGetSinglePopulation verifies that even if N
-// goroutines race past the initial miss check, only one entry survives in
-// the cache — all callers converge on a single *PRInfo. We tolerate up to N
-// fetchFn invocations (no full singleflight), but post-fetch deduping must
-// hand back the same pointer to every caller.
 func TestPRMetadataCache_ConcurrentGetSinglePopulation(t *testing.T) {
 	t.Parallel()
 
 	var calls int32
-	c := newTestCache(func(num int) (*PRInfo, error) {
+	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
 		atomic.AddInt32(&calls, 1)
-		// Fresh pointer each call — only post-fetch dedupe ensures convergence.
-		return &PRInfo{Number: num, Title: "v"}, nil
+		return &PRInfo{Number: id.Number, Title: "v"}, nil
 	})
 
 	const goroutines = 32
@@ -158,7 +182,7 @@ func TestPRMetadataCache_ConcurrentGetSinglePopulation(t *testing.T) {
 	for i := 0; i < goroutines; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			info, err := c.get(99)
+			info, err := c.get(numID(99))
 			if err != nil {
 				t.Errorf("goroutine %d: %v", idx, err)
 				return
@@ -177,38 +201,73 @@ func TestPRMetadataCache_ConcurrentGetSinglePopulation(t *testing.T) {
 			t.Errorf("goroutine %d returned %p, want %p (all callers must converge)", i, r, first)
 		}
 	}
-	// Cache must hold exactly one entry post-race.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.entries) != 1 {
 		t.Errorf("entries=%d want 1", len(c.entries))
 	}
-	if c.entries[99].data != first {
-		t.Errorf("cached entry %p != returned %p", c.entries[99].data, first)
+	if c.entries["99"].data != first {
+		t.Errorf("cached entry %p != returned %p", c.entries["99"].data, first)
 	}
 }
 
-func TestInvalidatePRCache_IgnoresNonPositive(t *testing.T) {
-	// Snapshot then restore the singleton so we don't bleed state into other tests.
+func TestInvalidatePR_DropsProjectQualifiedKey(t *testing.T) {
 	prev := prMetaCache
 	prMetaCache = newPRMetadataCache()
 	t.Cleanup(func() { prMetaCache = prev })
 
-	prMetaCache.entries[1] = &prCacheEntry{data: &PRInfo{Number: 1}, access: time.Now()}
+	id := ChangeID{Number: 1, Project: "org/repo-b"}
+	prMetaCache.entries[prCacheKey(id)] = &prCacheEntry{data: &PRInfo{Number: 1}, access: time.Now()}
+	prMetaCache.entries["1"] = &prCacheEntry{data: &PRInfo{Number: 1, Title: "bare"}, access: time.Now()}
+
+	InvalidatePR(id)
+	if _, ok := prMetaCache.entries[prCacheKey(id)]; ok {
+		t.Error("InvalidatePR failed to drop project-qualified entry")
+	}
+	if _, ok := prMetaCache.entries["1"]; !ok {
+		t.Error("InvalidatePR wrongly dropped bare-number entry")
+	}
+}
+
+func TestInvalidatePRCache_DropsBareAndQualified(t *testing.T) {
+	prev := prMetaCache
+	prMetaCache = newPRMetadataCache()
+	t.Cleanup(func() { prMetaCache = prev })
+
+	id := ChangeID{Number: 7, Project: "org/repo-b", Host: "github.example.com"}
+	prMetaCache.entries[prCacheKey(id)] = &prCacheEntry{data: &PRInfo{Number: 7}, access: time.Now()}
+	prMetaCache.entries["7"] = &prCacheEntry{data: &PRInfo{Number: 7}, access: time.Now()}
+	prMetaCache.entries["8"] = &prCacheEntry{data: &PRInfo{Number: 8}, access: time.Now()}
+
+	InvalidatePRCache(7)
+	if _, ok := prMetaCache.entries[prCacheKey(id)]; ok {
+		t.Error("InvalidatePRCache left project-qualified entry")
+	}
+	if _, ok := prMetaCache.entries["7"]; ok {
+		t.Error("InvalidatePRCache left bare entry")
+	}
+	if _, ok := prMetaCache.entries["8"]; !ok {
+		t.Error("InvalidatePRCache wrongly dropped unrelated PR")
+	}
+}
+
+func TestInvalidatePRCache_IgnoresNonPositive(t *testing.T) {
+	prev := prMetaCache
+	prMetaCache = newPRMetadataCache()
+	t.Cleanup(func() { prMetaCache = prev })
+
+	prMetaCache.entries["1"] = &prCacheEntry{data: &PRInfo{Number: 1}, access: time.Now()}
 	InvalidatePRCache(0)
 	InvalidatePRCache(-5)
-	if _, ok := prMetaCache.entries[1]; !ok {
+	if _, ok := prMetaCache.entries["1"]; !ok {
 		t.Error("InvalidatePRCache(0/-5) wrongly dropped unrelated entries")
 	}
 	InvalidatePRCache(1)
-	if _, ok := prMetaCache.entries[1]; ok {
+	if _, ok := prMetaCache.entries["1"]; ok {
 		t.Error("InvalidatePRCache(1) failed to drop entry")
 	}
 }
 
-// TestFetchPRByNumber_RoutesThroughCache verifies the package-level wiring:
-// fetchPRByNumber consults prMetaCache before invoking fetchPRByNumberFn, so
-// repeated calls with the same number hit `gh` exactly once.
 func TestFetchPRByNumber_RoutesThroughCache(t *testing.T) {
 	var calls int32
 	withFetchPRByNumber(t, func(num int) (*PRInfo, error) {
@@ -217,7 +276,7 @@ func TestFetchPRByNumber_RoutesThroughCache(t *testing.T) {
 	})
 
 	for i := 0; i < 5; i++ {
-		info, err := fetchPRByNumber(100)
+		info, err := FetchPRByNumber(100)
 		if err != nil {
 			t.Fatalf("iter %d: %v", i, err)
 		}
@@ -226,11 +285,11 @@ func TestFetchPRByNumber_RoutesThroughCache(t *testing.T) {
 		}
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Errorf("fetchPRByNumberFn calls=%d want 1 across 5 fetchPRByNumber calls", got)
+		t.Errorf("fetchPRFn calls=%d want 1 across 5 FetchPRByNumber calls", got)
 	}
 
 	InvalidatePRCache(100)
-	if _, err := fetchPRByNumber(100); err != nil {
+	if _, err := FetchPRByNumber(100); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -238,32 +297,34 @@ func TestFetchPRByNumber_RoutesThroughCache(t *testing.T) {
 	}
 }
 
-// TestPRMetadataCache_EvictsOldestWhenFull populates the cache past its cap
-// and verifies that the LRU entry is evicted while the most-recently-touched
-// entries survive.
+func TestFetchPR_RejectsNonPositiveNumber(t *testing.T) {
+	if _, err := FetchPR(ChangeID{}); err == nil || !strings.Contains(err.Error(), "invalid PR number") {
+		t.Fatalf("FetchPR(0) err = %v", err)
+	}
+	if _, err := FetchPR(ChangeID{Number: -1}); err == nil {
+		t.Fatal("FetchPR(-1) unexpectedly succeeded")
+	}
+}
+
 func TestPRMetadataCache_EvictsOldestWhenFull(t *testing.T) {
 	c := &prMetadataCache{
-		entries: make(map[int]*prCacheEntry),
+		entries: make(map[string]*prCacheEntry),
 		cap:     3,
-		fetchFn: func(num int) (*PRInfo, error) { return &PRInfo{Number: num}, nil },
+		fetchFn: func(id ChangeID) (*PRInfo, error) { return &PRInfo{Number: id.Number}, nil },
 	}
 
-	// Fill exactly to cap.
 	for i := 1; i <= 3; i++ {
-		if _, err := c.get(i); err != nil {
+		if _, err := c.get(numID(i)); err != nil {
 			t.Fatal(err)
 		}
-		// Stagger access times so LRU ordering is unambiguous.
 		time.Sleep(2 * time.Millisecond)
 	}
-	// Touch PR 1 so PR 2 becomes the LRU.
-	if _, err := c.get(1); err != nil {
+	if _, err := c.get(numID(1)); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(2 * time.Millisecond)
 
-	// Inserting PR 4 must evict PR 2 (the now-oldest).
-	if _, err := c.get(4); err != nil {
+	if _, err := c.get(numID(4)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -272,18 +333,18 @@ func TestPRMetadataCache_EvictsOldestWhenFull(t *testing.T) {
 	if len(c.entries) != 3 {
 		t.Errorf("entries=%d want 3 (cap)", len(c.entries))
 	}
-	if _, ok := c.entries[2]; ok {
+	if _, ok := c.entries["2"]; ok {
 		t.Errorf("PR 2 should have been evicted (LRU); entries=%v", keys(c.entries))
 	}
-	for _, want := range []int{1, 3, 4} {
+	for _, want := range []string{"1", "3", "4"} {
 		if _, ok := c.entries[want]; !ok {
-			t.Errorf("PR %d should be retained; entries=%v", want, keys(c.entries))
+			t.Errorf("PR %s should be retained; entries=%v", want, keys(c.entries))
 		}
 	}
 }
 
-func keys(m map[int]*prCacheEntry) []int {
-	out := make([]int, 0, len(m))
+func keys(m map[string]*prCacheEntry) []string {
+	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
