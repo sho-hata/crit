@@ -11,7 +11,7 @@ import (
 var publicCommandNames = []string{
 	"install", "config", "check", "pr", "pull",
 	"push", "comment", "comments", "review", "live", "preview", "plan", "story",
-	"stop", "status", "stats", "cleanup",
+	"stop", "status", "resume", "stats", "cleanup",
 }
 
 func TestCommandRegistry_PublicInventory(t *testing.T) {

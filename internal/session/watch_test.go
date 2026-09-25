@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sho-hata/crit/internal/vcs"
 )
 
 // TestWatchFileMtimes_CommentNotLostOnFileChange verifies that a comment added
@@ -142,8 +145,8 @@ func TestWatchFileMtimes_ConcurrentAddDuringChange(t *testing.T) {
 
 // TestCarryForwardAllComments_NoDuplicateOnDisk verifies that carried-forward
 // comments don't produce duplicates when WriteFiles merges with disk state.
-// The old comment ID must be tracked as deleted so mergeFileSnapshotIntoCritJSON
-// skips it, leaving only the new carried-forward copy.
+// The carried comment keeps its ID, so mergeFileSnapshotIntoCritJSON updates
+// that identity in place instead of appending the persisted copy.
 func TestCarryForwardAllComments_NoDuplicateOnDisk(t *testing.T) {
 	t.Parallel()
 
@@ -229,13 +232,13 @@ func TestCarryForwardAllComments_NoDuplicateOnDisk(t *testing.T) {
 	s.carryForwardAllComments()
 	s.mu.Unlock()
 
-	// Verify in-memory state: exactly 1 comment with a NEW id.
+	// Verify in-memory state: exactly 1 comment with its original ID.
 	if len(s.Files[0].Comments) != 1 {
 		t.Fatalf("expected 1 carried-forward comment, got %d", len(s.Files[0].Comments))
 	}
 	carried := s.Files[0].Comments[0]
-	if carried.ID == "c_old1" {
-		t.Error("carried-forward comment should have a new ID")
+	if carried.ID != "c_old1" {
+		t.Errorf("carried-forward comment ID = %q, want c_old1", carried.ID)
 	}
 	if !carried.CarriedForward {
 		t.Error("expected CarriedForward=true")
@@ -337,8 +340,8 @@ func TestCarryForwardComments_NoDuplicateOnDisk(t *testing.T) {
 		t.Fatalf("expected 1 carried-forward comment, got %d", len(s.Files[0].Comments))
 	}
 	carried := s.Files[0].Comments[0]
-	if carried.ID == "c_old_md" {
-		t.Error("carried-forward comment should have a new ID")
+	if carried.ID != "c_old_md" {
+		t.Errorf("carried-forward comment ID = %q, want c_old_md", carried.ID)
 	}
 	// Line 3 in old content ("Step 1") is still line 3 in new content.
 	if carried.StartLine != 3 || carried.EndLine != 3 {
@@ -383,7 +386,7 @@ func TestCarryForwardComment_PreservesQuote(t *testing.T) {
 		},
 	}
 
-	carried := carryForwardComment(old, "c_new", "2026-04-13T11:00:00Z")
+	carried := carryForwardComment(old, "2026-04-13T11:00:00Z")
 
 	if carried.Quote != "the quoted text" {
 		t.Errorf("Quote not preserved: got %q", carried.Quote)
@@ -408,7 +411,7 @@ func TestCarryForwardComment_PreservesGitHubID(t *testing.T) {
 		GitHubID:  12345,
 	}
 
-	carried := carryForwardComment(old, "c_new", "2026-04-13T11:00:00Z")
+	carried := carryForwardComment(old, "2026-04-13T11:00:00Z")
 
 	if carried.GitHubID != 12345 {
 		t.Errorf("GitHubID = %d, want 12345", carried.GitHubID)
@@ -437,7 +440,7 @@ func TestCarryForwardComment_PreservesResolvedRound(t *testing.T) {
 		ReviewRound:   1,
 	}
 
-	carried := carryForwardComment(old, "c_new", "2026-04-13T11:00:00Z")
+	carried := carryForwardComment(old, "2026-04-13T11:00:00Z")
 
 	if !carried.Resolved {
 		t.Error("Resolved not preserved")
@@ -467,7 +470,7 @@ func TestCarryForwardComment_PreservesLastPushedBodyHash(t *testing.T) {
 		LastPushedBodyHash: "abc123def456",
 	}
 
-	carried := carryForwardComment(old, "c_new", "2026-04-13T11:00:00Z")
+	carried := carryForwardComment(old, "2026-04-13T11:00:00Z")
 
 	if carried.GitHubID != 99 {
 		t.Errorf("GitHubID = %d, want 99", carried.GitHubID)
@@ -786,6 +789,92 @@ func TestCarryForward_AnchorEditedInPlaceNotDrifted(t *testing.T) {
 	}
 }
 
+// The agent addressed a wording comment by cutting the clause out of the
+// middle of the line, so the line keeps only its prefix and suffix. LCS still
+// maps it to the same row, so the comment belongs there — a Drifted flag here
+// would also silently drop it from `crit push` to GitLab.
+func TestCarryForward_ClauseDeletedFromMiddleOfLineNotDrifted(t *testing.T) {
+	dir := t.TempDir()
+	tsxPath := filepath.Join(dir, "Routes.tsx")
+	const anchor = `      continue. If this organization has no locations yet,{" "}`
+	oldContent := "<div>\n  Please select a location above to\n" + anchor +
+		"\n  <Link to=\"/admin\">create one here</Link>\n</div>\n"
+	newContent := "<div>\n  Please select a location above to\n" +
+		"      continue.{\" \"}\n" +
+		"  <Link to=\"/admin\">Go to admin to create one</Link>\n</div>\n"
+	writeFile(t, tsxPath, newContent)
+
+	s := &Session{
+		Mode:     "git",
+		RepoRoot: dir,
+		Files: []*FileEntry{
+			{
+				Path:            "Routes.tsx",
+				AbsPath:         tsxPath,
+				Status:          "modified",
+				FileType:        "code",
+				Content:         newContent,
+				PreviousContent: oldContent,
+				Comments:        []Comment{},
+				PreviousComments: []Comment{
+					{
+						ID:        "c_old",
+						StartLine: 3,
+						EndLine:   3,
+						Body:      `Change wording to say "Go to admin to create one"`,
+						Anchor:    anchor,
+						Scope:     "line",
+						CreatedAt: "2026-01-01T00:00:00Z",
+						UpdatedAt: "2026-01-01T00:00:00Z",
+					},
+				},
+			},
+		},
+		roundComplete: make(chan struct{}, 1),
+	}
+
+	s.carryForwardComments()
+
+	if len(s.Files[0].Comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(s.Files[0].Comments))
+	}
+	carried := s.Files[0].Comments[0]
+	if carried.Drifted {
+		t.Error("expected Drifted=false when only a clause was cut from the line")
+	}
+	if carried.StartLine != 3 || carried.EndLine != 3 {
+		t.Errorf("expected line 3, got %d-%d", carried.StartLine, carried.EndLine)
+	}
+}
+
+func TestOneMiddleCut(t *testing.T) {
+	tests := []struct {
+		name  string
+		short string
+		long  string
+		want  bool
+	}{
+		{"single cut from the middle", "abef", "abcdef", true},
+		{"cut leaves only a prefix", "ab", "abcdef", true},
+		{"cut leaves only a suffix", "ef", "abcdef", true},
+		{"empty short", "", "abcdef", true},
+		{"two separate cuts", "abde", "abcdexf", false},
+		{"reordered", "efab", "abcdef", false},
+		{"not shorter", "abcdef", "abcdef", false},
+		{"longer than long", "abcdefg", "abcdef", false},
+		{"multi-byte rune kept whole", "a—f", "a—cdf", true},
+		{"multi-byte rune cut entirely", "af", "a—f", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := oneMiddleCut(tt.short, tt.long); got != tt.want {
+				t.Errorf("oneMiddleCut(%q, %q) = %v, want %v",
+					tt.short, tt.long, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAnchorSimilar(t *testing.T) {
 	t.Parallel()
 
@@ -800,6 +889,16 @@ func TestAnchorSimilar(t *testing.T) {
 		{"appended text", "foo bar baz qux", "foo bar baz", true},
 		{"trimmed text", "foo bar baz", "foo bar baz qux", true},
 		{"minor edit", "the quick brown fox", "the quick brn fox", true},
+		// One contiguous clause was cut from the middle of the line, leaving
+		// the opening and closing text intact. Neither string contains the
+		// other and the edit distance is large, but nothing was reworded.
+		{"one contiguous cut from the middle", `continue.{" "}`, `continue. If this organization has no locations yet,{" "}`, true},
+		{"wrapped at both ends", "if err := doSomething(arg); err != nil {", "doSomething(arg)", true},
+		// Unrelated statements that merely share scattered characters. These
+		// need several separate cuts, so they are not the same line edited.
+		{"scattered chars in unrelated call", "return nil, err", `return fmt.Errorf("failed to open config file %q: %w", path, err)`, false},
+		{"shared prefix different statement", "t.Fatal(err)", `t.Fatalf("unexpected error reading %s: %v", path, err)`, false},
+		{"lock semantics changed", "s.mu.Unlock()", "defer s.mu.RUnlock()", false},
 		{"short anchor not trivially contained", "} else {", "}", false},
 		{"short anchor too generic", "x = foo()", "x = 1", false},
 		{"empty candidate", "", "foo bar", false},
@@ -942,7 +1041,7 @@ func TestCarryForwardComment_PreservesAnchor(t *testing.T) {
 		UpdatedAt: "2026-01-01T00:00:00Z",
 	}
 
-	carried := carryForwardComment(old, "c_new", "2026-01-02T00:00:00Z")
+	carried := carryForwardComment(old, "2026-01-02T00:00:00Z")
 
 	if carried.Anchor != "line10\nline11\nline12" {
 		t.Errorf("Anchor not preserved: got %q", carried.Anchor)
@@ -1426,6 +1525,111 @@ func TestCarryForwardComments_CodeFileOldSidePreservesPosition(t *testing.T) {
 	}
 	if carried.Side != "old" {
 		t.Errorf("Side should be preserved as %q, got %q", "old", carried.Side)
+	}
+}
+
+// Second round bump: the comment already holds round-2 line numbers, so the
+// LCS baseline must be round-2 content, not round-1. The agent rewords the
+// commented line here because that is when the anchor search can no longer
+// rescue a stale line map.
+func TestHandleRoundCompleteGit_BaselineIsPreviousRound(t *testing.T) {
+	dir := t.TempDir()
+	identity := filepath.Join(dir, ".crit")
+	if err := os.MkdirAll(identity, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goPath := filepath.Join(dir, "main.go")
+
+	const anchor = "// TODO: rename this"
+	body := "package main\nfunc A() {}\n" + anchor + "\nfunc B() {}\nfunc C() {}\n"
+	// Round 1: the agent prepends two lines. Anchor 3 -> 5.
+	r2 := "// header one\n// header two\n" + body
+	// Round 2: two more lines, plus the commented line reworded. 5 -> 7.
+	r3 := "// header three\n// header four\n// header one\n// header two\n" +
+		"package main\nfunc A() {}\n" + anchor + " (updated)\nfunc B() {}\nfunc C() {}\n"
+	writeFile(t, goPath, r2)
+
+	first := Comment{
+		ID:        "c_baseline",
+		StartLine: 3,
+		EndLine:   3,
+		Body:      "rename this",
+		Anchor:    anchor,
+		Scope:     "line",
+		CreatedAt: "2026-01-01T00:00:00Z",
+		UpdatedAt: "2026-01-01T00:00:00Z",
+	}
+	seed, err := json.MarshalIndent(CritJSON{
+		Branch:      "feat",
+		ReviewRound: 1,
+		Files:       map[string]CritJSONFile{"main.go": {Status: "modified", Comments: []Comment{first}}},
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(identity, "review.json"), string(seed))
+
+	s := &Session{
+		Mode: "git",
+		VCS: &fakeWatchVCS{
+			currentBranch: "feat",
+			defaultBranch: "main",
+			branchChanges: []vcs.FileChange{{Path: "main.go", Status: "modified"}},
+			diffs:         map[string][]vcs.DiffHunk{"main.go": {{OldStart: 1, NewStart: 1}}},
+		},
+		RepoRoot:       dir,
+		BaseRef:        "main",
+		Branch:         "feat",
+		ReviewFilePath: identity,
+		ReviewRound:    1,
+		subscribers:    make(map[chan SSEEvent]struct{}),
+		Files: []*FileEntry{{
+			Path:     "main.go",
+			AbsPath:  goPath,
+			Status:   "modified",
+			FileType: "code",
+			Content:  body,
+			Comments: []Comment{first},
+		}},
+	}
+
+	s.handleRoundCompleteGit()
+
+	if s.ReviewRound != 2 {
+		t.Fatalf("round 2: ReviewRound = %d, want 2", s.ReviewRound)
+	}
+	got := s.GetComments("main.go")
+	if len(got) != 1 {
+		t.Fatalf("round 2: expected 1 comment, got %d", len(got))
+	}
+	if got[0].StartLine != 5 || got[0].EndLine != 5 {
+		t.Fatalf("round 2: expected line 5, got start=%d end=%d", got[0].StartLine, got[0].EndLine)
+	}
+	if got[0].Drifted {
+		t.Fatal("round 2: anchor untouched, should not be Drifted")
+	}
+
+	writeFile(t, goPath, r3)
+	s.handleRoundCompleteGit()
+
+	if s.ReviewRound != 3 {
+		t.Fatalf("round 3: ReviewRound = %d, want 3", s.ReviewRound)
+	}
+	got = s.GetComments("main.go")
+	if len(got) != 1 {
+		t.Fatalf("round 3: expected 1 comment, got %d", len(got))
+	}
+	if got[0].StartLine != 7 || got[0].EndLine != 7 {
+		lines := strings.Split(strings.TrimSuffix(r3, "\n"), "\n")
+		at := ""
+		if got[0].StartLine >= 1 && got[0].StartLine <= len(lines) {
+			at = lines[got[0].StartLine-1]
+		}
+		t.Errorf("round 3: expected line 7, got start=%d end=%d (renders against %q)",
+			got[0].StartLine, got[0].EndLine, at)
+	}
+	if got[0].Drifted {
+		t.Error("round 3: reworded line is still recognisable, should not be Drifted")
 	}
 }
 

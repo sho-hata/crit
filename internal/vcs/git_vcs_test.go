@@ -252,6 +252,29 @@ func TestReadFileAtSHA_MissingPath(t *testing.T) {
 	}
 }
 
+// TestReadFileAtSHA_SubmoduleGitlink reproduces reading a submodule pointer
+// (gitlink, mode 160000) whose target commit isn't present in this repo's
+// object database — the normal state for a submodule pointer bump when the
+// submodule itself hasn't been fetched/initialized locally. `git show
+// <sha>:<path>` fails with "fatal: bad object <sha>:<path>" in this case,
+// distinct from both the "missing path" and "sha missing entirely" messages
+// already handled below.
+func TestReadFileAtSHA_SubmoduleGitlink(t *testing.T) {
+	dir := initTestRepo(t)
+	const fakeSubmoduleCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	gitT(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+fakeSubmoduleCommit+",mysubmodule")
+	gitT(t, dir, "commit", "-m", "add gitlink")
+	sha := gitT(t, dir, "rev-parse", "HEAD")
+
+	got, err := ReadFileAtSHA(sha, "mysubmodule", dir)
+	if err != nil {
+		t.Fatalf("expected nil error for submodule gitlink, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil bytes for submodule gitlink, got %q", got)
+	}
+}
+
 func TestReadFileAtSHA_InvalidRef(t *testing.T) {
 	t.Parallel()
 

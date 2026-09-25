@@ -124,6 +124,60 @@ func TestRefreshDiffs_SkipsDeletedAndLazyFiles(t *testing.T) {
 	}
 }
 
+// TestRefreshFileList_RenameCarriesComments verifies that when the VCS reports
+// a rename (new path with OldPath pointing at the previous file), comments
+// stored on the old path are migrated to the new FileEntry instead of being
+// dropped or orphaned.
+func TestRefreshFileList_RenameCarriesComments(t *testing.T) {
+	v := &fakeWatchVCS{
+		currentBranch: "feature",
+		defaultBranch: "main",
+		branchChanges: []vcs.FileChange{
+			{Path: "new.go", OldPath: "old.go", Status: "renamed"},
+		},
+	}
+	s := newWatchSession(t, v)
+
+	oldAbs := filepath.Join(s.RepoRoot, "old.go")
+	newAbs := filepath.Join(s.RepoRoot, "new.go")
+	if err := os.WriteFile(oldAbs, []byte("package old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newAbs, []byte("package new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldComment := Comment{ID: "c1", Body: "fix this", StartLine: 1, EndLine: 1, Scope: "line"}
+	s.Files = []*FileEntry{
+		{Path: "old.go", AbsPath: oldAbs, Status: "modified", Comments: []Comment{oldComment}},
+	}
+
+	s.RefreshFileList()
+
+	byPath := make(map[string]*FileEntry, len(s.Files))
+	for _, f := range s.Files {
+		byPath[f.Path] = f
+	}
+
+	newF, ok := byPath["new.go"]
+	if !ok {
+		t.Fatalf("new.go missing from file list; got paths %v", byPath)
+	}
+	if newF.OldPath != "old.go" {
+		t.Errorf("new.go OldPath = %q, want %q", newF.OldPath, "old.go")
+	}
+	if len(newF.Comments) != 1 {
+		t.Fatalf("new.go comments = %d, want 1", len(newF.Comments))
+	}
+	if newF.Comments[0].ID != "c1" {
+		t.Errorf("new.go comment ID = %q, want %q", newF.Comments[0].ID, "c1")
+	}
+
+	if _, ok := byPath["old.go"]; ok {
+		t.Error("old.go should not remain as a separate entry after rename")
+	}
+}
+
 func TestRefreshFileList_AddsAndRemoves(t *testing.T) {
 	t.Parallel()
 
@@ -290,5 +344,122 @@ func TestHandleRoundCompleteGit_AdvancesRoundAndRefreshes(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&v.changedFlsCalls); got == 0 {
 		t.Error("expected RefreshFileList to call ChangedFilesFromBaseInDir")
+	}
+}
+
+func TestHandleRoundCompleteGit_RangeFocusSkipsWorkingTreeRefresh(t *testing.T) {
+	v := &fakeWatchVCS{
+		currentBranch: "feature",
+		defaultBranch: "main",
+		branchChanges: []vcs.FileChange{
+			{Path: "workspace-only.md", Status: "untracked"},
+		},
+		diffs: map[string][]vcs.DiffHunk{
+			"workspace-only.md": {{OldStart: 1, NewStart: 1}},
+		},
+	}
+	s := newWatchSession(t, v)
+	s.Focus = Focus{Kind: FocusRange, BaseSHA: "base", HeadSHA: "head", DiffScope: DiffScopeLayer}
+	prFile := &FileEntry{
+		Path:     "pr-file.md",
+		AbsPath:  filepath.Join(s.RepoRoot, "pr-file.md"),
+		Status:   "modified",
+		Content:  "pr content\n",
+		Comments: []Comment{{ID: "c1", Body: "why?", StartLine: 1, EndLine: 1, Scope: "line"}},
+	}
+	s.Files = []*FileEntry{prFile}
+	if err := os.WriteFile(prFile.AbsPath, []byte("working tree content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.handleRoundCompleteGit()
+
+	if got := atomic.LoadInt32(&v.changedFlsCalls); got != 0 {
+		t.Errorf("ChangedFilesFromBaseInDir called %d times for range focus, want 0", got)
+	}
+	if got := atomic.LoadInt32(&v.diffCalls); got != 0 {
+		t.Errorf("FileDiffUnified called %d times for range focus, want 0", got)
+	}
+	if len(s.Files) != 1 || s.Files[0] != prFile {
+		t.Fatalf("range focus file list changed: %+v", s.Files)
+	}
+	if got := s.Files[0].Content; got != "pr content\n" {
+		t.Errorf("content = %q, want %q (working tree must not overwrite pinned content)", got, "pr content\n")
+	}
+}
+
+func TestHandleRoundCompleteGit_RangeFocusKeepsPinnedRangeInRealGit(t *testing.T) {
+	dir := initTestRepo(t)
+	base := gitT(t, dir, "rev-parse", "HEAD")
+	commitAt(t, dir, "a.txt", "a2\n", "change a")
+	commitAt(t, dir, "b.txt", "b\n", "add b")
+	head := gitT(t, dir, "rev-parse", "HEAD")
+	// Untracked workspace noise: a plain `git diff <base>` would pick it up.
+	writeFile(t, filepath.Join(dir, "workspace-only.md"), "noise\n")
+
+	s := &Session{RepoRoot: dir, OutputDir: dir, VCS: &vcs.GitVCS{}}
+	if err := s.SetFocus(Focus{
+		Kind:      FocusRange,
+		BaseSHA:   base,
+		HeadSHA:   head,
+		DiffScope: DiffScopeLayer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Files) != 2 || s.Files[0].Path != "a.txt" || s.Files[1].Path != "b.txt" {
+		t.Fatalf("round 1 files = %+v, want [a.txt b.txt]", s.Files)
+	}
+
+	s.handleRoundCompleteGit()
+
+	if len(s.Files) != 2 || s.Files[0].Path != "a.txt" || s.Files[1].Path != "b.txt" {
+		t.Errorf("round 2 files = %+v, want [a.txt b.txt] (untracked workspace must not leak)", s.Files)
+	}
+}
+
+// TestRefreshHelpers_RangeFocusNoOp covers the agent-reply path
+// (RefreshFileContent + RefreshFileList + RefreshDiffs) which does not go
+// through handleRoundCompleteGit. Under FocusRange those helpers must not
+// fold working-tree state into the pinned review.
+func TestRefreshHelpers_RangeFocusNoOp(t *testing.T) {
+	v := &fakeWatchVCS{
+		currentBranch: "feature",
+		defaultBranch: "main",
+		branchChanges: []vcs.FileChange{
+			{Path: "workspace-only.md", Status: "untracked"},
+		},
+		diffs: map[string][]vcs.DiffHunk{
+			"workspace-only.md": {{OldStart: 1, NewStart: 1}},
+		},
+	}
+	s := newWatchSession(t, v)
+	s.Focus = Focus{Kind: FocusRange, BaseSHA: "base", HeadSHA: "head", DiffScope: DiffScopeLayer}
+	prFile := &FileEntry{
+		Path:     "pr-file.md",
+		AbsPath:  filepath.Join(s.RepoRoot, "pr-file.md"),
+		Status:   "modified",
+		Content:  "pr content\n",
+		FileHash: fileHash([]byte("pr content\n")),
+	}
+	s.Files = []*FileEntry{prFile}
+	if err := os.WriteFile(prFile.AbsPath, []byte("working tree content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.RefreshFileContent()
+	s.RefreshFileList()
+	s.RefreshDiffs()
+
+	if got := atomic.LoadInt32(&v.changedFlsCalls); got != 0 {
+		t.Errorf("ChangedFilesFromBaseInDir called %d times, want 0", got)
+	}
+	if got := atomic.LoadInt32(&v.diffCalls); got != 0 {
+		t.Errorf("FileDiffUnified called %d times, want 0", got)
+	}
+	if len(s.Files) != 1 || s.Files[0] != prFile {
+		t.Fatalf("file list changed: %+v", s.Files)
+	}
+	if got := s.Files[0].Content; got != "pr content\n" {
+		t.Errorf("content = %q, want %q", got, "pr content\n")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,9 +15,14 @@ import (
 )
 
 // RefreshDiffs re-computes diff hunks for all files.
+// No-op under FocusRange: diffs are pinned to base..head, not the working tree.
 func (s *Session) RefreshDiffs() {
 	// Snapshot file list and baseRef under read lock
 	s.mu.RLock()
+	if s.Focus.Kind == FocusRange {
+		s.mu.RUnlock()
+		return
+	}
 	type fileSnapshot struct {
 		path    string
 		status  string
@@ -74,8 +80,13 @@ func (s *Session) RefreshDiffs() {
 
 // RefreshFileList re-runs ChangedFiles and updates the session's file list.
 // New files are added, removed files are dropped.
+// No-op under FocusRange: the file list is pinned to base..head, not the working tree.
 func (s *Session) RefreshFileList() {
 	s.mu.RLock()
+	if s.Focus.Kind == FocusRange {
+		s.mu.RUnlock()
+		return
+	}
 	vc := s.VCS
 	s.mu.RUnlock()
 
@@ -116,54 +127,178 @@ func (s *Session) RefreshFileList() {
 		}
 	}
 
-	// Build new file list, doing I/O (os.ReadFile, sha256) without holding the lock.
-	// Status updates for existing entries are deferred to the write-lock section
-	// to avoid racing with concurrent readers.
-	type existingUpdate struct {
-		entry  *FileEntry
-		status string
-	}
-	var newFiles []*FileEntry
-	var updates []existingUpdate
-	for i, fc := range changes {
-		if f, ok := existing[fc.Path]; ok {
-			updates = append(updates, existingUpdate{f, fc.Status})
-			newFiles = append(newFiles, f)
-		} else {
-			absPath := filepath.Join(repoRoot, fc.Path)
-			fe := &FileEntry{
-				Path:     fc.Path,
-				AbsPath:  absPath,
-				Status:   fc.Status,
-				FileType: detectFileType(fc.Path),
-				Comments: []Comment{},
-			}
-
-			// Apply lazy threshold for newly discovered files
-			if len(changes) > lazyFileThreshold && i >= lazyFileThreshold {
-				fe.Lazy = true
-				if ns, ok := numstats[fc.Path]; ok {
-					fe.LazyAdditions = ns.Additions
-					fe.LazyDeletions = ns.Deletions
-				}
-			} else if fc.Status != "deleted" {
-				if data, err := os.ReadFile(absPath); err == nil {
-					fe.Content = string(data)
-					fe.FileHash = fileHash(data)
-				}
-			}
-
-			newFiles = append(newFiles, fe)
-		}
-	}
+	built := buildRefreshedFileList(existing, changes, repoRoot, numstats)
 
 	// Assign under write lock
 	s.mu.Lock()
-	for _, u := range updates {
+	for _, u := range built.updates {
 		u.entry.Status = u.status
+		if u.oldPath != "" {
+			u.entry.OldPath = u.oldPath
+		}
+		if u.newPath != "" {
+			u.entry.Path = u.newPath
+			u.entry.AbsPath = u.absPath
+		}
 	}
-	s.Files = newFiles
+	s.Files = built.files
+	critPath := s.critJSONPath()
 	s.mu.Unlock()
+
+	// Rewrite review-JSON path keys so persisted threads follow the rename
+	// and restoreOrphanedComments does not resurrect a phantom under OldPath.
+	if len(built.renames) > 0 {
+		rewriteReviewJSONRenames(critPath, built.renames)
+	}
+}
+
+// fileListUpdate defers Path/Status/OldPath mutation until the write lock.
+type fileListUpdate struct {
+	entry   *FileEntry
+	status  string
+	oldPath string // set FileEntry.OldPath when non-empty (rename)
+	newPath string // when set, retarget Path/AbsPath (rename handoff)
+	absPath string
+}
+
+type refreshedFileList struct {
+	files   []*FileEntry
+	updates []fileListUpdate
+	renames []pathRename
+}
+
+// buildRefreshedFileList maps VCS changes onto existing FileEntries, carrying
+// comments across renames via OldPath (#917). Pure aside from reading new
+// file contents from disk for newly discovered paths.
+func buildRefreshedFileList(existing map[string]*FileEntry, changes []vcs.FileChange, repoRoot string, numstats map[string]vcs.NumstatEntry) refreshedFileList {
+	var out refreshedFileList
+	for i, fc := range changes {
+		absPath := filepath.Join(repoRoot, fc.Path)
+		if f, ok := existing[fc.Path]; ok {
+			out.updates = append(out.updates, fileListUpdate{entry: f, status: fc.Status, oldPath: fc.OldPath})
+			out.files = append(out.files, f)
+			delete(existing, fc.Path)
+			if fc.OldPath != "" {
+				out.renames = append(out.renames, pathRename{from: fc.OldPath, to: fc.Path})
+				delete(existing, fc.OldPath)
+			}
+			continue
+		}
+		// #917: reuse the pre-rename entry so in-memory comments follow.
+		if fc.OldPath != "" {
+			if old, ok := existing[fc.OldPath]; ok {
+				out.updates = append(out.updates, fileListUpdate{
+					entry:   old,
+					status:  fc.Status,
+					oldPath: fc.OldPath,
+					newPath: fc.Path,
+					absPath: absPath,
+				})
+				out.files = append(out.files, old)
+				delete(existing, fc.OldPath)
+				out.renames = append(out.renames, pathRename{from: fc.OldPath, to: fc.Path})
+				continue
+			}
+			out.renames = append(out.renames, pathRename{from: fc.OldPath, to: fc.Path})
+		}
+
+		fe := &FileEntry{
+			Path:     fc.Path,
+			OldPath:  fc.OldPath,
+			AbsPath:  absPath,
+			Status:   fc.Status,
+			FileType: detectFileType(fc.Path),
+			Comments: []Comment{},
+		}
+
+		if len(changes) > lazyFileThreshold && i >= lazyFileThreshold {
+			fe.Lazy = true
+			if ns, ok := numstats[fc.Path]; ok {
+				fe.LazyAdditions = ns.Additions
+				fe.LazyDeletions = ns.Deletions
+			}
+		} else if fc.Status != "deleted" {
+			if data, err := os.ReadFile(absPath); err == nil {
+				fe.Content = string(data)
+				fe.FileHash = fileHash(data)
+			}
+		}
+
+		out.files = append(out.files, fe)
+	}
+	return out
+}
+
+// pathRename is old→new path for a VCS-reported rename.
+type pathRename struct {
+	from, to string
+}
+
+// rewriteReviewJSONRenames moves CritJSON.Files keys from the pre-rename path
+// to the post-rename path (merging comments if both keys exist). Best-effort:
+// failures leave disk unchanged so a later write can still reconcile.
+func rewriteReviewJSONRenames(critPath string, renames []pathRename) {
+	if critPath == "" || len(renames) == 0 {
+		return
+	}
+	reviewPath := ReviewPathsFor(critPath).Review
+	data, err := os.ReadFile(reviewPath)
+	if err != nil {
+		return
+	}
+	var cj CritJSON
+	if err := json.Unmarshal(data, &cj); err != nil || cj.Files == nil {
+		return
+	}
+	changed := false
+	for _, r := range renames {
+		if r.from == "" || r.to == "" || r.from == r.to {
+			continue
+		}
+		oldFile, hasOld := cj.Files[r.from]
+		if !hasOld {
+			continue
+		}
+		if newFile, hasNew := cj.Files[r.to]; hasNew {
+			cj.Files[r.to] = CritJSONFile{
+				Status:   newFile.Status,
+				FileHash: newFile.FileHash,
+				Comments: mergeCommentSlices(newFile.Comments, oldFile.Comments),
+			}
+		} else {
+			oldFile.Status = "renamed"
+			cj.Files[r.to] = oldFile
+		}
+		delete(cj.Files, r.from)
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	out, err := json.MarshalIndent(cj, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = AtomicWriteFile(reviewPath, out, 0o600)
+}
+
+// mergeCommentSlices appends comments from extra whose IDs are not already in base.
+func mergeCommentSlices(base, extra []Comment) []Comment {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base))
+	for _, c := range base {
+		seen[c.ID] = struct{}{}
+	}
+	out := append([]Comment(nil), base...)
+	for _, c := range extra {
+		if _, ok := seen[c.ID]; ok {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // Watch dispatches to the appropriate file-watching strategy based on session mode.
@@ -228,7 +363,7 @@ func (s *Session) watchGit(stop <-chan struct{}) {
 			s.IncrementEdits()
 			s.notify(SSEEvent{
 				Type:    "edit-detected",
-				Content: fmt.Sprintf("%d", s.GetPendingEdits()),
+				Content: strconv.Itoa(s.GetPendingEdits()),
 			})
 		case <-s.roundComplete:
 			s.handleRoundCompleteGit()
@@ -300,7 +435,7 @@ func (s *Session) watchFileMtimes(stop <-chan struct{}) {
 				s.IncrementEdits()
 				s.notify(SSEEvent{
 					Type:    "edit-detected",
-					Content: fmt.Sprintf("%d", s.GetPendingEdits()),
+					Content: strconv.Itoa(s.GetPendingEdits()),
 				})
 			}
 		case <-s.roundComplete:
@@ -309,15 +444,13 @@ func (s *Session) watchFileMtimes(stop <-chan struct{}) {
 	}
 }
 
-// carryForwardComment builds a fresh Comment for the next review round from
+// carryForwardComment builds a Comment for the next review round from
 // an existing one. It explicitly enumerates every field rather than copying
 // the whole struct so that the set of fields that survive carry-forward is
-// reviewable in one place.
+// reviewable in one place. ID is preserved because it identifies the comment
+// thread for the comment's entire lifetime, including across review rounds.
 //
 // Fields that are intentionally NOT copied (and why):
-//   - ID:             a new ID is minted by the caller (`newID`) so the new round
-//     gets its own identity; `s.trackDeletedComment` records the
-//     old ID so the persisted file does not resurrect both.
 //   - UpdatedAt:      stamped with `now`; carry-forward is itself a new touch.
 //   - CarriedForward: forced to true regardless of the source value.
 //
@@ -325,9 +458,9 @@ func (s *Session) watchFileMtimes(stop <-chan struct{}) {
 // added to Comment and is round-scoped state (resolved metadata, GitHub-sync
 // metadata, focus tags, live-pin identity), it MUST be added here too —
 // otherwise it is silently dropped on round bump.
-func carryForwardComment(old Comment, newID string, now string) Comment {
+func carryForwardComment(old Comment, now string) Comment {
 	c := Comment{
-		ID:          newID,
+		ID:          old.ID,
 		StartLine:   old.StartLine,
 		EndLine:     old.EndLine,
 		Side:        old.Side,
@@ -414,11 +547,8 @@ func (s *Session) carryForwardAllComments() {
 			continue
 		}
 		for _, c := range f.PreviousComments {
-			carried := carryForwardComment(c, RandomCommentID(), now)
+			carried := carryForwardComment(c, now)
 			f.Comments = append(f.Comments, carried)
-			// Track the old ID as deleted so mergeFileSnapshotIntoCritJSON
-			// won't re-add the original from disk alongside the carried-forward copy.
-			s.trackDeletedComment(f.Path, c.ID)
 		}
 	}
 }
@@ -426,7 +556,11 @@ func (s *Session) carryForwardAllComments() {
 // rereadFileContents re-reads all non-deleted files from disk and updates Content/FileHash.
 // If snapshotMarkdown is true, PreviousContent is set before overwriting (for files mode).
 // Must be called with s.mu held for writing.
+// No-op under FocusRange: content is pinned to the head SHA blob, not the working tree.
 func (s *Session) rereadFileContents(snapshotMarkdown bool) {
+	if s.Focus.Kind == FocusRange {
+		return
+	}
 	for _, f := range s.Files {
 		if f.Status == "deleted" || f.Lazy {
 			continue
@@ -460,6 +594,8 @@ func (s *Session) finishRoundComplete(edits int) {
 
 // handleRoundCompleteGit handles round completion in git mode.
 // Re-runs ChangedFiles, re-computes diffs, refreshes file list.
+// Under FocusRange those helpers no-op (pinned to base..head); carry-forward
+// and round advance still run.
 // Must only be called from the single watcher goroutine (watchGit).
 func (s *Session) handleRoundCompleteGit() {
 	s.mu.RLock()
@@ -473,9 +609,12 @@ func (s *Session) handleRoundCompleteGit() {
 
 	// Snapshot PreviousContent before re-reading for all files with comments.
 	// LCS + anchor verification is used for all file types.
+	// Taken every round, not only when unset: the comments loaded above hold
+	// line numbers from the round that just ended, so a frozen baseline would
+	// re-apply every earlier round's delta.
 	s.mu.Lock()
 	for _, f := range s.Files {
-		if f.PreviousContent == "" && len(f.PreviousComments) > 0 {
+		if len(f.PreviousComments) > 0 {
 			f.PreviousContent = f.Content
 		}
 	}
@@ -503,6 +642,12 @@ func (s *Session) handleRoundCompleteGit() {
 	if (rt == "live" || rt == "preview") && s.liveRoundStart != nil {
 		s.liveRoundStart(prev, next)
 	}
+
+	// Persist carried-forward comments + the new review_round before SSE
+	// clients refetch. Without this, disk stays on the prior round and
+	// mergeExternalCritJSON can clobber in-memory remaps with stale
+	// review.json (e.g. after an interrupted agent reconnect).
+	s.persistAfterRoundComplete()
 
 	// Refresh diffs for all files
 	s.RefreshDiffs()
@@ -682,7 +827,22 @@ func (s *Session) handleRoundCompleteFiles() {
 		fmt.Fprintf(os.Stderr, "Warning: write snapshots sidecar: %v\n", err)
 	}
 
+	// Same persist requirement as handleRoundCompleteGit: carried comments
+	// and the bumped review_round must hit review.json before SSE refresh
+	// or mergeExternalCritJSON can see a stale on-disk round.
+	s.persistAfterRoundComplete()
+
 	s.finishRoundComplete(edits)
+}
+
+// persistAfterRoundComplete flushes review.json after a round bump. Failures
+// are logged and do not roll back the in-memory round — mergeExternalCritJSON
+// refuses to apply a disk file whose review_round lags memory, so a transient
+// write error still protects carried-forward comments until the next flush.
+func (s *Session) persistAfterRoundComplete() {
+	if err := s.SyncWriteFiles(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: persist review after round-complete: %v\n", err)
+	}
 }
 
 // emitRoundStatus prints terminal status for a completed round.
@@ -730,6 +890,12 @@ func (s *Session) loadResolvedComments() {
 	for _, f := range s.Files {
 		if cf, ok := cj.Files[f.Path]; ok {
 			f.PreviousComments = cf.Comments
+		} else if f.OldPath != "" {
+			if cf, ok := cj.Files[f.OldPath]; ok {
+				f.PreviousComments = cf.Comments
+			} else {
+				f.PreviousComments = nil
+			}
 		} else {
 			f.PreviousComments = nil
 		}
@@ -835,17 +1001,37 @@ func anchorSimilar(candidate, anchor string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	// Common case: text was appended to or trimmed from the anchor line.
+	// Common case: text was appended to or trimmed from the anchor line, or a
+	// single clause was cut out of its middle — the shapes an agent leaves
+	// when it edits a line in place. Both require the deleted text to be
+	// contiguous, which is what keeps unrelated lines that merely share
+	// scattered characters from matching.
 	// Gate on a minimum length so trivial anchors (`}`, `return nil`) don't
 	// match any longer line that happens to contain them.
-	minLen := len(a)
-	if len(b) < minLen {
-		minLen = len(b)
+	shorter, longer := a, b
+	if len(longer) < len(shorter) {
+		shorter, longer = longer, shorter
 	}
-	if minLen >= 8 && (strings.Contains(a, b) || strings.Contains(b, a)) {
+	if len(shorter) >= 8 && (strings.Contains(longer, shorter) || oneMiddleCut(shorter, longer)) {
 		return true
 	}
 	return levenshteinRatio(a, b) >= 0.7
+}
+
+// oneMiddleCut reports whether short can be produced from long by deleting a
+// single contiguous run from the middle, leaving long's opening and closing
+// text intact. Splits are tried on short's rune boundaries, so a multi-byte
+// rune is either kept whole or removed with the rest of the cut.
+func oneMiddleCut(short, long string) bool {
+	if len(short) >= len(long) {
+		return false
+	}
+	for k := range short {
+		if strings.HasPrefix(long, short[:k]) && strings.HasSuffix(long, short[k:]) {
+			return true
+		}
+	}
+	return strings.HasPrefix(long, short)
 }
 
 // levenshteinRatio returns 1 - (distance / maxLen), clamped to [0, 1].
@@ -995,11 +1181,9 @@ func (s *Session) carryForwardFileComments(f *FileEntry) {
 	f.Comments = preserved
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, c := range prevComments {
-		s.trackDeletedComment(f.Path, c.ID)
-
 		// Live pins use DOMAnchor for positioning; skip line remapping.
 		if c.DOMAnchor != nil {
-			carried := carryForwardComment(c, RandomCommentID(), now)
+			carried := carryForwardComment(c, now)
 			carried.DOMAnchor = c.DOMAnchor
 			f.Comments = append(f.Comments, carried)
 			continue
@@ -1009,11 +1193,11 @@ func (s *Session) carryForwardFileComments(f *FileEntry) {
 		// File-level comments have no line references. Old-side comments
 		// reference the base ref which doesn't change between rounds.
 		if c.Scope == "file" || c.Side == "old" {
-			f.Comments = append(f.Comments, carryForwardComment(c, RandomCommentID(), now))
+			f.Comments = append(f.Comments, carryForwardComment(c, now))
 			continue
 		}
 		newStart, newEnd := remapLines(lineMap, c.StartLine, c.EndLine, newLineCount)
-		carried := carryForwardComment(c, RandomCommentID(), now)
+		carried := carryForwardComment(c, now)
 		carried.StartLine = newStart
 		carried.EndLine = newEnd
 

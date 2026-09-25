@@ -21,11 +21,11 @@ func RequireGH() error {
 }
 
 func FetchPRComments(prNumber int) ([]GhComment, error) {
-	return fetchPRComments(prNumber)
+	return fetchPRComments(ChangeID{Number: prNumber})
 }
 
 func FetchPRThreadResolved(prNumber int) (map[int64]bool, error) {
-	return fetchPRThreadResolved(prNumber)
+	return fetchPRThreadResolved(ChangeID{Number: prNumber})
 }
 
 func MergeGHComments(cj *session.CritJSON, ghComments []GhComment) int {
@@ -41,7 +41,7 @@ func BucketsToGHComments(postable []scopedComment, rewrite bodyRewriter) []map[s
 }
 
 func CreateGHReview(prNumber int, comments []map[string]any, message, event string) (map[string]int64, error) {
-	return createGHReview(prNumber, comments, message, event)
+	return createGHReview(ChangeID{Number: prNumber}, comments, message, event)
 }
 
 func CollectNewRepliesForPush(cf CritJSONFile, rewrite bodyRewriter) []GhReplyForPush {
@@ -49,7 +49,7 @@ func CollectNewRepliesForPush(cf CritJSONFile, rewrite bodyRewriter) []GhReplyFo
 }
 
 func PostPushReplies(prNumber int, allReplies []GhReplyForPush) (map[ReplyKey]int64, int, bool) {
-	return postPushReplies(prNumber, allReplies)
+	return postPushReplies(ChangeID{Number: prNumber}, allReplies)
 }
 
 func ParsePushEvent(flag string) (string, error) {
@@ -107,12 +107,16 @@ func RenderOrphanMarkdown(prNum int, b PushBuckets) string {
 }
 
 // SwapFetchPRByNumberForTest replaces the PR fetch function for the duration of a test.
+// The stub receives the PR number only; Project from ChangeID is ignored (tests that
+// need project-aware stubs should assign fetchPRFn directly).
 func SwapFetchPRByNumberForTest(fn func(int) (*PRInfo, error)) func() {
-	prev := fetchPRByNumberFn
-	fetchPRByNumberFn = fn
+	prev := fetchPRFn
+	fetchPRFn = func(id ChangeID) (*PRInfo, error) {
+		return fn(id.Number)
+	}
 	prMetaCache.reset()
 	return func() {
-		fetchPRByNumberFn = prev
+		fetchPRFn = prev
 		prMetaCache.reset()
 	}
 }

@@ -14,7 +14,8 @@ export async function getReviewFilePath(request: APIRequestContext): Promise<str
   return filePath;
 }
 export async function clearAllComments(request: APIRequestContext) {
-  await request.delete('/api/comments');
+  const response = await request.delete('/api/comments');
+  await expect(response).toBeOK();
 }
 
 /** Commit picker rows excluding the virtual working-tree entry. */
@@ -124,4 +125,27 @@ export async function getMdPath(request: APIRequestContext): Promise<string> {
   const mdFile = session.files.find((f: { path: string }) => f.path.endsWith('.md'));
   expect(mdFile).toBeTruthy();
   return mdFile.path;
+}
+
+// Wait for document scroll height to stop changing (deferred bodies settled,
+// SSE-triggered rebuilds complete, etc.). Polls via requestAnimationFrame and
+// requires the height to be stable across consecutive frames.
+export async function waitForScrollStable(page: Page, { timeout = 5000 } = {}) {
+  await page.waitForFunction(() => {
+    return new Promise<boolean>(resolve => {
+      let lastH = -1;
+      let stableCount = 0;
+      const check = () => {
+        const h = document.documentElement.scrollHeight;
+        if (h === lastH && h > 0) {
+          if (++stableCount >= 3) return resolve(true);
+        } else {
+          stableCount = 0;
+          lastH = h;
+        }
+        requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+    });
+  }, { timeout });
 }

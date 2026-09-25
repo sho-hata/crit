@@ -167,7 +167,7 @@ func resolveUnqualifiedCommentReviewPath(f *commentFlags) error {
 		key = keys[0]
 	}
 	if f.outputDir != "" {
-		f.reviewPath, err = reviewpath.IdentityUnderDataRoot(f.outputDir, key)
+		f.reviewPath, err = reviewpath.Identity(f.outputDir, key)
 		if len(sessions) == 1 {
 			f.sessionEntry = &sessions[0]
 		}
@@ -179,7 +179,7 @@ func resolveUnqualifiedCommentReviewPath(f *commentFlags) error {
 		return nil
 	}
 	if f.configuredOutput != "" {
-		f.reviewPath, err = reviewpath.IdentityUnderDataRoot(f.configuredOutput, key)
+		f.reviewPath, err = reviewpath.Identity(f.configuredOutput, key)
 		return err
 	}
 	f.reviewPath, err = daemon.ReviewFilePath(key)

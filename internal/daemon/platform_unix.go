@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -33,5 +34,14 @@ func terminateProcess(proc *os.Process) error {
 // this is signal-0; on Windows os.FindProcess returns a handle that is alive
 // only while the process exists, so we use a Windows-specific probe.
 func processExists(proc *os.Process) bool {
-	return proc.Signal(syscall.Signal(0)) == nil
+	return signalProbeAlive(proc.Signal(syscall.Signal(0)))
+}
+
+// signalProbeAlive classifies the result of a signal-0 probe. kill(2) reports
+// ESRCH for a PID that does not exist and EPERM for one that exists but may not
+// be signalled, so EPERM still counts as alive. Sandboxes such as pi-sandbox
+// deny signalling the daemon child; treating that as dead starts a duplicate
+// daemon on every review round.
+func signalProbeAlive(err error) bool {
+	return err == nil || errors.Is(err, syscall.EPERM)
 }

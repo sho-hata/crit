@@ -78,6 +78,26 @@ func TestFindStaleReviews(t *testing.T) {
 	}
 }
 
+func TestFindStaleReviews_LargeDayThresholdDoesNotOverflow(t *testing.T) {
+	dir := t.TempDir()
+	cj := CritJSON{
+		Branch:    "thirty-days-old",
+		UpdatedAt: time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339),
+		Files:     map[string]CritJSONFile{},
+	}
+	data, err := json.Marshal(cj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "review.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if stale := findStaleReviews(dir, 36500); len(stale) != 0 {
+		t.Fatalf("30-day-old review should not be stale with a 36,500-day threshold: %+v", stale)
+	}
+}
+
 func TestFindStaleReviews_FolderForm(t *testing.T) {
 	t.Parallel()
 

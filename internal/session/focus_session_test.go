@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -352,6 +354,59 @@ func TestGetFileSnapshot_RangeLazy_UsesHeadSHANotWorkingTree(t *testing.T) {
 	}
 }
 
+// Lazy range files that are submodule gitlinks (mode 160000) must load as
+// empty content, not fail with "not found". Matches the eager-load behavior
+// fixed for PRs with fewer changed files.
+func TestGetFileSnapshot_RangeLazy_SubmoduleGitlink(t *testing.T) {
+	dir := initTestRepo(t)
+	base := gitT(t, dir, "rev-parse", "HEAD")
+
+	// Create threshold eager files, then a submodule gitlink as the first lazy file.
+	for i := 0; i < lazyFileThreshold; i++ {
+		name := fmt.Sprintf("doc%02d.md", i)
+		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# committed %d\n", i))
+	}
+	const lazyPath = "submodule"
+	const fakeSubmoduleCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	writeFile(t, filepath.Join(dir, lazyPath), "") // working tree placeholder
+	gitT(t, dir, "add", ".")
+	gitT(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+fakeSubmoduleCommit+","+lazyPath)
+	gitT(t, dir, "commit", "-m", "add docs and gitlink")
+	head := gitT(t, dir, "rev-parse", "HEAD")
+
+	s := &Session{
+		RepoRoot:  dir,
+		OutputDir: dir,
+		VCS:       &vcs.GitVCS{},
+	}
+	if err := s.SetFocus(Focus{Kind: FocusRange, BaseSHA: base, HeadSHA: head, DiffScope: DiffScopeLayer}); err != nil {
+		t.Fatal(err)
+	}
+
+	var lazyFile *FileEntry
+	for _, f := range s.Files {
+		if f.Path == lazyPath {
+			lazyFile = f
+			break
+		}
+	}
+	if lazyFile == nil || !lazyFile.Lazy {
+		t.Fatalf("expected %s to be lazy, got %+v", lazyPath, lazyFile)
+	}
+
+	snap, ok := s.GetFileSnapshot(lazyPath)
+	if !ok {
+		t.Fatalf("GetFileSnapshot failed; loadErr=%v", lazyFile.loadErr)
+	}
+	content, _ := snap["content"].(string)
+	if content != "" {
+		t.Errorf("expected empty content for gitlink, got %q", content)
+	}
+	if lazyFile.Lazy {
+		t.Fatal("file should no longer be lazy after GetFileSnapshot")
+	}
+}
+
 // Lazy range modified files must load between-SHA diffs, not working-tree diffs.
 func TestGetFileDiffSnapshot_RangeLazy_UsesBetweenSHADiff(t *testing.T) {
 	t.Parallel()
@@ -416,13 +471,15 @@ func TestGetFileDiffSnapshot_RangeLazy_UsesBetweenSHADiff(t *testing.T) {
 	if len(hunks) == 0 {
 		t.Fatal("expected between-SHA hunks for modified lazy file")
 	}
-	joined := ""
+	var sb strings.Builder
 	for _, h := range hunks {
 		for _, l := range h.Lines {
-			joined += l.Content + "\n"
+			sb.WriteString(l.Content)
+			sb.WriteByte('\n')
 		}
 	}
-	if !strings.Contains(joined, "head "+fmt.Sprint(lazyFileThreshold)) {
+	joined := sb.String()
+	if !strings.Contains(joined, "head "+strconv.Itoa(lazyFileThreshold)) {
 		t.Fatalf("hunks missing HeadSHA content; got %q", joined)
 	}
 	if strings.Contains(joined, "dirty") || strings.Contains(joined, "entirely different") {
@@ -548,6 +605,68 @@ func TestEnsureFileLoaded_WorkingTreeLazy(t *testing.T) {
 	}
 	if len(fe.DiffHunks) == 0 {
 		t.Fatal("expected unified new-file hunks for added lazy file")
+	}
+}
+
+// A lazy load and the debounced WriteFiles path both touch a FileEntry's
+// Content/FileHash/DiffHunks/Lazy fields, which is the live daemon state where
+// an /api/file request loads a file while a write timer is armed. Under -race
+// this fails unless both sides go through s.mu.
+func TestEnsureFileLoaded_ConcurrentWithWriteFiles(t *testing.T) {
+	dir := initTestRepo(t)
+
+	var entries []*FileEntry
+	for i := 0; i < 8; i++ {
+		name := fmt.Sprintf("lazy%03d.md", i)
+		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# lazy %d\n", i))
+		entries = append(entries, &FileEntry{
+			Path:     name,
+			AbsPath:  filepath.Join(dir, name),
+			Status:   "added",
+			FileType: "markdown",
+			Lazy:     true,
+		})
+	}
+	gitT(t, dir, "add", ".")
+	gitT(t, dir, "commit", "-m", "add lazy docs")
+	base := gitT(t, dir, "rev-parse", "HEAD")
+
+	s := &Session{
+		Mode:      "git",
+		RepoRoot:  dir,
+		OutputDir: dir,
+		BaseRef:   base,
+		Focus:     Focus{Kind: FocusWorkingTree, BaseRef: base},
+		VCS:       &vcs.GitVCS{},
+		Files:     entries,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			s.WriteFiles()
+		}
+	}()
+	for _, fe := range entries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.ensureFileLoaded(fe); err != nil {
+				t.Errorf("ensureFileLoaded(%s): %v", fe.Path, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	for _, fe := range entries {
+		if fe.Lazy {
+			t.Fatalf("%s still lazy after load", fe.Path)
+		}
+		if fe.Content == "" {
+			t.Fatalf("%s content empty after load", fe.Path)
+		}
 	}
 }
 

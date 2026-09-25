@@ -23,7 +23,7 @@ build-all:
 	GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/crit-windows-arm64.exe ./cmd/crit
 
 update-deps:
-	npm install
+	npm install --ignore-scripts
 	npm run update-deps
 
 test:
@@ -31,6 +31,23 @@ test:
 
 test-frontend:
 	npm run test:frontend
+
+verify-assets:
+	npm run verify-assets:installed
+	npm run update-deps
+	git diff --exit-code -- web/dompurify.min.js web/markdown-it.min.js web/mermaid.min.js web/highlight.min.js web/diff-match-patch.min.js
+
+# Run Go benchmarks locally. Compare against a base with:
+#   git worktree add /tmp/crit-base origin/main
+#   go test -run='^$' -bench=. -benchmem -count=6 ./internal/diff/ ./internal/session/ > old.txt  (in /tmp/crit-base)
+#   go test -run='^$' -bench=. -benchmem -count=6 ./internal/diff/ ./internal/session/ > new.txt  (here)
+#   benchstat old.txt new.txt   (go install golang.org/x/perf/cmd/benchstat@latest)
+bench:
+	go test -run='^$' -bench=. -benchmem -count=6 ./internal/diff/ ./internal/session/
+
+bench-compare:
+	benchstat bench-old.txt bench-new.txt | tee benchstat.txt
+	python3 scripts/bench-compare.py benchstat.txt
 
 setup-hooks:
 	git config core.hooksPath .githooks
@@ -70,4 +87,4 @@ test-preview: build
 	@echo "Starting preview mode with sample page..."
 	./crit preview test/preview-sample/index.html
 
-.PHONY: build build-all generate verify-generate update-deps test test-frontend setup-hooks clean test-diff test-live-cdp e2e-roundtrip test-daemon test-plan-daemon e2e e2e-failed e2e-report e2e-live-utils test-preview
+.PHONY: build build-all generate verify-generate update-deps test test-frontend verify-assets setup-hooks clean test-diff test-live-cdp e2e-roundtrip test-daemon test-plan-daemon e2e e2e-failed e2e-report e2e-live-utils test-preview

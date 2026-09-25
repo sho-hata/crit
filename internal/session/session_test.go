@@ -3,9 +3,13 @@ package session
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -86,10 +90,17 @@ func TestSession_AddComment(t *testing.T) {
 	if c.Body != "Rethink this" {
 		t.Errorf("Body = %q", c.Body)
 	}
+	c2, ok := s.AddComment("plan.md", 2, 2, "", "Another comment", "", "", "")
+	if !ok {
+		t.Fatal("second AddComment failed")
+	}
+	if c.ID == c2.ID {
+		t.Errorf("two comments got the same ID: %q", c.ID)
+	}
 
 	comments := s.GetComments("plan.md")
-	if len(comments) != 1 {
-		t.Errorf("expected 1 comment, got %d", len(comments))
+	if len(comments) != 2 {
+		t.Errorf("expected 2 comments, got %d", len(comments))
 	}
 }
 
@@ -1043,6 +1054,203 @@ func TestGetFileDiffSnapshotScoped_UntrackedFileUnstagedScope(t *testing.T) {
 	if addCount != 3 {
 		t.Errorf("expected 3 added lines, got %d", addCount)
 	}
+}
+
+func TestGetFileDiffSnapshotScoped_UnstagedDeletionHasEmptyContent(t *testing.T) {
+	dir := initTestRepo(t)
+	gitT(t, dir, "checkout", "-b", "feature")
+	path := filepath.Join(dir, "main.go")
+	committedContent := "package main\n\nfunc main() {}\n"
+	writeFile(t, path, committedContent)
+	gitT(t, dir, "add", "main.go")
+	gitT(t, dir, "commit", "-m", "add main")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Session{
+		Mode:     "git",
+		RepoRoot: dir,
+		BaseRef:  "main",
+		VCS:      &vcs.GitVCS{},
+		Files: []*FileEntry{{
+			Path:     "main.go",
+			AbsPath:  path,
+			Status:   "deleted",
+			FileType: "code",
+			Content:  committedContent,
+		}},
+	}
+
+	result, ok := s.GetFileDiffSnapshotScoped("main.go", "unstaged", "", false)
+	if !ok {
+		t.Fatal("expected snapshot")
+	}
+	if result["previous_content"] != committedContent {
+		t.Errorf("previous_content = %q, want index content", result["previous_content"])
+	}
+	if result["content"] != "" {
+		t.Errorf("content = %q, want empty deleted-file content", result["content"])
+	}
+}
+
+func TestGetFileDiffSnapshotScoped_UnstagedRejectsPathOutsideRepo(t *testing.T) {
+	outside := t.TempDir()
+	secret := "outside the repo\n"
+	writeFile(t, filepath.Join(outside, "secret.txt"), secret)
+
+	dir := initTestRepo(t)
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "link.txt")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	rel, err := filepath.Rel(dir, filepath.Join(outside, "secret.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{Mode: "git", RepoRoot: dir, BaseRef: "main", VCS: &vcs.GitVCS{}}
+
+	for _, p := range []string{filepath.ToSlash(rel), "link.txt"} {
+		result, _ := s.GetFileDiffSnapshotScoped(p, "unstaged", "", false)
+		if result["content"] == secret {
+			t.Errorf("path %q: served content from outside the repo", p)
+		}
+	}
+}
+
+// TestGetFileDiffSnapshotScoped_CodeMoveAfterRound_Repro915 reproduces issue #915:
+// after a feedback round moves code around, the staged/unstaged scoped diff must
+// include the content of the revision it is diffed against so the UI can expand
+// context lines correctly. Without that base content, the frontend fills gaps
+// between hunks from the working tree file using line numbers that belong to the
+// index/HEAD, producing a correct changed hunk followed by an incorrect block of
+// unchanged context.
+func TestGetFileDiffSnapshotScoped_CodeMoveAfterRound_Repro915(t *testing.T) {
+	dir := initTestRepo(t)
+	gitT(t, dir, "checkout", "-b", "feature")
+
+	// Round 1: commit a file with helper() above foo().
+	round1 := "package main\n\nfunc helper() {\n\t// helper body\n}\n\nfunc foo() {\n\thelper()\n\t// foo body\n}\n\nfunc bar() {\n\t// bar body\n}\n"
+	writeFile(t, filepath.Join(dir, "main.go"), round1)
+	gitT(t, dir, "add", "main.go")
+	gitT(t, dir, "commit", "-m", "round 1")
+
+	// Round 2: stage a move of helper() below foo(), then add an unstaged tweak
+	// on a different line so the staged diff's new-side line numbers diverge from
+	// the working tree content.
+	round2Staged := "package main\n\nfunc foo() {\n\thelper()\n\t// foo body\n}\n\nfunc helper() {\n\t// helper body\n}\n\nfunc bar() {\n\t// bar body\n}\n"
+	writeFile(t, filepath.Join(dir, "main.go"), round2Staged)
+	gitT(t, dir, "add", "main.go")
+
+	round2Working := "package main\n\nfunc foo() {\n\thelper()\n\t// foo body tweaked\n}\n\nfunc helper() {\n\t// helper body\n}\n\nfunc bar() {\n\t// bar body\n}\n"
+	writeFile(t, filepath.Join(dir, "main.go"), round2Working)
+
+	// Simulate the session state at the end of Round 1.
+	s := &Session{
+		Mode:        "git",
+		RepoRoot:    dir,
+		BaseRef:     "main",
+		VCS:         &vcs.GitVCS{},
+		ReviewRound: 1,
+		subscribers: make(map[chan SSEEvent]struct{}),
+		Files: []*FileEntry{{
+			Path:     "main.go",
+			AbsPath:  filepath.Join(dir, "main.go"),
+			Status:   "added",
+			FileType: "code",
+			Content:  round1,
+			Comments: []Comment{},
+		}},
+	}
+
+	// Round-complete refreshes the file list, content, and cached DiffHunks.
+	s.handleRoundCompleteGit()
+
+	// The hunks themselves must match real git output.
+	for _, scope := range []string{"unstaged", "staged"} {
+		result, ok := s.GetFileDiffSnapshotScoped("main.go", scope, "", false)
+		if !ok {
+			t.Fatalf("scope=%s: expected snapshot", scope)
+		}
+		hunks := result["hunks"].([]vcs.DiffHunk)
+
+		wantHunks, err := vcs.FileDiffScoped("main.go", scope, "main", dir, false)
+		if err != nil {
+			t.Fatalf("scope=%s: real git diff failed: %v", scope, err)
+		}
+		if !hunksEqual(hunks, wantHunks) {
+			t.Errorf("scope=%s: scoped diff does not match real git diff\nscoped: %s\ngit:    %s", scope, formatHunks(hunks), formatHunks(wantHunks))
+		}
+	}
+
+	// Issue #915: scoped diffs must also expose the base content so the frontend
+	// can expand context lines using the correct revision. Without this, the UI
+	// fills small inter-hunk gaps from the working tree file using line numbers
+	// that belong to the index (staged) or HEAD (branch), producing wrong context.
+	stagedResult, ok := s.GetFileDiffSnapshotScoped("main.go", "staged", "", false)
+	if !ok {
+		t.Fatal("scope=staged: expected snapshot")
+	}
+	if stagedResult["previous_content"] != round1 {
+		t.Errorf("scope=staged: expected previous_content to be HEAD (Round 1) content for correct context expansion; got %q", stagedResult["previous_content"])
+	}
+	if stagedResult["content"] != round2Staged {
+		t.Errorf("scope=staged: expected content to be the index (Round 2 staged) content; got %q", stagedResult["content"])
+	}
+
+	unstagedResult, ok := s.GetFileDiffSnapshotScoped("main.go", "unstaged", "", false)
+	if !ok {
+		t.Fatal("scope=unstaged: expected snapshot")
+	}
+	if unstagedResult["previous_content"] != round2Staged {
+		t.Errorf("scope=unstaged: expected previous_content to be index content for correct context expansion; got %q", unstagedResult["previous_content"])
+	}
+	if unstagedResult["content"] != round2Working {
+		t.Errorf("scope=unstaged: expected content to be current worktree content; got %q", unstagedResult["content"])
+	}
+}
+
+// hunksEqual reports whether two parsed hunks slices are equivalent for test
+// assertions (headers, line counts, types, and content).
+func hunksEqual(a, b []vcs.DiffHunk) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Header != b[i].Header || a[i].OldStart != b[i].OldStart || a[i].OldCount != b[i].OldCount || a[i].NewStart != b[i].NewStart || a[i].NewCount != b[i].NewCount {
+			return false
+		}
+		if len(a[i].Lines) != len(b[i].Lines) {
+			return false
+		}
+		for j := range a[i].Lines {
+			if a[i].Lines[j].Type != b[i].Lines[j].Type || a[i].Lines[j].Content != b[i].Lines[j].Content {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// formatHunks renders parsed hunks as a compact string for test failure output.
+func formatHunks(hunks []vcs.DiffHunk) string {
+	var b strings.Builder
+	for _, h := range hunks {
+		b.WriteString(h.Header)
+		b.WriteString("\n")
+		for _, l := range h.Lines {
+			switch l.Type {
+			case "add":
+				b.WriteString("+")
+			case "del":
+				b.WriteString("-")
+			default:
+				b.WriteString(" ")
+			}
+			b.WriteString(l.Content)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 func TestSession_GlobalCommentIDs(t *testing.T) {
@@ -2295,10 +2503,10 @@ func TestCarryForwardComment(t *testing.T) {
 		GitHubID:       98765,
 	}
 
-	carried := carryForwardComment(old, "c42", "2026-02-01T00:00:00Z")
+	carried := carryForwardComment(old, "2026-02-01T00:00:00Z")
 
-	if carried.ID != "c42" {
-		t.Errorf("ID = %q, want c42", carried.ID)
+	if carried.ID != "original-id" {
+		t.Errorf("ID = %q, want original-id", carried.ID)
 	}
 	if carried.StartLine != 5 {
 		t.Errorf("StartLine = %d, want 5", carried.StartLine)
@@ -2405,9 +2613,8 @@ func TestSession_MergeExternalCritJSON_SkippedDuringPendingWrite(t *testing.T) {
 		},
 	}
 	data, _ := json.MarshalIndent(cj, "", "  ")
-	// Touch with different mtime to bypass own-write check
-	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(mustMkdirAll(filepath.Join(dir, ".crit", "review.json")), data, 0644)
+	// Give the external write a deterministic mtime distinct from our own write.
+	overwriteWithNewerMtime(t, filepath.Join(dir, ".crit", "review.json"), data)
 
 	// Merge should be skipped because a write is pending
 	changed := s.mergeExternalCritJSON()
@@ -2451,8 +2658,7 @@ func TestSession_MergeExternalCritJSON_SyncsResolvedState(t *testing.T) {
 		},
 	}
 	data, _ := json.MarshalIndent(cj, "", "  ")
-	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(mustMkdirAll(filepath.Join(dir, ".crit", "review.json")), data, 0644)
+	overwriteWithNewerMtime(t, filepath.Join(dir, ".crit", "review.json"), data)
 
 	changed := s.mergeExternalCritJSON()
 	if !changed {
@@ -2654,8 +2860,7 @@ func TestSession_MergeExternalCritJSON_SyncsUnresolve(t *testing.T) {
 		},
 	}
 	data, _ := json.MarshalIndent(cj, "", "  ")
-	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(mustMkdirAll(filepath.Join(dir, ".crit", "review.json")), data, 0644)
+	overwriteWithNewerMtime(t, filepath.Join(dir, ".crit", "review.json"), data)
 
 	changed := s.mergeExternalCritJSON()
 	if !changed {
@@ -2824,21 +3029,6 @@ func TestCommentCountsIncludeReviewComments(t *testing.T) {
 	}
 	if got := s.UnresolvedCommentCount(); got != 3 {
 		t.Errorf("UnresolvedCommentCount: expected 3, got %d", got)
-	}
-}
-
-func TestClearAllCommentsIncludesReview(t *testing.T) {
-	t.Parallel()
-
-	s := newTestSession(t)
-	s.AddComment("plan.md", 1, 1, "", "line", "", "", "")
-	s.AddReviewComment("review", "", "")
-	s.ClearAllComments()
-	if got := s.TotalCommentCount(); got != 0 {
-		t.Errorf("expected 0 after clear, got %d", got)
-	}
-	if len(s.GetReviewComments()) != 0 {
-		t.Error("expected 0 review comments after clear")
 	}
 }
 
@@ -3117,7 +3307,8 @@ func TestEnsureLoaded(t *testing.T) {
 		t.Fatal("expected no diff hunks before ensureLoaded")
 	}
 
-	err := fe.ensureLoaded(dir, base, nil)
+	s := &Session{RepoRoot: dir}
+	err := fe.ensureLoaded(s, dir, base, nil)
 	if err != nil {
 		t.Fatalf("ensureLoaded failed: %v", err)
 	}
@@ -3136,7 +3327,7 @@ func TestEnsureLoaded(t *testing.T) {
 	}
 
 	// Second call is a no-op (sync.Once)
-	err = fe.ensureLoaded(dir, base, nil)
+	err = fe.ensureLoaded(s, dir, base, nil)
 	if err != nil {
 		t.Fatalf("second ensureLoaded should not fail: %v", err)
 	}
@@ -3150,7 +3341,7 @@ func TestEnsureLoadedNotLazy(t *testing.T) {
 		Content: "already loaded",
 		Lazy:    false,
 	}
-	err := fe.ensureLoaded("/tmp", "abc123", nil)
+	err := fe.ensureLoaded(&Session{}, "/tmp", "abc123", nil)
 	if err != nil {
 		t.Fatalf("ensureLoaded on non-lazy file should be no-op, got: %v", err)
 	}
@@ -3184,6 +3375,11 @@ func TestNewSessionFromGitLazyThreshold(t *testing.T) {
 	origDir, _ := os.Getwd()
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
+	// Isolate git commands from ambient config (e.g. runner-level .gitconfig,
+	// credentials helpers, or external diff tools) that can leak extra files into
+	// the detected change set on CI.
+	t.Setenv("HOME", dir)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 	s, err := NewSessionFromGit(nil)
 	if err != nil {
@@ -3191,7 +3387,17 @@ func TestNewSessionFromGitLazyThreshold(t *testing.T) {
 	}
 
 	if len(s.Files) != 120 {
-		t.Fatalf("expected 120 files, got %d", len(s.Files))
+		want := make(map[string]bool, 120)
+		for i := 0; i < 120; i++ {
+			want[fmt.Sprintf("file%03d.go", i)] = true
+		}
+		var unexpected []string
+		for _, f := range s.Files {
+			if !want[f.Path] {
+				unexpected = append(unexpected, f.Path)
+			}
+		}
+		t.Fatalf("expected 120 files, got %d; unexpected: %v", len(s.Files), unexpected)
 	}
 
 	eagerCount, lazyCount := 0, 0
@@ -3867,6 +4073,9 @@ func TestSession_AddComment_PreservesSideAndQuote(t *testing.T) {
 	if c.Quote != "func main() {}" {
 		t.Errorf("Quote = %q, want func main() {}", c.Quote)
 	}
+	if c.StartLine != 5 || c.EndLine != 10 {
+		t.Errorf("lines = %d-%d, want 5-10", c.StartLine, c.EndLine)
+	}
 	if c.Scope != "line" {
 		t.Errorf("Scope = %q, want line", c.Scope)
 	}
@@ -3918,29 +4127,6 @@ func TestSession_WriteFiles_ReviewCommentsPersisted(t *testing.T) {
 	}
 }
 
-func TestSession_RandomCommentID_Format(t *testing.T) {
-	t.Parallel()
-
-	s := newTestSession(t)
-
-	c, ok := s.AddComment("plan.md", 1, 1, "", "test", "", "", "")
-	if !ok {
-		t.Fatal("AddComment failed")
-	}
-	if !strings.HasPrefix(c.ID, "c_") || len(c.ID) != 8 {
-		t.Errorf("comment ID %q does not match c_XXXXXX format", c.ID)
-	}
-
-	// Two comments should get different IDs
-	c2, ok := s.AddComment("plan.md", 2, 2, "", "test2", "", "", "")
-	if !ok {
-		t.Fatal("AddComment failed")
-	}
-	if c.ID == c2.ID {
-		t.Errorf("two comments got the same ID: %q", c.ID)
-	}
-}
-
 func TestSession_ClearAllComments(t *testing.T) {
 	t.Parallel()
 
@@ -3966,22 +4152,6 @@ func TestSession_ClearAllComments(t *testing.T) {
 	}
 	if s.TotalCommentCount() != 0 {
 		t.Errorf("TotalCommentCount = %d, want 0", s.TotalCommentCount())
-	}
-}
-
-func TestSession_AddComment_WithSide(t *testing.T) {
-	t.Parallel()
-
-	s := newTestSession(t)
-	c, ok := s.AddComment("main.go", 5, 10, "RIGHT", "check this", "", "", "")
-	if !ok {
-		t.Fatal("AddComment with side failed")
-	}
-	if c.Side != "RIGHT" {
-		t.Errorf("Side = %q, want RIGHT", c.Side)
-	}
-	if c.StartLine != 5 || c.EndLine != 10 {
-		t.Errorf("lines = %d-%d, want 5-10", c.StartLine, c.EndLine)
 	}
 }
 
@@ -4626,6 +4796,230 @@ func TestAvailableScopes_NilVCS(t *testing.T) {
 	scopes := availableScopes("main", nil)
 	if len(scopes) != 1 || scopes[0] != "all" {
 		t.Errorf("expected [all] for nil vcs.VCS, got %v", scopes)
+	}
+}
+
+type initialSnapshotVCS struct {
+	vcs.VCS
+	branch          string
+	defaultBranch   string
+	baseRef         string
+	snapshotChanges []vcs.FileChange
+	snapshotScopes  []string
+	snapshotOK      bool
+	snapshotErr     error
+	branchChanges   []vcs.FileChange
+	defaultChanges  []vcs.FileChange
+	branchCalls     int
+	defaultCalls    int
+}
+
+func (f *initialSnapshotVCS) CurrentBranch() string  { return f.branch }
+func (f *initialSnapshotVCS) DefaultBranch() string  { return f.defaultBranch }
+func (f *initialSnapshotVCS) DefaultBaseRef() string { return f.defaultBranch }
+func (f *initialSnapshotVCS) MergeBase(string) (string, error) {
+	return f.baseRef, nil
+}
+func (f *initialSnapshotVCS) InitialChangesAndScopes(string, string) ([]vcs.FileChange, []string, bool, error) {
+	return f.snapshotChanges, f.snapshotScopes, f.snapshotOK, f.snapshotErr
+}
+func (f *initialSnapshotVCS) ChangedFilesFromBaseInDir(string, string) ([]vcs.FileChange, error) {
+	f.branchCalls++
+	return f.branchChanges, nil
+}
+func (f *initialSnapshotVCS) ChangedFilesOnDefaultInDir(string) ([]vcs.FileChange, error) {
+	f.defaultCalls++
+	return f.defaultChanges, nil
+}
+
+func TestDetectVCSChangesAndScopesUsesSnapshot(t *testing.T) {
+	fake := &initialSnapshotVCS{
+		branch:          "feature",
+		defaultBranch:   "main",
+		baseRef:         "base",
+		snapshotChanges: []vcs.FileChange{{Path: "snapshot.go", Status: "modified"}},
+		snapshotScopes:  []string{"all", "branch"},
+		snapshotOK:      true,
+	}
+
+	branch, baseRef, resolvedBase, changes, scopes, err := detectVCSChangesAndScopes(fake, t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch != "feature" || baseRef != "base" || resolvedBase != "main" {
+		t.Fatalf("metadata = (%q, %q, %q), want (feature, base, main)", branch, baseRef, resolvedBase)
+	}
+	if want := []vcs.FileChange{{Path: "snapshot.go", Status: "modified"}}; !reflect.DeepEqual(changes, want) {
+		t.Fatalf("changes = %#v, want %#v", changes, want)
+	}
+	if want := []string{"all", "branch"}; !reflect.DeepEqual(scopes, want) {
+		t.Fatalf("scopes = %v, want %v", scopes, want)
+	}
+	if fake.branchCalls != 0 || fake.defaultCalls != 0 {
+		t.Fatalf("fallback calls = (branch: %d, default: %d), want zero", fake.branchCalls, fake.defaultCalls)
+	}
+
+	_, _, _, publicChanges, err := DetectVCSChanges(fake, t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(publicChanges, changes) {
+		t.Fatalf("DetectVCSChanges() changes = %#v, want %#v", publicChanges, changes)
+	}
+}
+
+func TestDetectVCSChangesAndScopesFallsBackWhenSnapshotUnavailable(t *testing.T) {
+	tests := []struct {
+		name             string
+		branch           string
+		defaultBranch    string
+		baseRef          string
+		branchChanges    []vcs.FileChange
+		defaultChanges   []vcs.FileChange
+		wantChanges      []vcs.FileChange
+		wantBranchCalls  int
+		wantDefaultCalls int
+	}{
+		{
+			name:            "feature branch",
+			branch:          "feature",
+			defaultBranch:   "main",
+			baseRef:         "base",
+			branchChanges:   []vcs.FileChange{{Path: "branch.go", Status: "modified"}},
+			wantChanges:     []vcs.FileChange{{Path: "branch.go", Status: "modified"}},
+			wantBranchCalls: 1,
+		},
+		{
+			name:             "default branch",
+			branch:           "main",
+			defaultBranch:    "main",
+			defaultChanges:   []vcs.FileChange{{Path: "working.go", Status: "modified"}},
+			wantChanges:      []vcs.FileChange{{Path: "working.go", Status: "modified"}},
+			wantDefaultCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &initialSnapshotVCS{
+				branch:          tt.branch,
+				defaultBranch:   tt.defaultBranch,
+				baseRef:         tt.baseRef,
+				snapshotChanges: []vcs.FileChange{{Path: "discarded.go", Status: "modified"}},
+				snapshotScopes:  []string{"all", "discarded"},
+				branchChanges:   tt.branchChanges,
+				defaultChanges:  tt.defaultChanges,
+			}
+
+			_, _, _, changes, scopes, err := detectVCSChangesAndScopes(fake, t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(changes, tt.wantChanges) {
+				t.Fatalf("changes = %#v, want %#v", changes, tt.wantChanges)
+			}
+			if scopes != nil {
+				t.Fatalf("scopes = %v, want nil", scopes)
+			}
+			if fake.branchCalls != tt.wantBranchCalls || fake.defaultCalls != tt.wantDefaultCalls {
+				t.Fatalf("fallback calls = (branch: %d, default: %d), want (%d, %d)", fake.branchCalls, fake.defaultCalls, tt.wantBranchCalls, tt.wantDefaultCalls)
+			}
+		})
+	}
+}
+
+func TestDetectVCSChangesAndScopesReturnsSnapshotError(t *testing.T) {
+	fake := &initialSnapshotVCS{
+		branch:        "feature",
+		defaultBranch: "main",
+		baseRef:       "base",
+		snapshotErr:   fmt.Errorf("snapshot failed"),
+	}
+
+	branch, baseRef, resolvedBase, changes, scopes, err := detectVCSChangesAndScopes(fake, t.TempDir(), nil)
+	if err == nil || !strings.Contains(err.Error(), "detecting changes: snapshot failed") {
+		t.Fatalf("error = %v, want wrapped snapshot error", err)
+	}
+	if branch != "" || baseRef != "" || resolvedBase != "" || changes != nil || scopes != nil {
+		t.Fatalf("results = (%q, %q, %q, %#v, %v), want zero values", branch, baseRef, resolvedBase, changes, scopes)
+	}
+	if fake.branchCalls != 0 || fake.defaultCalls != 0 {
+		t.Fatalf("fallback calls = (branch: %d, default: %d), want zero", fake.branchCalls, fake.defaultCalls)
+	}
+}
+
+func TestDetectVCSChangesAndScopesReturnsNoChangedFiles(t *testing.T) {
+	fake := &initialSnapshotVCS{
+		branch:        "main",
+		defaultBranch: "main",
+		snapshotOK:    true,
+	}
+
+	_, _, _, _, _, err := detectVCSChangesAndScopes(fake, t.TempDir(), nil)
+	if !errors.Is(err, ErrNoChangedFiles) {
+		t.Fatalf("error = %v, want ErrNoChangedFiles", err)
+	}
+}
+
+func preserveScopeCache(t *testing.T) {
+	t.Helper()
+	scopeCacheMu.Lock()
+	previousBaseRef := scopeCacheBaseRef
+	previousResult := append([]string(nil), scopeCacheResult...)
+	previousExpiry := scopeCacheExpiry
+	scopeCacheMu.Unlock()
+	t.Cleanup(func() {
+		scopeCacheMu.Lock()
+		scopeCacheBaseRef = previousBaseRef
+		scopeCacheResult = previousResult
+		scopeCacheExpiry = previousExpiry
+		scopeCacheMu.Unlock()
+	})
+}
+
+func TestSeedAvailableScopes(t *testing.T) {
+	preserveScopeCache(t)
+
+	want := []string{"all", "branch", "unstaged"}
+	seedAvailableScopes("base", want)
+	want[1] = "mutated"
+
+	got := cachedAvailableScopes("base", nil)
+	wantCached := []string{"all", "branch", "unstaged"}
+	if !reflect.DeepEqual(got, wantCached) {
+		t.Fatalf("cachedAvailableScopes() = %v, want %v", got, wantCached)
+	}
+}
+
+func TestNewGitSessionReusesInitialScopesThenRefreshes(t *testing.T) {
+	preserveScopeCache(t)
+	dir := initTestRepo(t)
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
+
+	writeFile(t, filepath.Join(dir, "staged.go"), "package staged\n")
+	gitT(t, dir, "add", "staged.go")
+	s, err := NewGitSession(&vcs.GitVCS{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, dir, "commit", "-m", "commit staged file")
+
+	if scopes := s.GetSessionInfo().AvailableScopes; !slices.Contains(scopes, "staged") {
+		t.Fatalf("initial scopes = %v, want staged from startup snapshot", scopes)
+	}
+
+	scopeCacheMu.Lock()
+	scopeCacheExpiry = time.Time{}
+	scopeCacheMu.Unlock()
+	if scopes := s.GetSessionInfo().AvailableScopes; slices.Contains(scopes, "staged") {
+		t.Fatalf("refreshed scopes = %v, staged should reflect current Git state", scopes)
 	}
 }
 
@@ -5618,6 +6012,7 @@ func mapKeys[V any](m map[string]V) []string {
 	for k := range m {
 		out = append(out, k)
 	}
+	sort.Strings(out)
 	return out
 }
 

@@ -11,8 +11,28 @@ judge the patch, or suggest fixes.
 
 ## When to use it
 
-Use story mode for branch, PR, or range reviews where the diff is large enough
-that a thematic overview helps:
+Use story mode for branch, PR, or range reviews where the diff is large
+enough that a thematic overview helps. It is diff-scoped only — not for
+positional file reviews, live, preview, or plan reviews.
+
+### Recommended: `/crit-story` skill
+
+After `crit install <tool>`, invoke the story skill explicitly (for example
+`/crit-story`, `$crit-story`, or `/skill:crit-story`). The agent:
+
+1. Runs `crit story --guide` and `crit story --prep <path>`
+2. Authors `prologue` / `chapters` / `support` JSON
+3. Ingests with `crit story --story-file <path>` and opens the story view
+4. Runs bare `crit` to wait for Finish Review, then addresses comments on
+   source files and loops rounds — the same cycle as `/crit`
+
+Agents must not infer story generation from a generic review or `/crit`
+request — only from an explicit story invoke or a direct ask to generate a
+crit story.
+
+### Alternative: `crit story` + `agent_cmd`
+
+From the terminal (no skill):
 
 ```bash
 crit story
@@ -20,10 +40,7 @@ crit story --pr 123
 crit story --range main..HEAD
 ```
 
-`crit story` is diff-scoped only. It does not run for positional file reviews,
-live reviews, preview reviews, or plan reviews.
-
-By default, `crit story` uses your global `agent_cmd` to author the story,
+This uses your global `agent_cmd` to author the story (separate LLM spend),
 saves it into the existing review JSON, starts or updates the review daemon,
 and opens the browser at the story view.
 
@@ -36,6 +53,22 @@ and opens the browser at the story view.
 `agent_cmd` must be an agentic CLI that can read files from disk. Story
 generation is prompt-by-reference: Crit writes the full prep file to disk and
 tells the agent to read it. The diff is not pasted into the prompt.
+
+## Token cost
+
+Story generation is **LLM-driven exploration**: the agent reads the prep file,
+may open related source for context, and writes the chapter JSON. That uses
+your agent's tokens (in-session with `/crit-story`, or a separate spawn with
+`agent_cmd`). Crit itself does not bill for stories.
+
+Spend depends more on **how complex and multi-theme the change is** — and how
+much the model explores — than on raw file count or diff size. Cost does
+**not** scale linearly with files or lines changed. Tiny diffs are cheap;
+large multi-theme PRs cost more, but two big diffs can land in a similar
+ballpark if exploration depth is similar.
+
+In our experience, complex PRs (~20–50 files, ~2k–5k lines changed) cost about
+**$1–$1.40** with Claude Opus 5 via `/crit-story`.
 
 ## Common commands
 

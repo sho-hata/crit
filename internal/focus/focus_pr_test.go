@@ -7,23 +7,13 @@ import (
 )
 
 func TestResolveFocusFromPR(t *testing.T) {
-	prevFetch := FetchPRByNumberHook
+	prevFetch := FetchPRHook
 	prevStack := IsStackedPRHook
 	t.Cleanup(func() {
-		FetchPRByNumberHook = prevFetch
+		FetchPRHook = prevFetch
 		IsStackedPRHook = prevStack
 	})
 
-	FetchPRByNumberHook = func(prNum int) (PRResolveInfo, error) {
-		return PRResolveInfo{
-			Number:      prNum,
-			Title:       "Test PR",
-			BaseRefOid:  "base1234567890",
-			HeadRefOid:  "head1234567890",
-			BaseRefName: "main",
-			HeadRefName: "feature",
-		}, nil
-	}
 	IsStackedPRHook = func(PRResolveInfo, vcs.VCS) bool { return false }
 
 	dir := vcs.InitTestRepo(t)
@@ -32,9 +22,9 @@ func TestResolveFocusFromPR(t *testing.T) {
 	base := vcs.GitRun(t, dir, "rev-parse", "HEAD")
 	head := vcs.CommitAtForTest(t, dir, "pr.txt", "x", "pr change")
 
-	FetchPRByNumberHook = func(prNum int) (PRResolveInfo, error) {
+	FetchPRHook = func(spec string) (PRResolveInfo, error) {
 		return PRResolveInfo{
-			Number:      prNum,
+			Number:      42,
 			Title:       "Test PR",
 			BaseRefOid:  base,
 			HeadRefOid:  head,
@@ -57,10 +47,10 @@ func TestSetPRResolveHooks(t *testing.T) {
 	t.Parallel()
 
 	SetPRResolveHooks(
-		func(int) (PRResolveInfo, error) { return PRResolveInfo{Number: 1}, nil },
+		func(string) (PRResolveInfo, error) { return PRResolveInfo{Number: 1}, nil },
 		func(PRResolveInfo, vcs.VCS) bool { return true },
 	)
-	if FetchPRByNumberHook == nil || IsStackedPRHook == nil {
+	if FetchPRHook == nil || IsStackedPRHook == nil {
 		t.Fatal("hooks not wired")
 	}
 }

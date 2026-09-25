@@ -35,8 +35,7 @@ Keys worth knowing:
   output <dir>
       Crit data root for reviews. Reviews live in <dir>/reviews/<key>/, keyed
       per working directory and branch, the same layout as the default
-      ~/.crit. A <dir>/.crit folder left over from when output named a single
-      review folder keeps being used, with a warning, until you move it.
+      ~/.crit.
 
   plan_approve_mode <mode>
       Claude Code permission mode to switch to after a plan-hook approval, for
@@ -50,6 +49,10 @@ Keys worth knowing:
   close_on_approve_after_ms <int>
       Auto-close the review tab this many milliseconds after an Approve.
       Global-only. Omit it, or use a negative value, to keep the tab open.
+
+  stale_review_days <int>
+      Delete reviews untouched for this many days in the background sweep
+      that runs when a review starts. Global-only. Defaults to 14.
 
 Run 'crit config --generate' for the full key list with default values.
 `)

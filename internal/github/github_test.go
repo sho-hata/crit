@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sho-hata/crit/internal/daemon"
 	"github.com/sho-hata/crit/internal/review"
 	"github.com/sho-hata/crit/internal/testutil"
 	"github.com/sho-hata/crit/internal/vcs"
@@ -22,17 +21,17 @@ func init() {
 	fetchGHUserName = func(login string) (string, error) { return "", nil }
 }
 
+// outputDataRootIdentity returns the review identity folder under dataRoot,
+// matching review.ResolveReviewPath so fixtures land where production code
+// reads them. When a live daemon owns the test cwd, identityUnderDataRoot
+// prefers that session key over a locally re-derived git-mode key.
 func outputDataRootIdentity(t *testing.T, dataRoot string) string {
 	t.Helper()
-	cwd, err := daemon.ResolvedCWD()
+	path, err := review.ResolveReviewPath(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	branch := ""
-	if vc := vcs.DetectVCS(""); vc != nil {
-		branch = vc.CurrentBranch()
-	}
-	return filepath.Join(dataRoot, "reviews", daemon.SessionKey(cwd, branch, nil))
+	return path
 }
 
 func TestMergeGHComments_BasicConversion(t *testing.T) {
@@ -951,16 +950,7 @@ func TestAddCommentToCritJSON_OutputDir(t *testing.T) {
 		t.Error(".crit.json should not be written to repo root when --output is set")
 	}
 
-	cwd, err := daemon.ResolvedCWD()
-	if err != nil {
-		t.Fatal(err)
-	}
-	branch := ""
-	if vc := vcs.DetectVCS(""); vc != nil {
-		branch = vc.CurrentBranch()
-	}
-	key := daemon.SessionKey(cwd, branch, nil)
-	data, err := os.ReadFile(filepath.Join(outputDir, "reviews", key, "review.json"))
+	data, err := os.ReadFile(filepath.Join(outputDataRootIdentity(t, outputDir), "review.json"))
 	if err != nil {
 		t.Fatalf("expected review under output data root: %v", err)
 	}
@@ -3714,5 +3704,97 @@ func TestMergeGHComments_ThreadResolvedViaReplyID(t *testing.T) {
 	}
 	if c.ResolvedRound != 2 {
 		t.Errorf("ResolvedRound = %d, want 2", c.ResolvedRound)
+	}
+}
+
+func TestShortSHAString(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"abc1234567890", "abc1234"},
+		{"abc1234", "abc1234"},
+		{"ab", "ab"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := shortSHAString(tc.in); got != tc.want {
+				t.Errorf("shortSHAString(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBodyHashAtPush(t *testing.T) {
+	h1 := bodyHashAtPush("hello")
+	h2 := bodyHashAtPush("hello")
+	h3 := bodyHashAtPush("world")
+	if h1 != h2 {
+		t.Errorf("hash not deterministic: %q vs %q", h1, h2)
+	}
+	if h1 == h3 {
+		t.Errorf("different bodies produced same hash: %q", h1)
+	}
+	if len(h1) != 16 {
+		t.Errorf("hash length = %d, want 16", len(h1))
+	}
+}
+
+func TestUpdateCritJSONWithEditedBodies_ExportedWrapper(t *testing.T) {
+	dir := t.TempDir()
+	critPath := filepath.Join(dir, "review.json")
+
+	cj := CritJSON{
+		Files: map[string]CritJSONFile{
+			"a.go": {Comments: []Comment{{
+				ID: "c1", GitHubID: 500, Body: "edited", LastPushedBodyHash: bodyHashAtPush("original"),
+				Replies: []Reply{
+					{ID: "r1", GitHubID: 600, Body: "reply edit", LastPushedBodyHash: bodyHashAtPush("reply orig")},
+				},
+			}}},
+		},
+	}
+	data, err := json.MarshalIndent(cj, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(critPath, data, 0644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	succeeded := []GhEditForPush{
+		{GitHubID: 500, Body: "edited", Path: "a.go"},
+		{GitHubID: 600, Body: "reply edit", IsReply: true},
+	}
+	if err := UpdateCritJSONWithEditedBodies(critPath, succeeded); err != nil {
+		t.Fatalf("UpdateCritJSONWithEditedBodies: %v", err)
+	}
+
+	out, err := os.ReadFile(critPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var got CritJSON
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	c := got.Files["a.go"].Comments[0]
+	if want := bodyHashAtPush("edited"); c.LastPushedBodyHash != want {
+		t.Errorf("comment LastPushedBodyHash=%q, want %q", c.LastPushedBodyHash, want)
+	}
+	if want := bodyHashAtPush("reply edit"); c.Replies[0].LastPushedBodyHash != want {
+		t.Errorf("reply LastPushedBodyHash=%q, want %q", c.Replies[0].LastPushedBodyHash, want)
+	}
+}
+
+func TestPRListCache_CacheHit(t *testing.T) {
+	c := &PRListCache{}
+	c.SeedForTest([]PRSummary{{Number: 1, Title: "Seeded"}})
+	got, err := c.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 1 {
+		t.Errorf("got %+v, want seeded summary", got)
 	}
 }
