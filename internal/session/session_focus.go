@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/pathsafe"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -1026,12 +1028,23 @@ func scopedDiffContents(path, scope, repoRoot, worktreeContent string, v vcs.VCS
 		previousContent, _ = v.FileContentAtRef(path, "HEAD", repoRoot)
 		content, _ = v.FileContentAtRef(path, ":0", repoRoot)
 	case "unstaged":
-		previousContent, _ = v.FileContentAtRef(path, ":0", repoRoot)
-		if data, err := os.ReadFile(filepath.Join(repoRoot, path)); err == nil {
-			content = string(data)
-		} else if os.IsNotExist(err) {
+		// path comes from the ?path= query, so the worktree read must stay
+		// inside repoRoot (symlinks included).
+		resolved, err := pathsafe.ResolveUnder(filepath.Join(repoRoot, filepath.Clean(filepath.FromSlash(path))), repoRoot)
+		switch {
+		case errors.Is(err, pathsafe.ErrNotFound):
 			content = ""
+		case err != nil:
+			return "", worktreeContent, false
+		default:
+			data, err := os.ReadFile(resolved)
+			if err == nil {
+				content = string(data)
+			} else if os.IsNotExist(err) {
+				content = ""
+			}
 		}
+		previousContent, _ = v.FileContentAtRef(path, ":0", repoRoot)
 	default:
 		return "", content, false
 	}

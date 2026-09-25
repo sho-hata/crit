@@ -1094,6 +1094,29 @@ func TestGetFileDiffSnapshotScoped_UnstagedDeletionHasEmptyContent(t *testing.T)
 	}
 }
 
+func TestGetFileDiffSnapshotScoped_UnstagedRejectsPathOutsideRepo(t *testing.T) {
+	outside := t.TempDir()
+	secret := "outside the repo\n"
+	writeFile(t, filepath.Join(outside, "secret.txt"), secret)
+
+	dir := initTestRepo(t)
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "link.txt")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	rel, err := filepath.Rel(dir, filepath.Join(outside, "secret.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{Mode: "git", RepoRoot: dir, BaseRef: "main", VCS: &vcs.GitVCS{}}
+
+	for _, p := range []string{filepath.ToSlash(rel), "link.txt"} {
+		result, _ := s.GetFileDiffSnapshotScoped(p, "unstaged", "", false)
+		if result["content"] == secret {
+			t.Errorf("path %q: served content from outside the repo", p)
+		}
+	}
+}
+
 // TestGetFileDiffSnapshotScoped_CodeMoveAfterRound_Repro915 reproduces issue #915:
 // after a feedback round moves code around, the staged/unstaged scoped diff must
 // include the content of the revision it is diffed against so the UI can expand
