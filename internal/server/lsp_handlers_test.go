@@ -795,6 +795,9 @@ func TestLSPReferencesSortedWithSnippetPeek(t *testing.T) {
 	if !ref.InRepo || !ref.InSession || ref.Line != 3 {
 		t.Errorf("main.go reference = %+v; want in-repo in-session line 3", ref)
 	}
+	if ref.Character != 5 || resp.Locations[1].Character != 16 {
+		t.Errorf("characters = %d, %d; want 5, 16", ref.Character, resp.Locations[1].Character)
+	}
 	// Small files come back whole; the reference's own line must be inside
 	// the peek window so the UI can render a snippet row.
 	idx := ref.Line - ref.PeekStart

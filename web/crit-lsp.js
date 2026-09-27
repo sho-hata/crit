@@ -9,8 +9,8 @@
 // document view (whole file, one .line-block per source line).
 // Definition: Cmd/Ctrl+Click → jump within the review, or a peek popup when
 // the target lives outside the visible diff / session / repo.
-// References: Cmd/Ctrl+Shift+Click → side panel listing every reference,
-// grouped by file; rows jump in-review or open the peek popup.
+// References: Cmd/Ctrl+Shift+Click → inline widget under the clicked line
+// (preview + list grouped by file); double-click / Enter jumps in-review.
 //
 // Dependencies (window.crit.* namespaces read):
 //   - crit.shared (escapeHTML)
@@ -159,6 +159,25 @@
     const idx = loc.line - loc.peek_start;
     if (idx < 0 || idx >= loc.peek.length) return '';
     return loc.peek[idx];
+  }
+
+  // wordAt returns the identifier at (or ending at) UTF-16 offset char, or ''.
+  const IDENT_CHAR = /[\p{L}\p{N}_$]/u;
+  function wordAt(text, char) {
+    if (!text || char < 0 || char > text.length) return '';
+    let start = char;
+    let end = char;
+    while (start > 0 && IDENT_CHAR.test(text[start - 1])) start--;
+    while (end < text.length && IDENT_CHAR.test(text[end])) end++;
+    return text.slice(start, end);
+  }
+
+  // symbolRange returns null unless word sits at character, so an aliased
+  // import or stale column never highlights the wrong text.
+  function symbolRange(lineText, character, word) {
+    if (!word || typeof character !== 'number' || character < 0) return null;
+    if ((lineText || '').substr(character, word.length) !== word) return null;
+    return { start: character, end: character + word.length };
   }
 
   // ===== Controller =====
@@ -700,14 +719,27 @@
     document.addEventListener('keydown', onPeekKeydown, true);
   }
 
-  // ===== References panel =====
+  // ===== References widget =====
 
   function requestReferences(hit, char) {
     const url = '/api/lsp/references?path=' + encodeURIComponent(hit.path) +
       '&line=' + hit.line + '&char=' + char;
+    const word = wordAt(hit.contentEl.textContent, char);
     fetchLocations(url, function (locs, data) {
-      showRefs(locs, !!data.truncated);
+      showRefs(locs, !!data.truncated, { path: hit.path, line: hit.line }, word);
     }, st.refsNotFoundText);
+  }
+
+  // refsAnchorEl finds the element to insert the widget after (split view:
+  // the whole row), or null when the line is not rendered.
+  function refsAnchorEl(at) {
+    const path = CSS.escape(at.path);
+    const side = document.querySelector(
+      '.diff-line[data-diff-file-path="' + path + '"][data-diff-line-num="' + at.line + '"]:not([data-diff-side="old"]), ' +
+      '.diff-split-side[data-diff-file-path="' + path + '"][data-diff-line-num="' + at.line + '"]:not([data-diff-side="old"])');
+    if (side) return side.closest('.diff-split-row') || side;
+    return document.querySelector('.code-document .line-block[data-file-path="' + path + '"]' +
+      '[data-start-line="' + at.line + '"][data-end-line="' + at.line + '"]');
   }
 
   function hideRefs() {
@@ -720,69 +752,189 @@
   }
 
   function onRefsKeydown(e) {
-    // The peek popup (opened from a row) owns Escape while it is visible.
+    const panel = st.refs;
+    if (!panel || !panel.isConnected) {
+      hideRefs();
+      return;
+    }
+    // The peek popup owns Escape while it is visible.
     if (e.key === 'Escape' && !st.peek) {
       e.stopPropagation();
       hideRefs();
+      return;
+    }
+    // Leave keys to the review's shortcuts once focus moves elsewhere.
+    if (!panel.contains(document.activeElement)) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      const next = st.refsActive + (e.key === 'ArrowDown' ? 1 : -1);
+      if (next >= 0 && next < st.refsLocs.length) selectRef(panel, next);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      openRef(st.refsActive);
     }
   }
 
-  // showRefs renders the references side panel: rows grouped by file, each
-  // showing the reference's own source line. Rows inside the review jump to
-  // the diff; everything else opens the peek popup.
-  function showRefs(locs, truncated) {
+  // markSymbol wraps text offsets [start, end) of el in <mark>.
+  function markSymbol(el, range) {
+    if (!range) return;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const r = document.createRange();
+    let pos = 0;
+    let started = false;
+    let node;
+    while ((node = walker.nextNode())) {
+      const len = node.nodeValue.length;
+      if (!started && range.start <= pos + len) {
+        r.setStart(node, range.start - pos);
+        started = true;
+      }
+      if (started && range.end <= pos + len) {
+        r.setEnd(node, range.end - pos);
+        const mark = document.createElement('mark');
+        mark.className = 'lsp-refs-match';
+        mark.appendChild(r.extractContents());
+        r.insertNode(mark);
+        return;
+      }
+      pos += len;
+    }
+  }
+
+  function renderRefPreview(panel, loc) {
+    const title = panel.querySelector('.lsp-refs-where');
+    title.textContent = loc.display_path + ':' + loc.line;
+    const actions = panel.querySelector('.lsp-peek-actions');
+    actions.innerHTML = '';
+    if (loc.in_repo) {
+      const open = document.createElement('a');
+      open.className = 'lsp-peek-open';
+      open.textContent = st.openFullText;
+      open.href = '/files/' + loc.path.split('/').map(encodeURIComponent).join('/');
+      open.target = '_blank';
+      open.rel = 'noopener';
+      actions.appendChild(open);
+    }
+    const body = panel.querySelector('.lsp-refs-preview');
+    if (!loc.peek || loc.peek.length === 0) {
+      body.innerHTML = '<div class="lsp-peek-empty">' + esc(st.noPreviewText) + '</div>';
+      return;
+    }
+    loc.hl = loc.hl || highlightPeek(loc.peek, loc.path);
+    let html = peekNoteHTML(loc, st.localEnvPeekText, esc);
+    for (let i = 0; i < loc.peek.length; i++) {
+      const lineNo = loc.peek_start + i;
+      const cls = 'lsp-peek-line' + (lineNo === loc.line ? ' lsp-peek-target' : '');
+      html += '<div class="' + cls + '"><span class="lsp-peek-num">' + lineNo +
+        '</span><span class="lsp-peek-code">' + loc.hl[i] + '</span></div>';
+    }
+    body.innerHTML = html;
+    const target = body.querySelector('.lsp-peek-target');
+    if (target) {
+      markSymbol(target.querySelector('.lsp-peek-code'),
+        symbolRange(refSnippet(loc), loc.character, st.refsWord));
+      // Scroll the pane only — scrollIntoView would also move the page.
+      body.scrollTop = target.offsetTop - (body.clientHeight - target.offsetHeight) / 2;
+    }
+  }
+
+  function selectRef(panel, idx) {
+    st.refsActive = idx;
+    const prev = panel.querySelector('.lsp-refs-item.active');
+    if (prev) prev.classList.remove('active');
+    const row = panel.querySelector('.lsp-refs-item[data-idx="' + idx + '"]');
+    if (row) {
+      row.classList.add('active');
+      row.scrollIntoView({ block: 'nearest' });
+    }
+    renderRefPreview(panel, st.refsLocs[idx]);
+  }
+
+  // Targets outside the review are already shown in the preview pane.
+  function openRef(idx) {
+    const loc = st.refsLocs && st.refsLocs[idx];
+    if (!loc || !loc.in_session) return;
+    Promise.resolve(st.jumpToLocation(loc)).then(function (handled) {
+      if (!handled) return;
+      hideRefs();
+      // Removing the widget shifts the target when it sat above it.
+      const flashed = document.querySelector('.lsp-jump-flash');
+      if (flashed) flashed.scrollIntoView({ block: 'center', behavior: 'instant' });
+    });
+  }
+
+  function showRefs(locs, truncated, at, word) {
     hideRefs();
     hidePeek();
     const panel = document.createElement('div');
     panel.className = 'lsp-refs';
-    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('role', 'region');
     panel.setAttribute('aria-label', 'References');
-    const title = locs.length + ' ' + (locs.length === 1 ? st.refText : st.refsText) +
+    const count = locs.length + ' ' + (locs.length === 1 ? st.refText : st.refsText) +
       (truncated ? ' ' + st.refsTruncatedText : '');
     let html = '<div class="lsp-peek-header">' +
-      '<span class="lsp-peek-title">' + esc(title) + '</span>' +
+      (word ? '<span class="lsp-refs-symbol">' + esc(word) + '</span>' : '') +
+      '<span class="lsp-refs-count-total">' + esc(count) + '</span>' +
+      '<span class="lsp-peek-title lsp-refs-where"></span>' +
+      '<span class="lsp-peek-actions"></span>' +
       '<button type="button" class="lsp-peek-close" aria-label="Close references">&times;</button>' +
-      '</div><div class="lsp-refs-body">';
+      '</div><div class="lsp-refs-main"><div class="lsp-refs-preview"></div>' +
+      '<div class="lsp-refs-list" role="listbox" tabindex="0" aria-label="References">';
     const groups = groupLocationsByFile(locs);
     for (let g = 0; g < groups.length; g++) {
       const group = groups[g];
-      html += '<div class="lsp-refs-file">' + esc(group.display_path) +
+      html += '<div class="lsp-refs-file" title="' + esc(group.display_path) + '">' +
+        '<span class="lsp-refs-file-name">' + esc(group.display_path) + '</span>' +
         '<span class="lsp-refs-count">' + group.items.length + '</span></div>';
       for (let i = 0; i < group.items.length; i++) {
         const item = group.items[i];
         const snippet = refSnippet(item.loc);
-        // Locations outside the readable roots carry no peek, so say so
-        // rather than rendering a clickable row with an empty code cell.
         // Each row is an isolated line, so highlight it on its own —
         // batching unrelated lines would leak parser state between rows.
         const code = snippet
-          ? '<span class="lsp-peek-code">' + highlightPeek([snippet], item.loc.path)[0] + '</span>'
+          ? '<span class="lsp-peek-code">' + highlightPeek([snippet.trim()], item.loc.path)[0] + '</span>'
           : '<span class="lsp-peek-code lsp-refs-nopreview">' + esc(st.noPreviewText) + '</span>';
-        html += '<button type="button" class="lsp-refs-item" data-idx="' + item.idx + '">' +
-          '<span class="lsp-peek-num">' + item.loc.line + '</span>' + code +
-          '</button>';
+        html += '<div class="lsp-refs-item" role="option" data-idx="' + item.idx + '">' +
+          '<span class="lsp-peek-num">' + item.loc.line + '</span>' + code + '</div>';
       }
     }
-    html += '</div><div class="lsp-peek-hint">' + esc(st.refsHintText) + '</div>';
+    html += '</div></div><div class="lsp-peek-hint">' + esc(st.refsHintText) + '</div>';
     panel.innerHTML = html;
-    document.body.appendChild(panel);
+
+    // Rows are trimmed; shift the column by the dropped indent.
+    const rows = panel.querySelectorAll('.lsp-refs-item');
+    for (let i = 0; i < rows.length; i++) {
+      const loc = locs[parseInt(rows[i].dataset.idx, 10)];
+      const snippet = refSnippet(loc);
+      const indent = snippet.length - snippet.replace(/^\s+/, '').length;
+      markSymbol(rows[i].querySelector('.lsp-peek-code'),
+        symbolRange(snippet.trim(), loc.character - indent, word));
+    }
+
+    const anchor = refsAnchorEl(at);
+    if (anchor) {
+      anchor.after(panel);
+    } else {
+      panel.classList.add('lsp-refs-floating');
+      document.body.appendChild(panel);
+    }
     st.refs = panel;
     st.refsLocs = locs;
+    st.refsWord = word;
+    selectRef(panel, 0);
+    panel.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    panel.querySelector('.lsp-refs-list').focus({ preventScroll: true });
+
     panel.querySelector('.lsp-peek-close').addEventListener('click', hideRefs);
     panel.addEventListener('click', function (e) {
       const row = e.target.closest('.lsp-refs-item');
-      if (!row) return;
-      const loc = st.refsLocs[parseInt(row.dataset.idx, 10)];
-      if (!loc) return;
-      const prev = panel.querySelector('.lsp-refs-item.active');
-      if (prev) prev.classList.remove('active');
-      row.classList.add('active');
-      // In-review rows jump and keep the panel open so the user can walk the
-      // list; everything else falls back to the peek popup.
-      Promise.resolve(loc.in_session ? st.jumpToLocation(loc) : false)
-        .then(function (handled) {
-          if (!handled) showPeek([loc], 0);
-        });
+      if (row) selectRef(panel, parseInt(row.dataset.idx, 10));
+    });
+    panel.addEventListener('dblclick', function (e) {
+      const row = e.target.closest('.lsp-refs-item');
+      if (row) openRef(parseInt(row.dataset.idx, 10));
     });
     document.addEventListener('keydown', onRefsKeydown, true);
   }
@@ -806,7 +958,6 @@
     // so the pending timer would fire past the dedup check.
     clearTimeout(st.hoverTimer);
     if (st.peek && !st.peek.contains(e.target)) hidePeek();
-    if (st.refs && !st.refs.contains(e.target) && !(st.peek && st.peek.contains(e.target))) hideRefs();
     if (st.tooltip && !st.tooltip.hidden && !st.tooltip.contains(e.target)) hideTooltip();
   }
 
@@ -831,7 +982,7 @@
       refText: opts.refText || 'reference',
       refsText: opts.refsText || 'references',
       refsTruncatedText: opts.refsTruncatedText || '(list truncated)',
-      refsHintText: opts.refsHintText || 'Click: jump / preview · Esc: close',
+      refsHintText: opts.refsHintText || 'Click / ↑↓: preview · Double-click / Enter: jump · Esc: close',
       errorText: opts.errorText || 'Language server request failed',
       disabledText: opts.disabledText ||
         'Language server unavailable — hover and go-to-definition paused for 30s',
@@ -852,6 +1003,8 @@
       peek: null,
       refs: null,
       refsLocs: null,
+      refsActive: 0,
+      refsWord: '',
       hoverTimer: 0,
       hoverKey: null,
       inflight: null,
@@ -875,6 +1028,8 @@
     findGapForLine: findGapForLine,
     groupLocationsByFile: groupLocationsByFile,
     refSnippet: refSnippet,
+    wordAt: wordAt,
+    symbolRange: symbolRange,
     makeExtensionMatcher: makeExtensionMatcher,
     hljsLanguageForPath: hljsLanguageForPath,
     composeTooltip: composeTooltip,

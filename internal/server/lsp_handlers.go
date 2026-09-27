@@ -518,7 +518,8 @@ type lspLocationResponse struct {
 	// Path is repo-relative (slash-separated) when InRepo, absolute otherwise.
 	Path        string   `json:"path"`
 	DisplayPath string   `json:"display_path"`
-	Line        int      `json:"line"` // 1-based
+	Line        int      `json:"line"`      // 1-based
+	Character   int      `json:"character"` // 0-based UTF-16
 	InSession   bool     `json:"in_session"`
 	InRepo      bool     `json:"in_repo"`
 	PeekStart   int      `json:"peek_start,omitempty"` // 1-based first line of Peek
@@ -637,7 +638,7 @@ func sortReferences(locations []lsp.Location, sess *Session, rc *rootCache) {
 // LSP root or an installed language's extra roots — there is deliberately no
 // general file-read endpoint behind this.
 func resolveLocation(sess *Session, loc lsp.Location, fullMaxLines, contextLines int, rc *rootCache) lspLocationResponse {
-	out := lspLocationResponse{Line: loc.Line + 1}
+	out := lspLocationResponse{Line: loc.Line + 1, Character: loc.Character}
 
 	kind := rc.classify(loc.Path)
 	if kind == rootRepo {

@@ -6474,61 +6474,115 @@ html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
   color: var(--crit-fg-muted);
 }
 
-/* References panel: right-docked so in-review jumps stay visible while the
-   user walks the list. Reuses .lsp-peek-* header/hint/num/code styles. */
+/* References widget: inline under the clicked line (VS Code peek references). */
 .lsp-refs {
-  position: fixed;
-  z-index: 300;
-  top: 10%;
-  right: 16px;
-  width: min(480px, calc(100vw - 32px));
-  max-height: 72vh;
+  margin: 4px 0 6px;
   display: flex;
   flex-direction: column;
   background: var(--crit-bg-elevated);
+  border-top: 2px solid var(--crit-brand);
+  border-bottom: 2px solid var(--crit-brand);
+  font-family: var(--crit-font-mono);
+  line-height: 1.5;
+}
+/* Clicked line no longer rendered. */
+.lsp-refs.lsp-refs-floating {
+  position: fixed;
+  z-index: 300;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  width: min(960px, calc(100vw - 32px));
   border: 1px solid var(--crit-border-strong);
   border-radius: 10px;
   box-shadow: var(--crit-shadow);
   overflow: hidden;
 }
-.lsp-refs-body {
-  overflow: auto;
-  font-family: var(--crit-font-mono);
+.lsp-refs .lsp-peek-header { padding: 5px 12px; }
+.lsp-refs-symbol {
   font-size: 12px;
-  line-height: 1.5;
-  padding: 4px 0;
+  font-weight: 600;
+  color: var(--crit-fg-primary);
 }
+.lsp-refs-count-total {
+  font-size: 11px;
+  color: var(--crit-fg-muted);
+  white-space: nowrap;
+}
+.lsp-refs-where {
+  text-align: right;
+  color: var(--crit-fg-secondary);
+}
+.lsp-refs-main {
+  display: flex;
+  height: 280px;
+  min-height: 0;
+}
+.lsp-refs-preview {
+  flex: 1 1 62%;
+  min-width: 0;
+  overflow: auto;
+  padding: 4px 0;
+  font-size: 12px;
+  background: var(--crit-editor-code-bg);
+}
+.lsp-refs-list {
+  flex: 1 1 38%;
+  min-width: 0;
+  overflow: auto;
+  padding: 2px 0;
+  font-size: 12px;
+  border-left: 1px solid var(--crit-border);
+  outline: none;
+}
+.lsp-refs-list:focus-visible { box-shadow: inset 0 0 0 1px var(--crit-brand); }
 .lsp-refs-file {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  padding: 6px 12px 2px;
+  padding: 6px 10px 2px;
   font-size: 11px;
   font-weight: 600;
   color: var(--crit-fg-secondary);
 }
+.lsp-refs-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .lsp-refs-count {
+  flex-shrink: 0;
   font-weight: 400;
   color: var(--crit-fg-muted);
 }
 .lsp-refs-item {
   display: flex;
-  width: 100%;
-  border: none;
-  background: none;
-  padding: 0;
-  font: inherit;
-  text-align: left;
-  color: inherit;
   cursor: pointer;
   white-space: pre;
   overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 2px solid transparent;
 }
+.lsp-refs-item .lsp-peek-num { flex-basis: 40px; padding-right: 8px; }
+.lsp-refs-item .lsp-peek-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .lsp-refs-item:hover { background: var(--crit-l-hover); }
-.lsp-refs-item.active { background: var(--crit-line-focus-bg); }
+.lsp-refs-item.active {
+  background: var(--crit-line-focus-bg);
+  border-left-color: var(--crit-brand);
+}
+.lsp-refs-match {
+  background: var(--crit-comment-ref-flash-bg);
+  color: inherit;
+  border-radius: 2px;
+}
 .lsp-refs-nopreview {
   color: var(--crit-fg-muted);
   font-style: italic;
+}
+@media (max-width: 700px) {
+  .lsp-refs-main { flex-direction: column; height: 420px; }
+  .lsp-refs-list { border-left: none; border-top: 1px solid var(--crit-border); }
 }
 @media (pointer: coarse) {
   /* Reference rows stack densely; give them a tappable height (WCAG 2.5.5). */
