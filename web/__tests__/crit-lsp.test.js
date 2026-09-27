@@ -227,3 +227,26 @@ test('peekNoteHTML: only a local_env target with note text gets a strip', functi
     if (tc.want) assert.ok(html.indexOf('class="lsp-peek-note">note<') !== -1, html);
   }
 });
+
+test('wordAt: identifier under, or ending at, the caret', function () {
+  assert.strictEqual(lsp.wordAt('const unmapIpv4 = (a)', 8), 'unmapIpv4');
+  assert.strictEqual(lsp.wordAt('const unmapIpv4 = (a)', 15), 'unmapIpv4');
+  assert.strictEqual(lsp.wordAt('x = $el.név', 5), '$el');
+  assert.strictEqual(lsp.wordAt('x = $el.név', 9), 'név');
+});
+
+test('wordAt: empty outside identifiers or out of range', function () {
+  assert.strictEqual(lsp.wordAt('a = (b)', 3), '');
+  assert.strictEqual(lsp.wordAt('abc', 9), '');
+  assert.strictEqual(lsp.wordAt('', 0), '');
+});
+
+test('symbolRange: range at the reported column when the text matches', function () {
+  assert.deepStrictEqual(lsp.symbolRange('  address = unmapIpv4(v)', 12, 'unmapIpv4'), { start: 12, end: 21 });
+});
+
+test('symbolRange: null on mismatch (alias, stale column) or missing input', function () {
+  assert.strictEqual(lsp.symbolRange('import { a as b } from "x"', 14, 'a'), null);
+  assert.strictEqual(lsp.symbolRange('foo()', undefined, 'foo'), null);
+  assert.strictEqual(lsp.symbolRange('foo()', 0, ''), null);
+});

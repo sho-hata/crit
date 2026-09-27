@@ -179,9 +179,9 @@ When the definition is **outside the review** (an unchanged repo file, the stdli
 
 #### ⌘/Ctrl+Shift+Click: find references
 
-Opens a side panel listing every reference to the identifier (declaration included), grouped by file and showing each reference's own source line. Clicking a row inside the review jumps to it in the diff and keeps the panel open so you can walk the list; a row outside the review opens the peek popup instead.
+Opens a panel inline, right under the clicked line (like VS Code's peek references): every reference to the identifier (declaration included) grouped by file on the right, and the selected reference's surrounding source on the left, with the identifier highlighted in both. Click a row or use ↑/↓ to preview it; double-click or Enter jumps to it in the diff and closes the panel. Esc closes.
 
-![References panel listing 3 references to lspRootLocked across internal/server/lsp_handlers.go](docs/images/lsp-references.png)
+![Inline references panel under the clicked line: 3 references to lspRootLocked in internal/server/lsp_handlers.go on the right, a source preview of the selected one on the left](docs/images/lsp-references.png)
 
 #### Enabling it locally
 
