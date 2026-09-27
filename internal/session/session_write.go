@@ -42,6 +42,11 @@ func (s *Session) critJSONPath() string {
 	if s.ReviewFilePath != "" {
 		return s.ReviewFilePath
 	}
+	if s.RepoRoot == "" {
+		// No review destination configured. Returning "" keeps writes out of
+		// the process working directory, which tests mutate with os.Chdir.
+		return ""
+	}
 	// Fallback for tests and backwards compat
 	return filepath.Join(s.RepoRoot, ".crit")
 }
@@ -56,6 +61,7 @@ type writeFilesSnapshot struct {
 	reviewRound    int
 	reviewComments []Comment
 	cliArgs        []string
+	cwd            string
 	// story is the session's in-memory narrative (nil if none). Carried into
 	// CritJSON like the other daemon-managed fields above so `crit story`'s
 	// daemon-side mutators (set via s.SetStory) are actually persisted —
@@ -152,6 +158,12 @@ func buildCritJSON(snap writeFilesSnapshot) CritJSON {
 	cj.ReviewRound = snap.reviewRound
 	cj.ReviewComments = snap.reviewComments
 	cj.CliArgs = snap.cliArgs
+	// Only daemon-built snapshots carry a cwd; an empty one must leave the
+	// recorded directory alone rather than erase a resumable review's only
+	// pointer back to its working tree.
+	if snap.cwd != "" {
+		cj.CWD = snap.cwd
+	}
 	cj.Story = snap.story
 	cj.PendingGitHubDeletes = reconcilePendingGHDeletes(
 		snap.pendingGHDeletes, cj.PendingGitHubDeletes, snap.lastLoadedGHDeletes,
@@ -291,6 +303,9 @@ func (s *Session) SyncWriteFiles() error {
 // pre-existing log-and-continue behaviour).
 func (s *Session) writeFilesErr() error {
 	critPath := s.critJSONPath()
+	if critPath == "" {
+		return nil
+	}
 
 	if s.handleExternalDeletion(critPath) {
 		return nil
@@ -366,6 +381,7 @@ func (s *Session) snapshotForWrite(critPath string) writeFilesSnapshot {
 		reviewRound:         s.ReviewRound,
 		reviewComments:      rc,
 		cliArgs:             s.CLIArgs,
+		cwd:                 s.CWD,
 		story:               s.story,
 		pendingGHDeletes:    pendDeletes,
 		lastLoadedGHDeletes: lastLoaded,
@@ -594,6 +610,22 @@ func (s *Session) mergeExternalCritJSON() bool {
 	}
 	var cj CritJSON
 	if err := json.Unmarshal(data, &cj); err != nil {
+		return false
+	}
+
+	s.mu.RLock()
+	memRound := s.ReviewRound
+	s.mu.RUnlock()
+	// Memory is ahead of an explicit on-disk round (round-complete remapped
+	// comments, write pending/failed, or a stale review.json raced in).
+	// Applying that disk file would replace carried-forward IDs with the
+	// prior round's comments and wipe drift bits — refuse until disk catches
+	// up. Disk review_round 0 means unset/legacy (tests and older files);
+	// never treat that as "stale prior round" or share merges stop applying.
+	if cj.ReviewRound > 0 && memRound > cj.ReviewRound {
+		s.mu.Lock()
+		s.lastCritJSONMtime = info.ModTime()
+		s.mu.Unlock()
 		return false
 	}
 

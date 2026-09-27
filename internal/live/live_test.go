@@ -855,7 +855,7 @@ func TestCarryForwardComment_PreservesLivePinFields(t *testing.T) {
 		DriftedOnRound: 2,
 	}
 
-	carried := carryForwardComment(old, "pin-new", "2026-02-01T00:00:00Z")
+	carried := carryForwardComment(old, "2026-02-01T00:00:00Z")
 
 	if carried.DOMAnchor == nil {
 		t.Fatal("DOMAnchor lost on carry-forward")
@@ -897,7 +897,7 @@ func TestCarryForwardComment_CodeCommentDriftPreserved(t *testing.T) {
 		DriftedOnRound: 2,
 	}
 
-	carried := carryForwardComment(old, "code-new", "2026-02-01T00:00:00Z")
+	carried := carryForwardComment(old, "2026-02-01T00:00:00Z")
 
 	if !carried.Drifted {
 		t.Error("Drifted = false, want true (code comments preserve drift)")
@@ -1164,10 +1164,13 @@ func TestLiveSession_ExternalReplyEmitsCommentsChanged(t *testing.T) {
 	if err := appendReply(&loaded, "pin1", "looking better", "bob", "u2", false, ""); err != nil {
 		t.Fatalf("appendReply: %v", err)
 	}
-	// Force a distinct mtime even on filesystems with low timestamp resolution.
-	time.Sleep(20 * time.Millisecond)
 	if err := saveCritJSON(identity, loaded); err != nil {
 		t.Fatalf("saveCritJSON: %v", err)
+	}
+	// Force a distinct mtime even on filesystems with low timestamp resolution.
+	newer := info.ModTime().Add(time.Second)
+	if err := os.Chtimes(reviewPath, newer, newer); err != nil {
+		t.Fatalf("Chtimes review: %v", err)
 	}
 
 	// The watcher tick that ultimately fires SSE.

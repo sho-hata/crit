@@ -80,6 +80,7 @@ function makeNode(tag, opts) {
       function matches(n) {
         var classes = n._classes || [];
         if (sel === '.settings-tabs') return classes.indexOf('settings-tabs') !== -1;
+        if (sel === '.settings-content') return classes.indexOf('settings-content') !== -1;
         if (sel === '.settings-tabs[role="tablist"]') {
           return classes.indexOf('settings-tabs') !== -1 && n.attrs.role === 'tablist';
         }
@@ -140,12 +141,15 @@ function makeOverlay() {
   //    .settings-tabs[role=tablist]
   //      button.settings-tab[role=tab][data-tab=settings]
   //      button.settings-tab[role=tab][data-tab=shortcuts]
+  //      button.settings-tab[role=tab][data-tab=updates]
   //      button.settings-tab[role=tab][data-tab=about]
   //      button.settings-tab-close#settingsClose
   //    button.settings-pane[data-pane=settings] (.active)
+  //    button.settings-pane[data-pane=updates]
   //    button.settings-pane[data-pane=shortcuts]
   //    button.settings-pane[data-pane=about]
   var overlay = makeNode('div', { id: 'settingsOverlay', classes: ['settings-overlay'] });
+  var content = makeNode('div', { classes: ['settings-content'] });
   var tabsBar = makeNode('div', { classes: ['settings-tabs'], role: 'tablist' });
   overlay.appendChild(tabsBar);
   function tab(name, active, x) {
@@ -162,8 +166,9 @@ function makeOverlay() {
   }
   var t1 = tab('settings', true, 0);
   var t2 = tab('shortcuts', false, 50);
-  var t3 = tab('about', false, 100);
-  tabsBar._rect = { left: 0, top: 0, width: 200 };
+  var updatesTab = tab('updates', false, 100);
+  var t3 = tab('about', false, 150);
+  tabsBar._rect = { left: 0, top: 0, width: 250 };
 
   var closeBtn = makeNode('button', { id: 'settingsClose', classes: ['settings-tab-close'] });
   tabsBar.appendChild(closeBtn);
@@ -175,14 +180,16 @@ function makeOverlay() {
     return p;
   }
   var p1 = pane('settings', true);
+  pane('updates', false);
   pane('shortcuts', false);
   pane('about', false);
 
   // Plus a focusable button inside the active pane (so focus-trap has 2+ targets)
   var focusable1 = makeNode('button', { classes: [] });
   p1.appendChild(focusable1);
+  overlay.appendChild(content);
 
-  return { overlay: overlay, t1: t1, t2: t2, t3: t3, tabsBar: tabsBar, closeBtn: closeBtn };
+  return { overlay: overlay, t1: t1, updatesTab: updatesTab, t2: t2, t3: t3, tabsBar: tabsBar, closeBtn: closeBtn, content: content };
 }
 
 function loadOverlay() {
@@ -327,9 +334,21 @@ test('switchTab updates classList + aria-selected + sliding underline position',
   var underline = dom.tabsBar._children.filter(function (c) {
     return c._classes && c._classes.indexOf('settings-tab-underline') !== -1;
   })[0];
-  // about tab: x=100, w=50
-  assert.equal(underline.style.left, '100px');
+  // about tab: x=150, w=50
+  assert.equal(underline.style.left, '150px');
   assert.equal(underline.style.width, '50px');
+});
+
+test('switchTab resets shared content scroll position', () => {
+  doc = makeDoc();
+  var api = loadOverlay();
+  var dom = makeOverlay();
+  var ctl = api.install({ overlay: dom.overlay, document: doc });
+
+  dom.content.scrollTop = 173;
+  ctl.switchTab('about');
+
+  assert.equal(dom.content.scrollTop, 0);
 });
 
 test('? toggles shortcuts tab when overlay is open; closes when already on shortcuts', () => {

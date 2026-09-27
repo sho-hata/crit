@@ -1,5 +1,5 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -219,6 +219,29 @@ test.describe('Story mode', () => {
     await clearStory(request);
   });
 
+  test('header sidebar toggle collapses the chapter rail (same control as file tree)', async ({ page, request }) => {
+    await ingestStory(critBin, fixtureDir, fakeHome);
+    await loadPage(page);
+    await expect(page.locator('body')).toHaveClass(/crit-story-active/);
+
+    const toggle = page.locator('#fileTreeToggle');
+    await expect(toggle).toBeVisible();
+    await expect(page.locator('#storyRailToggle')).toHaveCount(0);
+
+    await expect(storyRail(page)).toBeVisible();
+    await toggle.click();
+    await expect(page.locator('body')).toHaveClass(/crit-story-rail-collapsed/);
+    await expect(storyRail(page)).toBeHidden();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await toggle.click();
+    await expect(page.locator('body')).not.toHaveClass(/crit-story-rail-collapsed/);
+    await expect(storyRail(page)).toBeVisible();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    await clearStory(request);
+  });
+
   test('navigating into a chapter shows only that chapter\'s file groups', async ({ page }) => {
     await ingestStory(critBin, fixtureDir, fakeHome);
     await loadPage(page);
@@ -302,6 +325,33 @@ test.describe('Story mode', () => {
     await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
     await expect(storyView(page, 'ch1')).toBeVisible();
     await expect(storyView(page, 'ch1').locator('.crit-story-file-group[data-story-file="routes.go"]')).toHaveClass(/viewed/);
+  });
+
+  test('marking every file in a chapter viewed updates the chapter mark button in place', async ({ page }) => {
+    await ingestStory(critBin, fixtureDir, fakeHome);
+    await loadPage(page);
+
+    await tocItem(page, 'ch1').scrollIntoViewIfNeeded();
+    await tocItem(page, 'ch1').click();
+    await expect(storyView(page, 'ch1')).toBeVisible();
+
+    // ch1 owns a single file group (routes.go), so one checkbox flips the
+    // whole chapter to all-viewed.
+    const markBtn = storyView(page, 'ch1').locator('.crit-story-chapter__mark-row .crit-story-chapter__mark');
+    await expect(markBtn).toHaveText('Mark chapter viewed');
+
+    const group = storyView(page, 'ch1').locator('.crit-story-file-group[data-story-file="routes.go"]');
+    await group.locator('.file-header-viewed').scrollIntoViewIfNeeded();
+    await group.locator('.file-header-viewed').click();
+
+    await expect(group).toHaveClass(/viewed/);
+    await expect(markBtn).toHaveText('Chapter viewed');
+
+    // Click polarity flips too: clicking the viewed-state button unmarks.
+    await markBtn.scrollIntoViewIfNeeded();
+    await markBtn.click();
+    await expect(markBtn).toHaveText('Mark chapter viewed');
+    await expect(group).not.toHaveClass(/viewed/);
   });
 
   test('chapter file headers reuse collapse and selected-text comment affordances', async ({ page }) => {
@@ -492,6 +542,79 @@ test.describe('Story mode', () => {
     await expect(page.locator('body')).not.toHaveClass(/crit-story-hidden/);
     await expect(storyOverview(page)).toBeVisible();
     await expect(page.locator('#storyViewToggle .toggle-btn[data-story-view="story"]')).toHaveClass(/active/);
+  });
+
+  test('Story keeps raw hunk anchors while Diff honors Ignore whitespace', async ({ page, request }) => {
+    const routesPath = path.join(fixtureDir, 'routes.go');
+    const original = fs.readFileSync(routesPath, 'utf8');
+    const opts = { cwd: fixtureDir, encoding: 'utf8' as const };
+    const base = execFileSync('git', ['rev-list', '--max-parents=0', 'HEAD'], opts).trim();
+    const baseline = execFileSync('git', ['show', `${base}:routes.go`], opts);
+
+    try {
+      // Two separated hunks: whitespace-only imports, then a semantic change.
+      fs.writeFileSync(routesPath, baseline
+        .replace('import "net/http"', 'import   "net/http"')
+        .replace('func handleAnalytics(w http.ResponseWriter, r *http.Request) {\n\tw.WriteHeader(http.StatusOK)',
+          'func handleAnalytics(w http.ResponseWriter, r *http.Request) {\n\tw.WriteHeader(http.StatusAccepted)'));
+      await request.post('/api/round-complete');
+      const raw = await (await request.get('/api/file/diff?path=routes.go')).json();
+      expect(raw.hunks).toHaveLength(2);
+      const filtered = await (await request.get('/api/file/diff?path=routes.go&w=1')).json();
+      expect(filtered.hunks).toHaveLength(1);
+
+      await ingestStory(critBin, fixtureDir, fakeHome, { story: {
+        ...STORY,
+        chapters: [{
+          id: 'ch1',
+          title: 'Accept analytics requests',
+          summary: 'Return Accepted for analytics requests.',
+          hunk_refs: [{ file_path: 'routes.go', old_start: raw.hunks[1].OldStart }],
+        }],
+        support: [...STORY.support, {
+          hunk_refs: [
+            { file_path: 'routes.go', old_start: raw.hunks[0].OldStart },
+            { file_path: 'plan.md', old_start: 0 },
+          ],
+          reason: 'Whitespace-only import change and supporting documentation.',
+        }],
+      } });
+      await page.context().addCookies([{
+        name: 'crit-settings',
+        value: encodeURIComponent(JSON.stringify({ ignoreWhitespace: true })),
+        domain: 'localhost',
+        path: '/',
+      }]);
+
+      const isRoutesDiff = (req: { url(): string }) => {
+        const url = new URL(req.url());
+        return url.pathname === '/api/file/diff' && url.searchParams.get('path') === 'routes.go';
+      };
+      const storyRequest = page.waitForRequest(isRoutesDiff);
+      await loadPage(page);
+      expect(new URL((await storyRequest).url()).searchParams.has('w')).toBe(false);
+      await tocItem(page, 'ch1').click();
+      const chapter = storyView(page, 'ch1');
+      await expect(chapter.locator('.diff-container')).toBeVisible();
+      await expect(chapter).toContainText('http.StatusAccepted');
+
+      const flatRequest = page.waitForRequest(isRoutesDiff);
+      await page.locator('#storyViewToggle .toggle-btn[data-story-view="diff"]').click();
+      expect(new URL((await flatRequest).url()).searchParams.get('w')).toBe('1');
+      const flat = page.locator('[id="file-section-routes.go"]');
+      await expect(flat).toBeVisible();
+      await expect(flat).toContainText('http.StatusAccepted');
+      await expect(flat).not.toContainText('import');
+
+      const restoredRequest = page.waitForRequest(isRoutesDiff);
+      await page.locator('#storyViewToggle .toggle-btn[data-story-view="story"]').click();
+      expect(new URL((await restoredRequest).url()).searchParams.has('w')).toBe(false);
+      await expect(storyView(page, 'ch1')).toContainText('http.StatusAccepted');
+    } finally {
+      fs.writeFileSync(routesPath, original);
+      await clearStory(request);
+      await request.post('/api/round-complete');
+    }
   });
 
   test('Story/Diff toggle survives switching diff scope while in Diff view', async ({ page }) => {

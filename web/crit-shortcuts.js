@@ -36,7 +36,6 @@
     ]},
     { label: 'Review', shortcuts: [
       { id: 'finish_review', binding: 'Shift+F', action: 'Finish review', modes: BOTH },
-      { id: 'toggle_comments', binding: 'Shift+C', action: 'Toggle comments panel', modes: CODE_REVIEW_ONLY },
       { id: 'scope_all', binding: 'Shift+1', action: 'Switch to all changes', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
       { id: 'scope_branch', binding: 'Shift+2', action: 'Switch to branch changes', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
       { id: 'scope_staged', binding: 'Shift+3', action: 'Switch to staged changes', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
@@ -48,12 +47,14 @@
       { id: 'story_prologue', binding: 'Shift+O', action: 'Story prologue', mode: 'story mode', modes: CODE_REVIEW_ONLY },
       { id: 'story_support', binding: 'Shift+S', action: 'Story support', mode: 'story mode', modes: CODE_REVIEW_ONLY },
       { binding: '1–9', action: 'Jump to story chapter', mode: 'story mode', modes: CODE_REVIEW_ONLY, fixed: true },
-      { id: 'story_toggle_list', binding: '\\', action: 'Toggle story chapter list', mode: 'story mode', modes: CODE_REVIEW_ONLY },
+      { id: 'story_toggle_list', binding: '\\', action: 'Toggle sidebar (story chapter list)', mode: 'story mode', modes: CODE_REVIEW_ONLY },
     ]},
     { label: 'Live', shortcuts: [
       { id: 'toggle_pin_mode', binding: 'p', action: 'Toggle pin mode', modes: LIVE_ONLY },
     ]},
     { label: 'View', shortcuts: [
+      { id: 'toggle_file_tree', binding: 'b', action: 'Toggle sidebar (file tree / story chapters)', modes: CODE_REVIEW_ONLY },
+      { id: 'toggle_comments', binding: 'Shift+C', action: 'Toggle comments panel', modes: CODE_REVIEW_ONLY },
       { id: 'toggle_toc', binding: 't', action: 'Toggle table of contents', mode: 'file mode', modes: CODE_REVIEW_ONLY },
       { id: 'toggle_resolved', binding: 'h', action: 'Toggle hide resolved', modes: CODE_REVIEW_ONLY },
       { binding: 'Esc', action: 'Cancel / clear focus', modes: BOTH, fixed: true },

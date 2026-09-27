@@ -9,6 +9,8 @@ const NOGIT_PORT = process.env.CRIT_TEST_NOGIT_PORT || '3126';
 const MULTI_PORT = process.env.CRIT_TEST_MULTI_PORT || '3127';
 const RANGE_PORT = process.env.CRIT_TEST_RANGE_PORT || '3128';
 const LIVE_PORT = process.env.CRIT_TEST_LIVE_PORT || '3129';
+// Large-review perf fixture (300 files / ~9k changed lines + big markdown).
+const PERF_PORT = process.env.CRIT_TEST_PERF_PORT || '3134';
 // Mobile project re-uses the git-mode fixture — no separate server needed.
 const MOBILE_PORT = GIT_PORT;
 const debug = !!process.env.E2E_DEBUG;
@@ -42,7 +44,7 @@ export default defineConfig({
   projects: [
     {
       name: 'git-mode',
-      testMatch: /^(?!.*\.(filemode|singlefile|multifile|nogit|rangemode|mobile|livemode)\.).*\.spec\.ts$/,
+      testMatch: /^(?!.*\.(filemode|singlefile|multifile|nogit|rangemode|mobile|livemode|perf)\.).*\.spec\.ts$/,
       use: {
         browserName: 'chromium',
         baseURL: `http://localhost:${GIT_PORT}`,
@@ -115,6 +117,17 @@ export default defineConfig({
         baseURL: `http://localhost:${LIVE_PORT}/live`,
       },
     },
+    {
+      // Perf guardrails against a 300-file / ~9k-line review. Asserts
+      // structural budgets (mounted bodies, DOM nodes, longtask TBT), not
+      // wall-clock time, so it stays green on slow runners.
+      name: 'perf',
+      testMatch: /\.perf\.spec\.ts$/,
+      use: {
+        browserName: 'chromium',
+        baseURL: `http://localhost:${PERF_PORT}`,
+      },
+    },
   ],
 
   webServer: [
@@ -165,6 +178,15 @@ export default defineConfig({
       url: `http://127.0.0.1:${LIVE_PORT}/api/session`,
       reuseExistingServer: true,
       timeout: 60_000,
+      stdout: 'pipe',
+    },
+    {
+      command: `bash setup-fixtures-perf.sh ${PERF_PORT}`,
+      url: `http://localhost:${PERF_PORT}/api/session`,
+      reuseExistingServer: true,
+      // Fixture generates 300 files (+ optional go build when CRIT_BIN is
+      // unset, e.g. cold local runs outside run.sh which prebuilds).
+      timeout: 120_000,
       stdout: 'pipe',
     },
   ],

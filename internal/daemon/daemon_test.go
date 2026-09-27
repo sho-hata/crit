@@ -2,15 +2,18 @@ package daemon
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1123,7 +1126,7 @@ func TestPrepareDaemonCmd_KeepsNewLogAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, nil)
+	_, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, nil, "")
 	if err != nil {
 		t.Fatalf("prepareDaemonCmd: %v", err)
 	}
@@ -1137,6 +1140,47 @@ func TestPrepareDaemonCmd_KeepsNewLogAvailable(t *testing.T) {
 	}
 	if got := ReadDaemonLog(key); got != "" {
 		t.Errorf("ReadDaemonLog = %q, want cleared new log", got)
+	}
+}
+
+func TestSetupDaemonCmd_WorkingDirectory(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+	if err := os.MkdirAll(filepath.Join(home, ".crit", "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("explicit directory", func(t *testing.T) {
+		want := t.TempDir()
+		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("explicitdirxx", nil, want)
+		if err != nil {
+			t.Fatalf("setupDaemonCmd: %v", err)
+		}
+		defer closeAll(readEnd, writeEnd, logFile)
+		if cmd.Dir != want {
+			t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, want)
+		}
+	})
+
+	t.Run("empty directory inherits ours", func(t *testing.T) {
+		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("inheriteddirx", nil, "")
+		if err != nil {
+			t.Fatalf("setupDaemonCmd: %v", err)
+		}
+		defer closeAll(readEnd, writeEnd, logFile)
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Dir != wd {
+			t.Errorf("cmd.Dir = %q, want the current directory %q", cmd.Dir, wd)
+		}
+	})
+}
+
+func closeAll(files ...*os.File) {
+	for _, f := range files {
+		f.Close()
 	}
 }
 
@@ -1280,7 +1324,7 @@ func TestLiveSessionKey_MatchesSpec(t *testing.T) {
 	h.Write([]byte(cwd))
 	h.Write([]byte("\x00live\x00"))
 	h.Write([]byte(origin))
-	want := fmt.Sprintf("%x", h.Sum(nil))[:12]
+	want := hex.EncodeToString(h.Sum(nil))[:12]
 	if got != want {
 		t.Errorf("key = %q, want %q", got, want)
 	}
@@ -1315,6 +1359,246 @@ func TestLiveSessionKey_Deterministic(t *testing.T) {
 	k2 := LiveSessionKey("/app", "http://localhost:3000")
 	if k1 != k2 {
 		t.Errorf("non-deterministic: %s vs %s", k1, k2)
+	}
+}
+
+func TestTerminationProvesGone(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"ESRCH", syscall.ESRCH, true},
+		{"ErrProcessDone", os.ErrProcessDone, true},
+		{"wrapped ESRCH", fmt.Errorf("signal: %w", syscall.ESRCH), true},
+		{"EPERM", syscall.EPERM, false},
+		{"EINVAL", syscall.EINVAL, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := terminationProvesGone(tt.err); got != tt.want {
+				t.Errorf("terminationProvesGone(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStopDaemon_KeepsSessionFileOnPermissionDenied(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer ts.Close()
+	port, _ := strconv.Atoi(ts.URL[strings.LastIndex(ts.URL, ":")+1:])
+
+	key := "permtest123456"
+	entry := SessionEntry{
+		PID:    os.Getpid(),
+		Port:   port,
+		CWD:    "/tmp/repo",
+		Branch: "main",
+	}
+	if err := WriteSessionFile(key, entry); err != nil {
+		t.Fatalf("WriteSessionFile: %v", err)
+	}
+
+	origTerminate := terminateProc
+	terminateProc = func(proc *os.Process) error {
+		return syscall.EPERM
+	}
+	t.Cleanup(func() { terminateProc = origTerminate })
+
+	err := StopDaemon(key)
+	if err == nil {
+		t.Fatal("expected error when termination is denied")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, key) {
+		t.Errorf("error = %q, want it to mention key %q", msg, key)
+	}
+	if !strings.Contains(msg, strconv.Itoa(os.Getpid())) {
+		t.Errorf("error = %q, want it to mention pid %d", msg, os.Getpid())
+	}
+
+	path, _ := sessionFilePath(key)
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		t.Error("session file should be kept when termination is denied")
+	}
+}
+
+func TestStopDaemon_RemovesSessionFileWhenProcessGone(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer ts.Close()
+	port, _ := strconv.Atoi(ts.URL[strings.LastIndex(ts.URL, ":")+1:])
+
+	key := "gonetest123456"
+	entry := SessionEntry{
+		PID:    os.Getpid(),
+		Port:   port,
+		CWD:    "/tmp/repo",
+		Branch: "main",
+	}
+	if err := WriteSessionFile(key, entry); err != nil {
+		t.Fatalf("WriteSessionFile: %v", err)
+	}
+
+	origTerminate := terminateProc
+	terminateProc = func(proc *os.Process) error {
+		return syscall.ESRCH
+	}
+	t.Cleanup(func() { terminateProc = origTerminate })
+
+	origExists := procExists
+	procExists = func(proc *os.Process) bool {
+		return false
+	}
+	t.Cleanup(func() { procExists = origExists })
+
+	if err := StopDaemon(key); err != nil {
+		t.Fatalf("StopDaemon: %v", err)
+	}
+
+	path, _ := sessionFilePath(key)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("session file should be removed when process is already gone")
+	}
+}
+
+func TestKillProcess(t *testing.T) {
+	// Start a short-lived helper so we can call killProcess on a real
+	// Process handle (Windows OpenProcess rejects bogus PIDs).
+	cmd := exec.Command("sleep", "30")
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("ping", "-n", "30", "127.0.0.1")
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	if err := killProcess(cmd.Process); err != nil {
+		t.Fatalf("killProcess: %v", err)
+	}
+}
+
+func TestStopDaemon_KeepsSessionFileOnKillPermissionDenied(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer ts.Close()
+	port, _ := strconv.Atoi(ts.URL[strings.LastIndex(ts.URL, ":")+1:])
+
+	key := "killpermtest123"
+	entry := SessionEntry{
+		PID:    os.Getpid(),
+		Port:   port,
+		CWD:    "/tmp/repo",
+		Branch: "main",
+	}
+	if err := WriteSessionFile(key, entry); err != nil {
+		t.Fatalf("WriteSessionFile: %v", err)
+	}
+
+	origTerminate := terminateProc
+	terminateProc = func(proc *os.Process) error {
+		return nil
+	}
+	t.Cleanup(func() { terminateProc = origTerminate })
+
+	origExists := procExists
+	procExists = func(proc *os.Process) bool {
+		return true
+	}
+	t.Cleanup(func() { procExists = origExists })
+
+	origKill := killProc
+	killProc = func(proc *os.Process) error {
+		return syscall.EPERM
+	}
+	t.Cleanup(func() { killProc = origKill })
+
+	err := StopDaemon(key)
+	if err == nil {
+		t.Fatal("expected error when kill is denied")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, key) {
+		t.Errorf("error = %q, want it to mention key %q", msg, key)
+	}
+	if !strings.Contains(msg, strconv.Itoa(os.Getpid())) {
+		t.Errorf("error = %q, want it to mention pid %d", msg, os.Getpid())
+	}
+
+	path, _ := sessionFilePath(key)
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		t.Error("session file should be kept when kill is denied")
+	}
+}
+
+func TestStopDaemon_RemovesSessionFileAfterKill(t *testing.T) {
+	tests := []struct {
+		name    string
+		killErr error
+	}{
+		{name: "kill succeeds", killErr: nil},
+		{name: "kill proves gone", killErr: syscall.ESRCH},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			testutil.SetHome(t, home)
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+			}))
+			defer ts.Close()
+			port, _ := strconv.Atoi(ts.URL[strings.LastIndex(ts.URL, ":")+1:])
+
+			key := "killoktest123"
+			entry := SessionEntry{
+				PID:    os.Getpid(),
+				Port:   port,
+				CWD:    "/tmp/repo",
+				Branch: "main",
+			}
+			if err := WriteSessionFile(key, entry); err != nil {
+				t.Fatalf("WriteSessionFile: %v", err)
+			}
+
+			origTerminate := terminateProc
+			terminateProc = func(proc *os.Process) error { return nil }
+			t.Cleanup(func() { terminateProc = origTerminate })
+
+			origExists := procExists
+			procExists = func(proc *os.Process) bool { return true }
+			t.Cleanup(func() { procExists = origExists })
+
+			origKill := killProc
+			killProc = func(proc *os.Process) error { return tt.killErr }
+			t.Cleanup(func() { killProc = origKill })
+
+			if err := StopDaemon(key); err != nil {
+				t.Fatalf("StopDaemon: %v", err)
+			}
+
+			path, _ := sessionFilePath(key)
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Error("session file should be removed after kill succeeds or proves gone")
+			}
+		})
 	}
 }
 

@@ -170,6 +170,16 @@ func TestResolveFocus_NilWhenNoFlags(t *testing.T) {
 	}
 }
 
+func TestCommentScopeOverrideFromFlag_Invalid(t *testing.T) {
+	_, err := CommentScopeOverrideFromFlag("bogus")
+	if err == nil {
+		t.Fatal("expected error for invalid scope")
+	}
+	if !strings.Contains(err.Error(), "layer | full-stack | working-tree") {
+		t.Errorf("error = %q, want layer|full-stack|working-tree hint", err)
+	}
+}
+
 func TestResolveFocus_InvalidScopeRejected(t *testing.T) {
 	t.Parallel()
 

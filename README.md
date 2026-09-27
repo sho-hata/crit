@@ -95,10 +95,24 @@ crit landing.html                 # review a static HTML file
 
 If talking to an agent, you can invoke the `/crit` command and optionally provide arguments like the above examples or the agent will try to launch the right thing based on the context of the conversation.
 
-For larger branch, PR, or range reviews, `crit story` can generate an optional
-chaptered overview of the diff before you review it. See the
-**[story mode guide](docs/story-mode.md)** for the workflow and custom prompt
-setup.
+### Story mode
+
+For larger branch, PR, MR, or range reviews, **story mode** adds a chaptered
+overview of the diff — thematic chapters, a prologue, and a support bucket for
+noise — so you can understand the shape of the change before line-by-line
+review. It is an explainer, not a reviewer.
+
+**Recommended:** invoke `/crit-story` (or `$crit-story`, `/skill:crit-story`,
+depending on your agent) after `crit install <tool>`. Your agent authors the
+story in-session via `crit story --prep` / `--story-file`. Only run it when you
+explicitly ask — agents will not infer it from a normal `/crit` review.
+
+**Alternative:** `crit story` from the terminal uses your global `agent_cmd`
+(separate LLM spend). Generation is LLM-driven exploration — cost depends on
+change complexity more than raw file/diff size, and does not scale linearly.
+In our experience, complex PRs (~20–50 files, ~2k–5k lines) land around
+$1–$1.40 with Claude Opus 5. See the **[story mode guide](docs/story-mode.md)**
+for commands, custom prompts, JSON shape, and token-cost notes.
 
 ### Live mode
 
@@ -128,11 +142,18 @@ crit live http://localhost:4000/dashboard --cdp-url http://127.0.0.1:9222
 
 Relative paths resolve from the repo root. Prefer a gitignored file under `.crit/` over committing `live_cookie` inline. Run `crit live --help` for all flags.
 
+If Comment/Pin stays unavailable, or a framework needs local CSP / iframe
+tweaks, see the **[live mode guide](docs/live-mode.md)** (injection model,
+common failures, Phoenix / Vite / Next.js recipes).
+
 ```bash
 crit status                       # show review file path and daemon status
+crit resume                       # pick a previous review to reopen
 crit stats                        # show lifetime review statistics
 crit cleanup                      # delete stale review files
 ```
+
+`crit resume` lists every review in `~/.crit/reviews`, newest first, with its branch or files, directory, age, and open comment count. Choosing one reconnects to its daemon, or restarts the daemon in the directory the review came from when it has stopped — so you can resume a review from anywhere. Pass `--list` to print the list instead, or a session ID to skip the picker.
 
 ## Features
 
@@ -354,13 +375,14 @@ All keys are optional — omit any you don't need.
 | `host`                 | string   | `"127.0.0.1"`              | Listen host (global/CLI/env only). Non-loopback values also require `--allow-unauthenticated-network` / `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1`. Prefer loopback + SSH/Tailscale/Docker host-loopback publish. |
 | `no_open`              | bool     | `false`                    | Don't auto-open the browser when starting a review.                                                                                                                                     |
 | `quiet`                | bool     | `false`                    | On success, suppress daemon connect/start lines, integration tips, and the session summary. Errors, `approved:`, and the finish prompt are unchanged. |
-| `output`               | string   | `~/.crit`                  | Crit data root for reviews. Reviews live in `<root>/reviews/<key>/` (same layout as the default). A leftover `<root>/.crit` from when `output` named a single review folder is still used (with a warning) until you move or remove it. |
+| `output`               | string   | `~/.crit`                  | Crit data root for reviews. Reviews live in `<root>/reviews/<key>/` (same layout as the default). |
 | `author`               | string   | VCS user name              | Author name shown on comments. Falls back to your configured VCS user name.                                                                                                            |
 | `base_branch`          | string   | auto-detected              | Base branch to diff against (e.g. `"main"`, `"develop"`). Overrides auto-detection.                                                                                                     |
 | `ignore_patterns`      | string[] | `[".crit/"]` | File patterns to exclude from git-mode file lists. Global and project patterns are merged.                                                                                              |
 | `auto_viewed_patterns` | string[] | `[]`                       | File patterns auto-marked as viewed (collapsed) once when a review opens — e.g. `["*.lock", "generated/", "PLAN.md"]`. Manually un-marking a file keeps it open. Global and project patterns are merged. |
+| `default_markdown_view` | string | `""` (diff in git mode) | Initial view for markdown files (Document/Diff toggle) in git mode: `"document"` opens them in document view, `"diff"` (or unset) keeps diff view. File mode is always document view. Project overrides global. |
 | `cleanup_on_approve`   | bool     | `true`                     | Automatically delete the review file when you approve with no unresolved comments. Set to `false` to preserve review history.                                                           |
-| `notify_on_round_ready`| bool     | `false`                    | Opt in to a desktop notification when a review round becomes ready for you (after the agent finishes addressing comments).       |
+| `notify_on_round_ready`| bool     | `false`                    | Opt in to a desktop notification when a review round becomes ready for you (after the agent finishes addressing comments). On macOS, install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) so clicking the notification opens the review URL — without it, clicking falls back to AppleScript's `display notification`, which macOS attributes to Script Editor and activates that instead of your browser. |
 | `no_update_check`      | bool     | `false`                    | Don't check for new versions on startup.                                                                                                                                                |
 | `no_integration_check` | bool     | `false`                    | Skip the integration config freshness check on startup.                                                                                                                                 |
 | `vcs`                  | string   | auto-detected              | Preferred VCS backend: `"git"`, `"sl"`, or `"jj"`. When set, crit uses this VCS instead of auto-detecting. Falls back to git if the configured VCS isn't available. Can also be set via `--vcs` CLI flag (flag takes precedence over config). |
@@ -405,6 +427,7 @@ These keys can only be set in `~/.crit.config.json` (global). Project-level `.cr
 | `public_url`           | string   | `""`                       | Advertised base URL for stderr and browser-open (e.g. `https://machine.ts.net` via tailscale serve). Listen address unchanged. Requires `--allow-unauthenticated-network` / `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1`. |
 | `plan_approve_mode`    | string   | unset                      | Claude Code permission mode after Crit approves an `ExitPlanMode` hook: `default`, `manual`, `acceptEdits`, `plan`, `auto`, `dontAsk`, or `bypassPermissions`. The update uses `destination: "session"`, so it lasts only for the current Claude Code session. See [Claude Code plan approval mode](integrations/README.md#claude-code-plan-approval-mode). |
 | `close_on_approve_after_ms` | int | unset (disabled)          | Auto-close the review tab this many milliseconds after you Approve with no unresolved comments. Unset means no auto-close (current behavior); negative values are treated as unset. A Cancel button during the countdown skips the close for that approval. |
+| `stale_review_days`    | int      | `14`                       | Delete reviews untouched for this many days in the background sweep that runs when a review starts. Unset or non-positive values use the default. `crit cleanup --days N` is unaffected. |
 
 ### CLI flags
 
@@ -415,7 +438,7 @@ These keys can only be set in `~/.crit.config.json` (global). Project-level `.cr
 | `--public-url`  |       | `public_url`          | Advertised review URL (listen unchanged) |
 | `--allow-unauthenticated-network` | | — | Required with non-loopback `--host` or any `--public-url` |
 | `--no-open`     |       | `no_open`             | Don't auto-open browser                |
-| `--output`      | `-o`  | `output`              | Crit data root for reviews (`<root>/reviews/<key>/`). Honors a leftover `<root>/.crit` from older crit versions until removed. |
+| `--output`      | `-o`  | `output`              | Crit data root for reviews (`<root>/reviews/<key>/`). |
 | `--quiet`       | `-q`  | `quiet`               | On success, suppress connect/start status, tips, and session summary                 |
 | `--base-branch` |       | `base_branch`         | Base branch to diff against            |
 | `--vcs`         |       | `vcs`                 | VCS backend (`git`, `sl`, or `jj`)     |

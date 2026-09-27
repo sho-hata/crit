@@ -33,6 +33,7 @@ func TestPrintConfigHelp(t *testing.T) {
 		"plan_approve_mode",
 		"notify_on_round_ready",
 		"close_on_approve_after_ms",
+		"stale_review_days",
 		"reviews/<key>",
 	} {
 		if !strings.Contains(got, want) {
@@ -58,6 +59,9 @@ func TestRunConfig_Generate(t *testing.T) {
 	})
 	if !strings.Contains(out, `"port"`) {
 		t.Errorf("generate output should contain port key, got: %s", out[:min(200, len(out))])
+	}
+	if !strings.Contains(out, `"stale_review_days"`) {
+		t.Errorf("generate output should contain stale_review_days key, got: %s", out[:min(200, len(out))])
 	}
 }
 

@@ -196,33 +196,102 @@ test('renderSettingsTab: pre-checks hide-resolved checkbox when getHideResolved 
   assert.match(pane.innerHTML, /id="hideResolvedToggle"[^>]*checked/);
 });
 
-test('renderSettingsTab: update card appears when latest_version > version', () => {
+test('renderSettingsTab: update card is not rendered in Settings', () => {
   const sp = loadShared();
   const pane = makePane();
   sp.renderSettingsTab(pane, {
     mode: 'code-review',
-    // Tag names, as the release workflow produces them — the "v" is part of
-    // the value, so the renderer must not prepend another one.
     cfg: { version: 'v1.0.0', latest_version: 'v1.1.0' },
     hooks: { applyTheme: () => {}, applyWidth: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
   });
 
-  assert.match(pane.innerHTML, /Update available/);
-  assert.match(pane.innerHTML, /v1\.1\.0/);
-  assert.match(pane.innerHTML, /brew update &amp;&amp; brew upgrade fcrit\b/);
-  assert.match(pane.innerHTML, /releases\/tag\/v1\.1\.0/);
-  assert.doesNotMatch(pane.innerHTML, /vv1\.1\.0/);
+  assert.doesNotMatch(pane.innerHTML, /Update available/);
+  assert.doesNotMatch(pane.innerHTML, /brew upgrade fcrit/);
 });
 
-test('renderSettingsTab: no update card when no_update_check', () => {
+test('renderAboutPane: keeps update guidance out of About', () => {
   const sp = loadShared();
   const pane = makePane();
-  sp.renderSettingsTab(pane, {
-    mode: 'code-review',
-    cfg: { version: '1.0.0', latest_version: '1.1.0', no_update_check: true },
-    hooks: { applyTheme: () => {}, applyWidth: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
-  });
+  sp.renderAboutPane(pane, { version: '1.0.0', latest_version: '1.1.0' }, {});
   assert.doesNotMatch(pane.innerHTML, /Update available/);
+  assert.doesNotMatch(pane.innerHTML, /Latest version/);
+});
+
+test('renderUpdatesPane: groups Crit releases and integration work', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  sp.renderUpdatesPane(pane, {
+    version: '1.0.0',
+    latest_version: '1.1.0',
+    installation_source: 'homebrew',
+    stale_integrations: [{ agent: 'claude-code', hash: 'new-hash', hint: 'Run: crit install claude-code' }],
+    missing_integrations: ['cursor'],
+  }, {});
+  assert.match(pane.innerHTML, /Release notes and downloads/);
+  assert.match(pane.innerHTML, /class="updates-release-notes"/);
+  assert.match(pane.innerHTML, /brew update &amp;&amp; brew upgrade fcrit\b/);
+  assert.match(pane.innerHTML, /v1\.0\.0/);
+  assert.match(pane.innerHTML, /Claude Code/);
+  assert.match(pane.innerHTML, /crit install claude-code/);
+  assert.match(pane.innerHTML, /Cursor/);
+  assert.match(pane.innerHTML, /crit install cursor/);
+  assert.match(pane.innerHTML, /updates-command-copy/);
+  assert.match(pane.innerHTML, /images\/integrations\/claude-code-dark\.svg/);
+  assert.match(pane.innerHTML, />Stale</);
+  assert.match(pane.innerHTML, />Not installed</);
+  assert.match(pane.innerHTML, /Copy all commands/);
+});
+
+test('renderUpdatesPane: tag-name versions get exactly one v prefix', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  // Tag names, as the release workflow produces them — the "v" is part of
+  // the value, so the renderer must not prepend another one.
+  sp.renderUpdatesPane(pane, { version: 'v1.0.0', latest_version: 'v1.1.0' }, {});
+  assert.match(pane.innerHTML, /releases\/tag\/v1\.1\.0/);
+  assert.match(pane.innerHTML, />v1\.0\.0</);
+  assert.match(pane.innerHTML, />v1\.1\.0</);
+  assert.doesNotMatch(pane.innerHTML, /vv1\./);
+});
+
+test('renderUpdatesPane: uses brand icons for all agents with SVG assets', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  const agents = ['aider', 'cline', 'hermes', 'windsurf', 'claude-code', 'pi'];
+  sp.renderUpdatesPane(pane, {
+    stale_integrations: agents.map((agent) => ({ agent, hash: 'h', hint: 'crit install ' + agent })),
+  }, {});
+  for (const agent of agents) {
+    assert.match(pane.innerHTML, new RegExp('images/integrations/' + agent + '-dark\\.svg'));
+  }
+  assert.doesNotMatch(pane.innerHTML, /updates-agent-icon--fallback/);
+});
+
+test('renderUpdatesPane: current Crit still shows its version and release notes', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  sp.renderUpdatesPane(pane, { version: '0.20.2' }, {});
+  assert.match(pane.innerHTML, /v0\.20\.2/);
+  assert.match(pane.innerHTML, /Release notes/);
+  assert.match(pane.innerHTML, /Up to date/);
+});
+
+test('renderUpdatesPane: shows muted integrations before uninstalled integrations', () => {
+  const { panes: sp } = loadPanes('crit-settings=' + encodeURIComponent(JSON.stringify({
+    dismissedIntegrations: { 'claude-code': 'old', 'missing:gemini': true },
+  })));
+  const pane = makePane();
+  sp.renderUpdatesPane(pane, {
+    stale_integrations: [
+      { agent: 'cursor', hash: 'current', hint: 'crit install cursor' },
+      { agent: 'claude-code', hash: 'old', hint: 'crit install claude-code' },
+    ],
+    missing_integrations: ['gemini', 'opencode'],
+  }, {});
+  const html = pane.innerHTML;
+  assert.ok(html.indexOf('Cursor') < html.indexOf('Claude Code'));
+  assert.ok(html.indexOf('Claude Code') < html.indexOf('Gemini'));
+  assert.ok(html.indexOf('Gemini') < html.indexOf('Opencode'));
 });
 
 test('renderSettingsTab: agent card unconfigured snippet when agent_cmd_enabled false', () => {
@@ -259,7 +328,7 @@ test('renderSettingsTab: integration card omitted when no_integration_check', ()
   assert.doesNotMatch(pane.innerHTML, /AI Integration/);
 });
 
-test('renderSettingsTab: integration card unconfigured CTA when nothing installed', () => {
+test('renderSettingsTab: omits the integration installer when nothing is installed', () => {
   const sp = loadShared();
   const pane = makePane();
   sp.renderSettingsTab(pane, {
@@ -267,9 +336,35 @@ test('renderSettingsTab: integration card unconfigured CTA when nothing installe
     cfg: { integrations: [], integrations_available: ['claude-code', 'cursor'] },
     hooks: { applyTheme: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
   });
-  assert.match(pane.innerHTML, /AI Integration/);
-  assert.match(pane.innerHTML, /crit install claude-code/);
-  assert.match(pane.innerHTML, /Also: claude-code/);
+  assert.doesNotMatch(pane.innerHTML, /AI Integration/);
+  assert.doesNotMatch(pane.innerHTML, /crit install claude-code/);
+});
+
+test('renderSettingsTab: leaves updates to the Updates tab', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  sp.renderSettingsTab(pane, {
+    mode: 'code-review',
+    cfg: {
+      integrations: [{ agent: 'claude-code', status: 'stale', hash: 'new-hash', hint: 'Run: crit install claude-code' }],
+      any_integration_installed: true,
+    },
+    hooks: { applyTheme: () => {}, applyWidth: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
+  });
+  assert.doesNotMatch(pane.innerHTML, /AI Integration/);
+  assert.doesNotMatch(pane.innerHTML, /crit install claude-code/);
+});
+
+test('renderSettingsTab: leaves missing integrations to the Updates tab', () => {
+  const sp = loadShared();
+  const pane = makePane();
+  sp.renderSettingsTab(pane, {
+    mode: 'code-review',
+    cfg: { integrations: [], missing_integrations: ['cursor'] },
+    hooks: { applyTheme: () => {}, applyWidth: () => {}, getHideResolved: () => false, setHideResolved: () => {} },
+  });
+  assert.doesNotMatch(pane.innerHTML, /Integration Available/);
+  assert.doesNotMatch(pane.innerHTML, /crit install cursor/);
 });
 
 test('renderSettingsTab: opts.show overrides defaults', () => {
@@ -356,10 +451,11 @@ test('renderSettingsTab: pre-checks ignore-whitespace when getIgnoreWhitespace r
   assert.match(pane.innerHTML, /id="ignoreWhitespaceToggle"[^>]*checked/);
 });
 
-test('renderShortcutsPane / renderAboutPane still exposed', () => {
+test('renderShortcutsPane / renderAboutPane / renderUpdatesPane are exposed', () => {
   const sp = loadShared();
   assert.equal(typeof sp.renderShortcutsPane, 'function');
   assert.equal(typeof sp.renderAboutPane, 'function');
+  assert.equal(typeof sp.renderUpdatesPane, 'function');
 });
 
 test('renderShortcutsPane: code-review mode shows code-review-only shortcuts', () => {

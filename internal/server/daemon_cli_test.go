@@ -40,6 +40,12 @@ func TestFocusKeyArgs_PR(t *testing.T) {
 	}
 }
 
+func TestFocusKeyArgs_NilConfig(t *testing.T) {
+	if got := server.FocusKeyArgs(nil); got != nil {
+		t.Errorf("got %v want nil", got)
+	}
+}
+
 func TestFocusKeyArgs_Range(t *testing.T) {
 	t.Parallel()
 

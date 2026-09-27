@@ -36,17 +36,18 @@ test.describe('live-mode agent — boot + handshake', () => {
     await waitForAgentReady(page);
     const iframe = getIframe(page);
     // Capture mode before, post a foreign-source set-mode, verify mode unchanged.
+    // Live mode defaults to Comment (pin); a dropped message must not flip it.
     await iframe.locator('body').evaluate(() => {
       // Posting to self bypasses the parent-source guard and should be dropped.
-      window.postMessage({ type: 'set-mode', value: 'pin' }, '*');
+      window.postMessage({ type: 'set-mode', value: 'navigate' }, '*');
     });
-    // Allow a microtask flush; mode must remain 'navigate'.
+    // Allow a microtask flush; mode must remain 'pin'.
     await expect.poll(
       () => iframe.locator('body').evaluate(() => {
         return (window as unknown as { __critAgentState?: { mode?: string } })
           .__critAgentState?.mode ?? 'unknown';
       }),
-    ).toBe('navigate');
+    ).toBe('pin');
   });
 
   test('agent posts to the verified API origin, not "*"', async ({ page }) => {
@@ -74,6 +75,19 @@ test.describe('live-mode agent — boot + handshake', () => {
           .__critAgentState?.mode;
       }),
     ).toBe('pin');
+  });
+
+  test('P toggles Comment mode while the iframe owns focus', async ({ page }) => {
+    await waitForAgentReady(page);
+    // Start from Browse so P has something to flip into Comment.
+    await page.locator('#liveModeToggle button[data-mode="navigate"]').click();
+    await expect(page.locator('#liveModeToggle button[data-mode="navigate"]')).toHaveClass(/active/);
+    const target = getIframe(page).locator('#primary-btn');
+    await target.focus();
+    await target.press('p');
+    await expect(page.locator('#liveModeToggle button[data-mode="pin"]')).toHaveClass(/active/);
+    await expect(page.locator('#liveModeHint')).toBeVisible();
+    await expect(page.locator('#liveModeHint')).toHaveAttribute('data-mode', 'pin');
   });
 });
 

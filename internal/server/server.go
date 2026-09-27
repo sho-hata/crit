@@ -63,6 +63,7 @@ type Server struct {
 	agentCmd            string
 	currentVersion      string
 	latestVersion       string
+	installationSource  string
 	versionMu           sync.RWMutex
 	staleIntegrations   []StaleIntegration
 	missingIntegrations []string
@@ -118,7 +119,7 @@ type Server struct {
 
 // NewServer creates a Server with the given session and configuration.
 func NewServer(session *Session, frontendFS embed.FS, author string, currentVersion string, port int, agentCmd string) (*Server, error) {
-	s := &Server{assets: frontendFS, author: author, agentCmd: agentCmd, currentVersion: currentVersion, port: port, prList: &PRListCache{}, codeFontDiscovery: discoverCodeFontFamilies}
+	s := &Server{assets: frontendFS, author: author, agentCmd: agentCmd, currentVersion: currentVersion, installationSource: detectInstallationSource(), port: port, prList: &PRListCache{}, codeFontDiscovery: discoverCodeFontFamilies}
 	if session != nil {
 		s.session.Store(session)
 	}
@@ -154,6 +155,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/live-mode-round-resolve.js", s.serveEmbeddedJS("live-mode-round-resolve.js"))
 	mux.HandleFunc("/live-mode-round-tooltip.js", s.serveEmbeddedJS("live-mode-round-tooltip.js"))
 	mux.HandleFunc("/live-mode.menu-controller.js", s.serveEmbeddedJS("live-mode.menu-controller.js"))
+	mux.HandleFunc("/crit-settings-panes.js", s.serveEmbeddedJS("crit-settings-panes.js"))
 
 	// Session-dependent endpoints (guarded by withReady middleware)
 	mux.HandleFunc("/api/review-cycle", s.withReady(s.handleReviewCycle))
@@ -462,12 +464,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	s.versionMu.RUnlock()
 	sess := s.session.Load()
 	resp := map[string]interface{}{
-		"version":           s.currentVersion,
-		"latest_version":    latestVersion,
-		"author":            s.author,
-		"agent_cmd_enabled": s.agentCmd != "",
-		"agent_name":        agentName(s.agentCmd),
-		"agent_cmd":         s.agentCmd,
+		"version":             s.currentVersion,
+		"latest_version":      latestVersion,
+		"installation_source": s.installationSource,
+		"author":              s.author,
+		"agent_cmd_enabled":   s.agentCmd != "",
+		"agent_name":          agentName(s.agentCmd),
+		"agent_cmd":           s.agentCmd,
 
 		// Review file path
 		"review_path": s.reviewPath,
@@ -485,6 +488,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// those servers cover.
 		"lsp_available":  s.lspAvailable(),
 		"lsp_extensions": s.lspExtensions(),
+		// Initial view for files with a Document/Diff toggle (markdown) in
+		// git mode: "document" forces document view, anything else keeps the
+		// historical default (diff in git mode, document in file mode).
+		"default_markdown_view": s.cfg.DefaultMarkdownView,
 
 		// Available integrations (always included)
 		"integrations_available": availableIntegrations(),
@@ -1115,8 +1122,7 @@ func (s *Server) handleFileComments(w http.ResponseWriter, r *http.Request) {
 			// WriteFiles), so cross-tab sync would otherwise stall until an
 			// external mutation. Emitting here closes that gap for live pins.
 			sess.Notify(SSEEvent{Type: "comments-changed"})
-			w.WriteHeader(http.StatusCreated)
-			writeJSON(w, c)
+			writeJSONStatus(w, http.StatusCreated, c)
 			return
 		}
 
@@ -1131,8 +1137,7 @@ func (s *Server) handleFileComments(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "File not found", http.StatusNotFound)
 				return
 			}
-			w.WriteHeader(http.StatusCreated)
-			writeJSON(w, c)
+			writeJSONStatus(w, http.StatusCreated, c)
 			return
 		}
 
@@ -1146,8 +1151,7 @@ func (s *Server) handleFileComments(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		writeJSON(w, c)
+		writeJSONStatus(w, http.StatusCreated, c)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1426,8 +1430,7 @@ func handleReplyCRUD(w http.ResponseWriter, r *http.Request, replyID string, ops
 			http.Error(w, "Comment not found", http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusCreated)
-		writeJSON(w, reply)
+		writeJSONStatus(w, http.StatusCreated, reply)
 
 	case r.Method == http.MethodPut && replyID != "":
 		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
@@ -1536,8 +1539,7 @@ func (s *Server) handleReviewComments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c := s.session.Load().AddReviewComment(req.Body, req.Author, "")
-		w.WriteHeader(http.StatusCreated)
-		writeJSON(w, c)
+		writeJSONStatus(w, http.StatusCreated, c)
 
 	case http.MethodDelete:
 		s.session.Load().ClearAllComments()
@@ -1712,7 +1714,11 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 	// $CRIT_REVIEW_PATH; failures/timeouts are logged and never block finish.
 	s.runFinishHooks(sess, approved, stats)
 
-	writeJSON(w, map[string]any{
+	// Auto-close-after-approve delay travels with the finish payload so the
+	// browser does not need a second /api/config round-trip after approval.
+	// That round-trip races with killDaemonOnApproval, which stops the daemon
+	// as soon as the approved finish response has been processed.
+	finishResp := map[string]any{
 		"status":       "finished",
 		"prompt":       prompt,
 		"approved":     approved,
@@ -1720,18 +1726,27 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 		"next_command": nextCommand,
 		"stats":        stats,
 		"prompt_meta":  promptMeta,
-	})
+	}
+	if ms, enabled := s.cfg.CloseOnApproveAfterMsEnabled(); enabled {
+		finishResp["close_on_approve_after_ms"] = ms
+	}
+	writeJSON(w, finishResp)
 
 	// Encode approved status into SSE event content as JSON so review-cycle
 	// clients can extract it without string matching on the prompt.
-	eventData, _ := json.Marshal(map[string]any{
+	// Mirror the finish response so review-cycle consumers see the same fields.
+	eventDataMap := map[string]any{
 		"prompt":       prompt,
 		"approved":     approved,
 		"stats":        stats,
 		"comments":     comments,
 		"next_command": nextCommand,
 		"prompt_meta":  promptMeta,
-	})
+	}
+	if ms, enabled := s.cfg.CloseOnApproveAfterMsEnabled(); enabled {
+		eventDataMap["close_on_approve_after_ms"] = ms
+	}
+	eventData, _ := json.Marshal(eventDataMap)
 	sess.Notify(SSEEvent{
 		Type:    "finish",
 		Content: string(eventData),
@@ -1786,7 +1801,7 @@ func listComments(sess *Session, unresolvedOnly bool) []comment.ListedComment {
 }
 
 func buildCommentsListCommand(sess *Session) string {
-	return fmt.Sprintf("crit comments --json %s", shellQuoteArg(sess.CritJSONPath()))
+	return "crit comments --json " + shellQuoteArg(sess.CritJSONPath())
 }
 
 // APIVersion is the HTTP API protocol version returned by GET /api/health as
@@ -1854,19 +1869,20 @@ func (s *Server) handleReviewCycle(w http.ResponseWriter, r *http.Request) {
 				sess.SetAwaitingFirstReview(false)
 				// Parse the structured finish event data
 				var finishData struct {
-					Prompt      string                  `json:"prompt"`
-					Approved    bool                    `json:"approved"`
-					Stats       map[string]any          `json:"stats"`
-					Comments    []comment.ListedComment `json:"comments"`
-					PromptMeta  *prompt.Meta            `json:"prompt_meta"`
-					NextCommand string                  `json:"next_command"`
+					Prompt                string                  `json:"prompt"`
+					Approved              bool                    `json:"approved"`
+					Stats                 map[string]any          `json:"stats"`
+					Comments              []comment.ListedComment `json:"comments"`
+					PromptMeta            *prompt.Meta            `json:"prompt_meta"`
+					NextCommand           string                  `json:"next_command"`
+					CloseOnApproveAfterMs *int                    `json:"close_on_approve_after_ms"`
 				}
 				json.Unmarshal([]byte(event.Content), &finishData)
 				nextCommand := finishData.NextCommand
 				if nextCommand == "" {
 					nextCommand = session.NextRoundCommand(sess)
 				}
-				writeJSON(w, map[string]any{
+				cycleResp := map[string]any{
 					"status":       "finished",
 					"prompt":       finishData.Prompt,
 					"approved":     finishData.Approved,
@@ -1874,18 +1890,18 @@ func (s *Server) handleReviewCycle(w http.ResponseWriter, r *http.Request) {
 					"stats":        finishData.Stats,
 					"next_command": nextCommand,
 					"prompt_meta":  finishData.PromptMeta,
-				})
+				}
+				if finishData.CloseOnApproveAfterMs != nil {
+					cycleResp["close_on_approve_after_ms"] = *finishData.CloseOnApproveAfterMs
+				}
+				writeJSON(w, cycleResp)
 				return
 			}
 			if event.Type == "server-shutdown" {
 				// Daemon is shutting down before the user finished reviewing.
 				// Tell the client explicitly so it can deny rather than fall
 				// through to the connection-error path and silently approve.
-				// Set Content-Type before WriteHeader — writeJSON sets it
-				// internally, but headers set after WriteHeader are dropped.
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusServiceUnavailable)
-				writeJSON(w, map[string]any{
+				writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{
 					"status":   "shutdown",
 					"approved": false,
 					"comments": []comment.ListedComment{},
@@ -2061,8 +2077,7 @@ func (s *Server) handleAttachmentUpload(w http.ResponseWriter, r *http.Request) 
 		originalFilename = sanitizeAttachmentAltText(header.Filename)
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, map[string]string{
+	writeJSONStatus(w, http.StatusCreated, map[string]string{
 		"filename":          filename,
 		"original_filename": originalFilename,
 		"url":               "attachments/" + filename,
@@ -2299,8 +2314,7 @@ func (s *Server) handleAgentRequest(w http.ResponseWriter, r *http.Request) {
 		s.runAgentCmd(prompt, comment.ID, filePath)
 	}()
 
-	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, map[string]any{
+	writeJSONStatus(w, http.StatusAccepted, map[string]any{
 		"status":     "accepted",
 		"comment_id": body.CommentID,
 		"file_path":  filePath,
@@ -2313,7 +2327,7 @@ func buildAgentPrompt(c Comment, filePath string) string {
 	if filePath == "" {
 		b.WriteString("A reviewer left a general comment on this review")
 	} else {
-		b.WriteString(fmt.Sprintf("A reviewer left a comment on %s", filePath))
+		b.WriteString("A reviewer left a comment on " + filePath)
 		if c.StartLine > 0 {
 			if c.EndLine > c.StartLine {
 				b.WriteString(fmt.Sprintf(" (lines %d-%d)", c.StartLine, c.EndLine))
@@ -2434,4 +2448,13 @@ func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("writeJSON: encode error: %v", err)
 	}
+}
+
+// writeJSONStatus commits a JSON response with an explicit HTTP status.
+// Headers must be set before WriteHeader; writeJSON alone is too late once
+// the response has been committed.
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	writeJSON(w, v)
 }

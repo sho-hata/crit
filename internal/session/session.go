@@ -37,7 +37,7 @@ const lazyFileThreshold = 25
 // computeFileHash returns the hex-encoded SHA256 hash of data.
 func computeFileHash(data []byte) string {
 	h := sha256.Sum256(data)
-	return fmt.Sprintf("%x", h)
+	return hex.EncodeToString(h[:])
 }
 
 // fileHash returns a stable, prefixed hash string for file content tracking.
@@ -218,6 +218,8 @@ type FileEntry struct {
 
 	// Lazy loading: when true, Content and DiffHunks are not yet populated.
 	// Call ensureLoaded() before accessing them. Only used when >lazyFileThreshold files.
+	// Content, FileHash, DiffHunks and Lazy are published together under
+	// Session.mu (see finishLoad), so readers must hold that lock.
 	Lazy     bool      `json:"-"`
 	loadOnce sync.Once // guards one-time loading of content + diffs
 	loadErr  error     // error from loading, if any
@@ -237,106 +239,145 @@ type FileEntry struct {
 
 // ensureFileLoaded loads a lazy file using the session's current focus.
 // Range/--pr focus reads content and diffs at HeadSHA/BaseSHA (including
-// --remote via readFileAtSHA). Working-tree focus reads the disk path.
+// --remote via readFileAtSHAForFocus). Working-tree focus reads the disk path.
+//
+// Callers must not hold s.mu: the loaders take it exclusively to publish.
 func (s *Session) ensureFileLoaded(f *FileEntry) error {
-	if f == nil || !f.Lazy {
+	if f == nil {
 		return nil
 	}
 	s.mu.RLock()
+	lazy := f.Lazy
 	focus := s.Focus
 	repoRoot := s.RepoRoot
 	baseRef := s.BaseRef
 	vc := s.VCS
 	s.mu.RUnlock()
 
+	if !lazy {
+		return nil
+	}
 	if focus.Kind == FocusRange {
 		return f.ensureLoadedAtRange(s, focus, repoRoot, vc)
 	}
-	return f.ensureLoaded(repoRoot, baseRef, vc)
+	return f.ensureLoaded(s, repoRoot, baseRef, vc)
+}
+
+// isLazy reads fe.Lazy under s.mu so the check is ordered against the publish
+// in finishLoad.
+func (s *Session) isLazy(fe *FileEntry) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return fe.Lazy
+}
+
+// finishLoad publishes the result of a lazy load onto fe under s.mu — the same
+// lock every FileEntry reader holds (snapshotForWrite, GetFileSnapshot,
+// GetFileDiffSnapshot). The loaders do their I/O unlocked and call this once,
+// so a concurrent reader — most notably the debounced WriteFiles timer — sees
+// either the unloaded entry or the fully loaded one, never a torn mix.
+func (s *Session) finishLoad(fe *FileEntry, content, hash string, hunks []vcs.DiffHunk) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fe.Content = content
+	fe.FileHash = hash
+	fe.DiffHunks = hunks
+	fe.Lazy = false
 }
 
 // ensureLoaded loads content and diff hunks for a lazy file on first access
 // from the working tree. For non-lazy files, this is an immediate no-op.
 // The vcs parameter is used for computing diffs; pass nil to fall back to
 // the git package-level functions (backward compat for tests).
-func (fe *FileEntry) ensureLoaded(repoRoot, baseRef string, v vcs.VCS) error {
-	if !fe.Lazy {
+func (fe *FileEntry) ensureLoaded(s *Session, repoRoot, baseRef string, v vcs.VCS) error {
+	if !s.isLazy(fe) {
 		return nil
 	}
 	fe.loadOnce.Do(func() {
+		var content, hash string
+		var hunks []vcs.DiffHunk
+
 		if fe.Status != "deleted" {
 			data, err := os.ReadFile(fe.AbsPath)
 			if err != nil {
 				fe.loadErr = fmt.Errorf("reading %s: %w", fe.Path, err)
 				return
 			}
-			fe.Content = string(data)
-			fe.FileHash = fileHash(data)
-		}
+			content = string(data)
+			hash = fileHash(data)
 
-		if fe.Status != "deleted" {
 			if fe.Status == "added" || fe.Status == "untracked" {
-				fe.DiffHunks = vcs.FileDiffUnifiedNewFile(fe.Content)
+				hunks = vcs.FileDiffUnifiedNewFile(content)
 			} else {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				fe.loadDiff(ctx, repoRoot, baseRef, v)
+				hunks = fe.diffHunks(ctx, repoRoot, baseRef, v)
 			}
 		}
 
-		fe.Lazy = false
+		s.finishLoad(fe, content, hash, hunks)
 	})
 	return fe.loadErr
 }
 
 // ensureLoadedAtRange loads a lazy file from a fixed (BaseSHA, HeadSHA) range.
 func (fe *FileEntry) ensureLoadedAtRange(s *Session, focus Focus, repoRoot string, v vcs.VCS) error {
-	if !fe.Lazy {
+	if !s.isLazy(fe) {
 		return nil
 	}
 	fe.loadOnce.Do(func() {
+		var content, hash string
+
 		if fe.Status != "deleted" {
-			data, err := s.readFileAtSHA(focus.HeadSHA, fe.Path)
+			data, err := s.readFileAtSHAForFocus(focus, focus.HeadSHA, fe.Path)
 			if err != nil {
 				fe.loadErr = fmt.Errorf("reading %s at %s: %w", fe.Path, focus.HeadSHA, err)
 				return
 			}
-			if data == nil {
+			if data == nil && s.RemoteFiles {
+				// Remote fetch returning nil means the file really isn't present
+				// at this SHA; treat it as a load error. (The eager path treats
+				// remote nil as empty content too; aligning that is left for a
+				// follow-up because this PR is about local submodule gitlinks.)
 				fe.loadErr = fmt.Errorf("reading %s at %s: not found", fe.Path, focus.HeadSHA)
 				return
 			}
-			fe.Content = string(data)
-			fe.FileHash = fileHash(data)
+			// nil data from local git means the path is not a blob at this SHA
+			// (e.g. a submodule gitlink). Treat it as empty content, matching the
+			// eager-load path in buildFilesForFocus for local reads.
+			content = string(data)
+			hash = fileHash(data)
 		}
 
+		var hunks []vcs.DiffHunk
 		switch {
 		case fe.Status == "added" || fe.Status == "untracked":
-			fe.DiffHunks = vcs.FileDiffUnifiedNewFile(fe.Content)
+			hunks = vcs.FileDiffUnifiedNewFile(content)
 		case v == nil:
 			fe.loadErr = fmt.Errorf("range lazy load requires VCS for %s", fe.Path)
 			return
 		default:
-			hunks, err := v.FileDiffBetweenSHAs(fe.Path, fe.OldPath, focus.DiffBaseSHA(), focus.HeadSHA, repoRoot, false)
+			h, err := v.FileDiffBetweenSHAs(fe.Path, fe.OldPath, focus.DiffBaseSHA(), focus.HeadSHA, repoRoot, false)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: range diff failed for %s: %v\n", fe.Path, err)
 			} else {
-				fe.DiffHunks = hunks
+				hunks = h
 			}
 		}
 
-		fe.Lazy = false
+		s.finishLoad(fe, content, hash, hunks)
 	})
 	return fe.loadErr
 }
 
-// loadDiff computes diff hunks via the vcs.VCS interface or git package-level fallback.
-func (fe *FileEntry) loadDiff(ctx context.Context, repoRoot, baseRef string, vc vcs.VCS) {
+// diffHunks computes diff hunks via the vcs.VCS interface or git package-level fallback.
+func (fe *FileEntry) diffHunks(ctx context.Context, repoRoot, baseRef string, vc vcs.VCS) []vcs.DiffHunk {
 	hunks, err := diffHunksForFileCtx(ctx, fe.Path, fe.OldPath, fe.Status, baseRef, repoRoot, false, vc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: diff failed for %s: %v\n", fe.Path, err)
-	} else {
-		fe.DiffHunks = hunks
+		return nil
 	}
+	return hunks
 }
 
 // diffHunksForFile returns diff hunks for a file, pairing old+new paths for renames.
@@ -361,6 +402,7 @@ type Session struct {
 	Mode           string   // "files" (explicit markdown files) or "git" (auto-detected from git)
 	CLIArgs        []string // original file arguments passed on the command line (empty for git mode)
 	SessionKey     string   // stable ID for reconnect via crit --session (set by daemon)
+	CWD            string   // daemon working directory, recorded in review.json for crit resume (set by daemon)
 	Branch         string
 	BaseRef        string
 	BaseBranchName string // display name of the base branch (e.g. "production", "master")
@@ -487,6 +529,12 @@ type CritJSON struct {
 	ReviewComments []Comment               `json:"review_comments,omitempty"`
 	CliArgs        []string                `json:"cli_args,omitempty"`
 	Files          map[string]CritJSONFile `json:"files"`
+
+	// CWD is the directory the daemon ran in. The session key is a hash of it,
+	// so it cannot be recovered from the key alone — `crit resume` reads it to
+	// restart a review from a different directory. Absent in reviews written
+	// before this field existed; such reviews resume in the current directory.
+	CWD string `json:"cwd,omitempty"`
 
 	// ActiveDiffScope is the most recent focus diff_scope from this session.
 	// Read by `crit push` to gate full-stack pushes; "" indicates working-tree mode.
@@ -647,29 +695,43 @@ func NewSessionFromGit(ignorePatterns []string) (*Session, error) {
 }
 
 // DetectVCSChanges resolves the base ref and returns the list of changed files using the vcs.VCS interface.
-// DetectVCSChanges resolves the base ref and returns changed files using the vcs.VCS interface.
 func DetectVCSChanges(vc vcs.VCS, root string, ignorePatterns []string) (branch, baseRef, resolvedBase string, changes []vcs.FileChange, err error) {
+	branch, baseRef, resolvedBase, changes, _, err = detectVCSChangesAndScopes(vc, root, ignorePatterns)
+	return branch, baseRef, resolvedBase, changes, err
+}
+
+func detectVCSChangesAndScopes(vc vcs.VCS, root string, ignorePatterns []string) (branch, baseRef, resolvedBase string, changes []vcs.FileChange, scopes []string, err error) {
 	branch = vc.CurrentBranch()
 	resolvedBase = vc.DefaultBranch()
 	if branch != resolvedBase {
 		baseRef, _ = vc.MergeBase(vc.DefaultBaseRef())
 	}
 
-	if baseRef != "" {
-		changes, err = vc.ChangedFilesFromBaseInDir(baseRef, root)
-	} else {
-		changes, err = vc.ChangedFilesOnDefaultInDir(root)
+	usedSnapshot := false
+	if snapshotter, ok := vc.(vcs.InitialChangeSnapshotter); ok {
+		changes, scopes, usedSnapshot, err = snapshotter.InitialChangesAndScopes(baseRef, root)
+		if !usedSnapshot {
+			changes = nil
+			scopes = nil
+		}
+	}
+	if !usedSnapshot && err == nil {
+		if baseRef != "" {
+			changes, err = vc.ChangedFilesFromBaseInDir(baseRef, root)
+		} else {
+			changes, err = vc.ChangedFilesOnDefaultInDir(root)
+		}
 	}
 	if err != nil {
-		return "", "", "", nil, fmt.Errorf("detecting changes: %w", err)
+		return "", "", "", nil, nil, fmt.Errorf("detecting changes: %w", err)
 	}
 	changes = config.FilterIgnored(changes, ignorePatterns)
 	changes = filterBinary(changes)
 
 	if len(changes) == 0 {
-		return "", "", "", nil, ErrNoChangedFiles
+		return "", "", "", nil, nil, ErrNoChangedFiles
 	}
-	return branch, baseRef, resolvedBase, changes, nil
+	return branch, baseRef, resolvedBase, changes, scopes, nil
 }
 
 // resolveSessionStartBaseRef pins BaseRef to HEAD when reviewing on the default
@@ -743,7 +805,7 @@ func newGitSession(v vcs.VCS, ignorePatterns []string, requireChanges bool) (*Se
 		return nil, fmt.Errorf("not a %s repository: %w", v.Name(), err)
 	}
 
-	branch, baseRef, resolvedBase, changes, err := DetectVCSChanges(v, root, ignorePatterns)
+	branch, baseRef, resolvedBase, changes, initialScopes, err := detectVCSChangesAndScopes(v, root, ignorePatterns)
 	if errors.Is(err, ErrNoChangedFiles) && !requireChanges {
 		// DetectVCSChanges zeroes its return values on the empty path; recover
 		// the metadata so the session reports the correct branch/base.
@@ -807,6 +869,9 @@ func newGitSession(v vcs.VCS, ignorePatterns []string, requireChanges bool) (*Se
 			continue
 		}
 		s.Files = append(s.Files, fe)
+	}
+	if len(initialScopes) > 0 {
+		seedAvailableScopes(baseRef, initialScopes)
 	}
 
 	return s, nil
@@ -1323,8 +1388,9 @@ func (s *Session) GetReviewComments() []Comment {
 	defer s.mu.RUnlock()
 	out := make([]Comment, 0, len(s.reviewComments))
 	seen := make(map[string]struct{}, len(s.reviewComments))
+	focusKey := focusKeyFor(s.Focus)
 	for _, c := range s.reviewComments {
-		if !visibleInFocus(c, s.Focus) {
+		if !visibleInFocusKey(c, focusKey, s.Focus) {
 			continue
 		}
 		if c.ID != "" {
@@ -1660,9 +1726,13 @@ func (s *Session) trackDeletedComment(filePath, id string) {
 }
 
 // RefreshFileContent re-reads all file content from disk.
+// No-op under FocusRange: content is pinned to the head SHA blob, not the working tree.
 func (s *Session) RefreshFileContent() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.Focus.Kind == FocusRange {
+		return
+	}
 	for _, f := range s.Files {
 		if f.AbsPath == "" || f.Lazy {
 			continue
@@ -1758,8 +1828,9 @@ func (s *Session) GetComments(filePath string) []Comment {
 		return []Comment{}
 	}
 	result := make([]Comment, 0, len(f.Comments))
+	focusKey := focusKeyFor(s.Focus)
 	for _, c := range f.Comments {
-		if !visibleInFocus(c, s.Focus) {
+		if !visibleInFocusKey(c, focusKey, s.Focus) {
 			continue
 		}
 		if len(c.Replies) > 0 {
@@ -2240,6 +2311,9 @@ func (s *Session) loadCritJSON() {
 func (s *Session) restoreFileCommentsLocked(cj *CritJSON) {
 	for _, f := range s.Files {
 		cf, ok := cj.Files[f.Path]
+		if !ok && f.OldPath != "" {
+			cf, ok = cj.Files[f.OldPath]
+		}
 		if !ok {
 			continue
 		}
@@ -2395,11 +2469,25 @@ func (s *Session) restoreOrphanedComments() {
 // s.mu held or during init (before concurrent access).
 func (s *Session) appendOrphanedFiles(critFiles map[string]CritJSONFile) {
 	knownPaths := make(map[string]bool, len(s.Files))
+	byOldPath := make(map[string]*FileEntry)
 	for _, f := range s.Files {
 		knownPaths[f.Path] = true
+		if f.OldPath != "" {
+			byOldPath[f.OldPath] = f
+		}
 	}
 	for path, cf := range critFiles {
 		if knownPaths[path] || len(cf.Comments) == 0 {
+			continue
+		}
+		// #917: comments keyed under a pre-rename path belong on the renamed entry.
+		if f, ok := byOldPath[path]; ok {
+			f.Comments = mergeCommentSlices(f.Comments, cf.Comments)
+			for i := range f.Comments {
+				if f.Comments[i].Scope == "" {
+					f.Comments[i].Scope = "line"
+				}
+			}
 			continue
 		}
 		fe := &FileEntry{
@@ -2645,8 +2733,9 @@ func (s *Session) GetSessionInfo() SessionInfo {
 	defer s.mu.RUnlock()
 
 	reviewComments := make([]Comment, 0, len(s.reviewComments))
+	focusKey := focusKeyFor(s.Focus)
 	for _, c := range s.reviewComments {
-		if !visibleInFocus(c, s.Focus) {
+		if !visibleInFocusKey(c, focusKey, s.Focus) {
 			continue
 		}
 		reviewComments = append(reviewComments, c)

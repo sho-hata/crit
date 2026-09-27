@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { clearAllComments, loadPage, addComment } from './helpers';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { clearAllComments, loadPage, addComment, getReviewFilePath, waitForScrollStable } from './helpers';
 
 // Rebuilding every file section hands back deferred (empty) bodies, so the
 // document collapses shorter than the current offset and the browser clamps the
@@ -26,19 +27,20 @@ test.describe('Scroll position across comment updates', () => {
     // Park the thread mid-viewport and let deferred bodies settle so the
     // measurement below isn't racing the mount observer.
     await card.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-    await page.waitForTimeout(500);
+    await waitForScrollStable(page);
     const before = await card.evaluate(el => ({
       scrollY: window.scrollY,
       top: el.getBoundingClientRect().top,
     }));
     expect(before.scrollY).toBeGreaterThan(100);
 
-    await card.locator('.reply-input').fill('replying without losing my place');
+    await card.locator('.reply-input').click();
+    await card.locator('.reply-textarea').fill('replying without losing my place');
     await card.locator('.reply-form-buttons .btn-primary').click();
 
     await expect(card.locator('.comment-reply')).toHaveCount(1);
     // The jump happened when the SSE event landed, after the local re-render.
-    await page.waitForTimeout(1500);
+    await waitForScrollStable(page);
 
     const after = await card.evaluate(el => ({
       scrollY: window.scrollY,
@@ -63,7 +65,7 @@ test.describe('Scroll position across comment updates', () => {
     await expect(card).toBeVisible();
 
     await card.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-    await page.waitForTimeout(500);
+    await waitForScrollStable(page);
     // The card itself disappears, so anchor the measurement to its file section.
     const before = await section.evaluate(el => ({
       scrollY: window.scrollY,
@@ -73,7 +75,7 @@ test.describe('Scroll position across comment updates', () => {
 
     await card.locator('.comment-actions .delete-btn').click();
     await expect(page.locator('.comment-card')).toHaveCount(0);
-    await page.waitForTimeout(1500);
+    await waitForScrollStable(page);
 
     const after = await section.evaluate(el => ({
       scrollY: window.scrollY,
@@ -83,6 +85,81 @@ test.describe('Scroll position across comment updates', () => {
     expect(Math.abs(after.top - before.top)).toBeLessThan(50);
   });
 
+  // Round-complete (the agent re-arming after Finish Review) re-fetches the
+  // session and rebuilds every section, so it threw the reader back to the top
+  // once per round — the same deferred-body collapse as above.
+  test('round-complete keeps the file being read where it was on screen', async ({ page, request }) => {
+    await page.setViewportSize({ width: 1200, height: 400 });
+
+    const session = await (await request.get('/api/session')).json();
+    const lastFile = session.files[session.files.length - 1].path as string;
+    await addComment(request, lastFile, 5, 'Round me');
+
+    await loadPage(page);
+
+    const section = page.locator('.file-section').last();
+    await section.evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+    await waitForScrollStable(page);
+    const before = await section.evaluate(el => ({
+      scrollY: window.scrollY,
+      top: el.getBoundingClientRect().top,
+    }));
+    expect(before.scrollY).toBeGreaterThan(100);
+
+    await page.locator('#finishBtn').click();
+    const overlay = page.locator('#waitingOverlay');
+    await expect(overlay).toHaveClass(/active/);
+
+    await request.post('/api/round-complete');
+    await expect(overlay).not.toHaveClass(/active/, { timeout: 5_000 });
+    await waitForScrollStable(page);
+
+    // The rebuild replaces the section node; the locator re-resolves to the new one.
+    const after = await section.evaluate(el => ({
+      scrollY: window.scrollY,
+      top: el.getBoundingClientRect().top,
+    }));
+    expect(after.scrollY).toBeGreaterThan(100);
+    expect(Math.abs(after.top - before.top)).toBeLessThan(50);
+  });
+
+  test('round-complete keeps a conversation reader above offscreen files', async ({ page, request }) => {
+    await page.setViewportSize({ width: 1200, height: 400 });
+    const response = await request.post('/api/comments', {
+      data: { body: 'Conversation\n\n' + 'A paragraph\n\n'.repeat(30) },
+    });
+    expect(response.ok()).toBeTruthy();
+    const reviewPath = await getReviewFilePath(request);
+    await loadPage(page);
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await waitForScrollStable(page);
+    expect(await page.locator('.file-section').first().evaluate(
+      el => el.getBoundingClientRect().top >= window.innerHeight,
+    )).toBe(true);
+
+    await page.locator('#finishBtn').click();
+    const overlay = page.locator('#waitingOverlay');
+    await expect(overlay).toHaveClass(/active/);
+
+    // An agent can add a review-level comment on disk immediately before
+    // re-arming. Round-complete imports it even before the file watcher polls.
+    const review = JSON.parse(readFileSync(reviewPath, 'utf8'));
+    review.review_comments.push({
+      ...review.review_comments[0],
+      id: 'round-complete-conversation-reply',
+      body: 'New paragraph\n\n'.repeat(20),
+    });
+    writeFileSync(reviewPath, JSON.stringify(review));
+    expect((await request.post('/api/round-complete')).ok()).toBeTruthy();
+    await expect(overlay).not.toHaveClass(/active/);
+    await expect(page.locator('#reviewConversation .comment-card')).toHaveCount(2);
+    await waitForScrollStable(page);
+
+    // A file below the viewport must not become the scroll anchor when the
+    // conversation grows: the reader is still at the top of the conversation.
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  });
+
   // Hide-resolved is CSS for cards plus a highlight sync — it must not wipe
   // #filesContainer. A full rebuild was both unnecessary and the scroll bug.
   test('toggling hide-resolved preserves file section DOM nodes', async ({ page }) => {
@@ -90,7 +167,7 @@ test.describe('Scroll position across comment updates', () => {
     await loadPage(page);
 
     await page.evaluate(() => window.scrollTo({ top: 2000, behavior: 'instant' }));
-    await page.waitForTimeout(500);
+    await waitForScrollStable(page);
 
     const before = await page.evaluate(() => {
       const sections = [...document.querySelectorAll('#filesContainer .file-section[id]')];
@@ -103,8 +180,12 @@ test.describe('Scroll position across comment updates', () => {
     expect(before).toBeTruthy();
     expect(before!.scrollY).toBeGreaterThan(100);
 
+    const wasHidden = await page.evaluate(() => document.body.classList.contains('hide-resolved'));
     await page.keyboard.press('h');
-    await page.waitForTimeout(300);
+    // Hide-resolved is a CSS class toggle on <body> — wait for it to flip.
+    await expect.poll(
+      () => page.evaluate(() => document.body.classList.contains('hide-resolved')),
+    ).toBe(!wasHidden);
 
     const after = await page.evaluate((id: string) => {
       const section = document.getElementById(id);

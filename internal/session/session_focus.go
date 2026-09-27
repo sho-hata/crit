@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/pathsafe"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -117,7 +119,15 @@ func focusKeyFor(f Focus) string {
 // FocusKey. Within a range focus, the layer/full-stack DiffScope filter
 // also applies. Pure function — no I/O, no locks.
 func visibleInFocus(c Comment, f Focus) bool {
-	if c.FocusKey != focusKeyFor(f) {
+	return visibleInFocusKey(c, focusKeyFor(f), f)
+}
+
+// visibleInFocusKey is visibleInFocus with a precomputed focus key. Use it in
+// per-comment loops: focusKeyFor allocates (Sprintf) on every call, so
+// calling visibleInFocus per comment pays one allocation per comment.
+// Hoisting the key out of the loop makes the scan allocation-free.
+func visibleInFocusKey(c Comment, key string, f Focus) bool {
+	if c.FocusKey != key {
 		return false
 	}
 	if f.Kind == FocusRange {
@@ -153,9 +163,10 @@ func StampWithFocus(c Comment, f Focus) Comment {
 
 // countVisibleComments returns the count of comments visible in the given focus.
 func countVisibleComments(comments []Comment, f Focus) int {
+	key := focusKeyFor(f)
 	n := 0
 	for _, c := range comments {
-		if visibleInFocus(c, f) {
+		if visibleInFocusKey(c, key, f) {
 			n++
 		}
 	}
@@ -370,6 +381,9 @@ func dropStaleCacheOnPRSwitch(oldFocus, newFocus Focus) {
 // session and confuse the push gate.
 func (s *Session) persistActiveDiffScope(scope string) error {
 	critPath := s.critJSONPath()
+	if critPath == "" {
+		return nil
+	}
 	cj, err := readCritJSONFromDisk(critPath)
 	if err != nil {
 		// File may not exist yet — fall through and create one with just the scope.
@@ -384,9 +398,13 @@ func (s *Session) persistActiveDiffScope(scope string) error {
 // the GitHub API (gh api repos/.../contents/?ref=<sha>); otherwise it falls
 // through to local git. Result is memoized in s.remoteFileCache for the
 // remote path; the local path is fast enough already.
-func (s *Session) readFileAtSHA(sha, path string) ([]byte, error) {
-	if s.RemoteFiles && s.Focus.Kind == FocusRange && s.Focus.PRURL != "" {
-		return s.readFileAtSHARemote(sha, path)
+func (s *Session) readFileAtSHA(sha, path string) ([]byte, error) { //nolint:unparam // production callers use readFileAtSHAForFocus; retained as the current-focus convenience and test seam
+	return s.readFileAtSHAForFocus(s.Focus, sha, path)
+}
+
+func (s *Session) readFileAtSHAForFocus(focus Focus, sha, path string) ([]byte, error) {
+	if s.RemoteFiles && focus.Kind == FocusRange && focus.PRURL != "" {
+		return s.readFileAtSHARemote(focus, sha, path)
 	}
 	return s.VCS.ReadFileAtSHA(sha, path, s.RepoRoot)
 }
@@ -394,13 +412,13 @@ func (s *Session) readFileAtSHA(sha, path string) ([]byte, error) {
 // readFileAtSHARemote fetches file content via `gh api`. Falls back to the
 // local VCS read when the PR URL is unparseable — the caller still gets a
 // best-effort result rather than a hard failure.
-func (s *Session) readFileAtSHARemote(sha, path string) ([]byte, error) {
+func (s *Session) readFileAtSHARemote(focus Focus, sha, path string) ([]byte, error) {
 	cacheKey := sha + "\x00" + path
 	cache := s.ensureRemoteFileCache()
 	if v, ok := cache.Get(cacheKey); ok {
 		return v, nil
 	}
-	owner, name, ok := parseRepoFromPRURL(s.Focus.PRURL)
+	owner, name, ok := parseRepoFromPRURL(focus.PRURL)
 	if !ok {
 		// Unparseable PRURL is rare (we built the Focus from a gh API call)
 		// but keep going — local git is still a valid path.
@@ -481,7 +499,7 @@ func (s *Session) buildFilesForFocus(f Focus, v vcs.VCS, repoRoot string) ([]*Fi
 			continue
 		}
 		if fc.Status != "deleted" {
-			data, readErr := s.readFileAtSHA(f.HeadSHA, fc.Path)
+			data, readErr := s.readFileAtSHAForFocus(f, f.HeadSHA, fc.Path)
 			if readErr != nil {
 				return nil, "", fmt.Errorf("read %s at %s: %w", fc.Path, f.HeadSHA, readErr)
 			}
@@ -566,6 +584,15 @@ var (
 )
 
 const scopeCacheTTL = 2 * time.Second
+
+func seedAvailableScopes(baseRef string, scopes []string) {
+	scopeCacheMu.Lock()
+	defer scopeCacheMu.Unlock()
+
+	scopeCacheBaseRef = baseRef
+	scopeCacheResult = append([]string(nil), scopes...)
+	scopeCacheExpiry = time.Now().Add(scopeCacheTTL)
+}
 
 // cachedAvailableScopes returns availableScopes results, using a 2-second cache
 // to avoid running VCS commands on every /api/session poll.
@@ -698,11 +725,12 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 		}
 	}
 	rc := make([]Comment, 0, len(s.reviewComments))
+	focusKey := focusKeyFor(s.Focus)
 	for _, c := range s.reviewComments {
 		if !c.Resolved {
 			totalUnresolved++
 		}
-		if !visibleInFocus(c, s.Focus) {
+		if !visibleInFocusKey(c, focusKey, s.Focus) {
 			continue
 		}
 		rc = append(rc, c)
@@ -736,30 +764,39 @@ func addedFileRendersWhole(scope string) bool {
 	return scope != "staged" && scope != "unstaged"
 }
 
-func scopedHunks(fc vcs.FileChange, scope, commit, baseRef, repoRoot string, v vcs.VCS, ignoreWhitespace bool) []vcs.DiffHunk {
-	if v == nil {
-		return nil
+// scopedHunksForCommit returns hunks when a commit (or commit range) pin is set.
+// ok is false when commit is empty and the caller should use scope-based diffs.
+func scopedHunksForCommit(fc vcs.FileChange, commit, repoRoot string, v vcs.VCS, ignoreWhitespace bool) (hunks []vcs.DiffHunk, ok bool) {
+	if commit == "" {
+		return nil, false
 	}
 	if commit == virtualWorkingTreeCommitSHA {
 		h, err := v.FileDiffUnified(fc.Path, "HEAD", repoRoot, ignoreWhitespace)
 		if err == nil {
-			return h
+			return h, true
 		}
-		return nil
+		return nil, true
 	}
-	if base, head, ok := vcs.SplitCommitRange(commit); ok {
+	if base, head, rangeOK := vcs.SplitCommitRange(commit); rangeOK {
 		h, err := v.FileDiffBetweenSHAs(fc.Path, fc.OldPath, base, head, repoRoot, ignoreWhitespace)
 		if err == nil {
-			return h
+			return h, true
 		}
+		return nil, true
+	}
+	h, err := v.FileDiffForCommit(fc.Path, commit, repoRoot, ignoreWhitespace)
+	if err == nil {
+		return h, true
+	}
+	return nil, true
+}
+
+func scopedHunks(fc vcs.FileChange, scope, commit, baseRef, repoRoot string, v vcs.VCS, ignoreWhitespace bool) []vcs.DiffHunk {
+	if v == nil {
 		return nil
 	}
-	if commit != "" {
-		h, err := v.FileDiffForCommit(fc.Path, commit, repoRoot, ignoreWhitespace)
-		if err == nil {
-			return h
-		}
-		return nil
+	if hunks, ok := scopedHunksForCommit(fc, commit, repoRoot, v, ignoreWhitespace); ok {
+		return hunks
 	}
 	showWholeFile := fc.Status == "untracked"
 	if fc.Status == "added" {
@@ -772,7 +809,7 @@ func scopedHunks(fc vcs.FileChange, scope, commit, baseRef, repoRoot string, v v
 		}
 		return nil
 	}
-	if fc.Status == "renamed" && fc.OldPath != "" {
+	if fc.Status == "renamed" && fc.OldPath != "" && (scope == "" || scope == "all" || scope == "branch") {
 		h, err := diffHunksForFile(fc.Path, fc.OldPath, fc.Status, baseRef, repoRoot, ignoreWhitespace, v)
 		if err == nil {
 			return h
@@ -978,6 +1015,42 @@ func computeScopedDiffHunks(path, scope, commit, status, oldPath, content, baseR
 	return scopedHunks(vcs.FileChange{Path: path, OldPath: oldPath, Status: status}, scope, commit, baseRef, repoRoot, v, ignoreWhitespace)
 }
 
+// scopedDiffContents returns the old- and new-side content paired with a Git
+// index diff. Other VCS backends do not expose staged/unstaged scopes.
+func scopedDiffContents(path, scope, repoRoot, worktreeContent string, v vcs.VCS) (previousContent, content string, ok bool) {
+	content = worktreeContent
+	if v == nil || v.Name() != "git" {
+		return "", content, false
+	}
+
+	switch scope {
+	case "staged":
+		previousContent, _ = v.FileContentAtRef(path, "HEAD", repoRoot)
+		content, _ = v.FileContentAtRef(path, ":0", repoRoot)
+	case "unstaged":
+		// path comes from the ?path= query, so the worktree read must stay
+		// inside repoRoot (symlinks included).
+		resolved, err := pathsafe.ResolveUnder(filepath.Join(repoRoot, filepath.Clean(filepath.FromSlash(path))), repoRoot)
+		switch {
+		case errors.Is(err, pathsafe.ErrNotFound):
+			content = ""
+		case err != nil:
+			return "", worktreeContent, false
+		default:
+			data, err := os.ReadFile(resolved)
+			if err == nil {
+				content = string(data)
+			} else if os.IsNotExist(err) {
+				content = ""
+			}
+		}
+		previousContent, _ = v.FileContentAtRef(path, ":0", repoRoot)
+	default:
+		return "", content, false
+	}
+	return previousContent, content, true
+}
+
 // GetFileDiffSnapshotScoped returns diff data for a file filtered by scope.
 // When scope is "" or in file mode (scopes only apply to git), delegates to GetFileDiffSnapshot.
 // When commit is non-empty, returns the diff for that single commit.
@@ -1000,5 +1073,12 @@ func (s *Session) GetFileDiffSnapshotScoped(path, scope, commit string, ignoreWh
 	if hunks == nil {
 		hunks = []vcs.DiffHunk{}
 	}
-	return map[string]any{"hunks": hunks}, true
+	result := map[string]any{"hunks": hunks}
+	if commit == "" {
+		if previousContent, scopedContent, ok := scopedDiffContents(path, scope, repoRoot, content, vc); ok {
+			result["previous_content"] = previousContent
+			result["content"] = scopedContent
+		}
+	}
+	return result, true
 }
