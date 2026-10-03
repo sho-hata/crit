@@ -63,6 +63,13 @@ type Language struct {
 	// wait would only sit out its grace period. Don't set it for a server that
 	// answers from a half-built project.
 	SkipReadyWait bool
+	// NoResultCode is the JSON-RPC error code the server answers a position
+	// request (hover, definition, references) with when there is simply
+	// nothing at that position, or 0 for a server that answers null like
+	// gopls. The Manager turns such an error into an empty result: the UI
+	// counts errors toward its failure breaker, and hovering over whitespace
+	// must not trip it.
+	NoResultCode int
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for
 	// TypeScript). root is the tree the language's dependencies live in — the
@@ -84,6 +91,10 @@ type Language struct {
 // Python note: the same holds for a virtualenv (.venv is untracked), and
 // Manager.depRoot covers it the same way. pyright does not discover a .venv
 // on its own, so pyConfigSettings tells it where the packages are.
+//
+// Terraform note: modules installed by `terraform init` live in the untracked
+// .terraform/, so under range focus registry/git module references don't
+// resolve; local modules and provider schemas (embedded in terraform-ls) do.
 var languages = []*Language{
 	{
 		Name:    "go",
@@ -126,6 +137,15 @@ var languages = []*Language{
 		LocalEnv:       true,
 		SkipReadyWait:  true,
 		ExtraRoots:     pyExtraRoots,
+	},
+	{
+		Name:           "terraform",
+		Command:        []string{"terraform-ls", "serve"},
+		IDByExt:        map[string]string{"tf": "terraform", "tfvars": "terraform-vars"},
+		SparsePatterns: []string{"*.tf", "*.tfvars"},
+		InitOptions:    tfInitOptions,
+		NoResultCode:   tfNoResultCode,
+		SkipReadyWait:  true,
 	},
 }
 

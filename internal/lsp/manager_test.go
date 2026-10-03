@@ -492,3 +492,49 @@ func TestManagerDoesNotWaitOnProgressForPython(t *testing.T) {
 		t.Errorf("Hover took %s, want it to skip the progress wait", took)
 	}
 }
+
+// terraform-ls answers "nothing at this position" with an error rather than
+// null. Surfaced as an error it would count toward the UI's failure breaker,
+// so hovering across whitespace would switch LSP off; it must come back as an
+// empty result instead. Any other error still surfaces.
+func TestManagerNoResultCodeIsAnEmptyResult(t *testing.T) {
+	t.Parallel()
+
+	noResult := &ResponseError{Code: tfNoResultCode, Message: "position outside of any attribute name, value or block"}
+	other := &ResponseError{Code: -32603, Message: "internal error"}
+	cases := []struct {
+		name    string
+		file    string
+		reply   *ResponseError
+		wantErr bool
+	}{
+		{"terraform no-result code", "main.tf", noResult, false},
+		{"terraform other code", "main.tf", other, true},
+		{"language without a no-result code", "main.go", noResult, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m, _ := newManagerHarness(t, func(method string, _ json.RawMessage) any {
+				if method == "initialize" {
+					return nil
+				}
+				return tc.reply
+			})
+			file := writeGoFile(t, m.root, tc.file, "\n")
+
+			hover, err := m.Hover(file, 0, 0)
+			if (err != nil) != tc.wantErr || hover != "" {
+				t.Errorf("Hover = %q, %v; want empty, error %v", hover, err, tc.wantErr)
+			}
+			defs, err := m.Definition(file, 0, 0)
+			if (err != nil) != tc.wantErr || len(defs) != 0 {
+				t.Errorf("Definition = %v, %v; want none, error %v", defs, err, tc.wantErr)
+			}
+			refs, err := m.References(file, 0, 0)
+			if (err != nil) != tc.wantErr || len(refs) != 0 {
+				t.Errorf("References = %v, %v; want none, error %v", refs, err, tc.wantErr)
+			}
+		})
+	}
+}

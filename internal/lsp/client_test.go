@@ -51,8 +51,8 @@ type fakeServer struct {
 }
 
 // startFake wires a Client to a fake server. handler produces the result for
-// each client request; initialize is answered automatically when handler
-// returns nil for it.
+// each client request, or a *ResponseError to answer with an error;
+// initialize is answered automatically when handler returns nil for it.
 func startFake(handler func(method string, params json.RawMessage) any) *fakeServer {
 	c2sR, c2sW := io.Pipe()
 	s2cR, s2cW := io.Pipe()
@@ -82,6 +82,10 @@ func (fs *fakeServer) loop() {
 			}
 			if result == nil && msg.Method == "initialize" {
 				result = map[string]any{"capabilities": map[string]any{}}
+			}
+			if respErr, ok := result.(*ResponseError); ok {
+				fs.send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": respErr})
+				continue
 			}
 			fs.send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": result})
 		case msg.Method != "": // notification

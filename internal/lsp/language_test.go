@@ -26,6 +26,11 @@ func TestLanguageForPath(t *testing.T) {
 		{"app/main.py", "python", "python"},
 		{"stubs/types.pyi", "python", "python"},
 		{"UPPER.PY", "python", "python"},
+		{"infra/main.tf", "terraform", "terraform"},
+		{"infra/prod.tfvars", "terraform", "terraform-vars"},
+		// .hcl is shared with Packer, Nomad, Terragrunt, … and the Terraform
+		// test files (.tftest.hcl) can't be told apart by extension alone.
+		{"infra/run.tftest.hcl", "", ""},
 		{"README.md", "", ""},
 		{"Makefile", "", ""},
 		{"noext", "", ""},

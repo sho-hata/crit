@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -172,6 +173,11 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 			srv.client = nil
 			srv.files = make(map[string]fileState)
 			continue
+		}
+		var respErr *ResponseError
+		if lang.NoResultCode != 0 && errors.As(reqErr, &respErr) && respErr.Code == lang.NoResultCode {
+			debugf(debugEnabled(), lang.Name, "nothing at this position: %v", reqErr)
+			return nil
 		}
 		// "no views" means gopls's workspace view isn't built yet — transient
 		// during startup, so retry briefly instead of surfacing an error.
