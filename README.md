@@ -180,7 +180,7 @@ Click a line number to comment. Drag to select a range. Comments are rendered in
 Reading a diff means reading code with no editor attached. This brings the three things you actually reach for — what is this? where is it defined? who else calls it? — into the review pane.
 
 > [!NOTE]
-> Supported languages: **Go** (via [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)), **TypeScript / JavaScript** (via [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)) **Python** (via [pyright](https://github.com/microsoft/pyright)) and **Terraform** (via [terraform-ls](https://github.com/hashicorp/terraform-ls)). Each activates independently when its server binary is on `PATH`.
+> Supported languages: **Go** (via [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)), **TypeScript / JavaScript** (via [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)), **Python** (via [pyright](https://github.com/microsoft/pyright)) and **Terraform** (via [terraform-ls](https://github.com/hashicorp/terraform-ls)). Each activates independently when its server binary is on `PATH`.
 
 #### Hover: signature + docs
 
