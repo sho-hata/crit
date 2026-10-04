@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// venvDirs are the conventional in-tree virtualenv directory names, in
-// preference order.
+// venvDirs is in preference order.
 var venvDirs = []string{".venv", "venv"}
 
 // pyConfigSettings tells pyright where a project's third-party packages live.
@@ -24,8 +23,6 @@ var venvDirs = []string{".venv", "venv"}
 // opened in a diff. A directory is safe. extraPaths cannot carry what only the
 // interpreter knows (.pth files, the Python version); an activated venv on
 // PATH and a pyrightconfig.json venv are handled by pyright itself.
-//
-// Returns nil when there is no in-tree virtualenv.
 func pyConfigSettings(root, absPath string) map[string]any {
 	sp := findSitePackages(root, absPath)
 	if sp == "" {
@@ -38,11 +35,9 @@ func pyConfigSettings(root, absPath string) map[string]any {
 	}
 }
 
-// findSitePackages returns the site-packages of the virtualenv nearest to
-// absPath, searching its directory upwards through root (inclusive), or ""
-// when there is none. The nearest wins because a monorepo keeps one venv per
-// service. The search never leaves root: a file outside it is not ours to
-// resolve dependencies for.
+// findSitePackages walks up from absPath's directory through root
+// (inclusive), like findTSServer. The nearest venv wins because a monorepo
+// keeps one per service.
 func findSitePackages(root, absPath string) string {
 	root = filepath.Clean(root)
 	dir := filepath.Dir(absPath)
@@ -65,8 +60,6 @@ func findSitePackages(root, absPath string) string {
 	}
 }
 
-// venvSitePackages returns the site-packages of the conventional virtualenv
-// sitting directly in dir, or "".
 func venvSitePackages(dir string) string {
 	for _, name := range venvDirs {
 		if sp := sitePackagesOf(filepath.Join(dir, name)); sp != "" {
@@ -76,10 +69,9 @@ func venvSitePackages(dir string) string {
 	return ""
 }
 
-// sitePackagesOf returns venv's site-packages directory, or "" when venv is
-// not a virtualenv. Two layouts: Lib\site-packages on Windows and
-// lib/python3.X/site-packages everywhere else — a venv holds exactly one
-// Python version, so the first match is the only one.
+// sitePackagesOf knows two layouts: Lib\site-packages on Windows and
+// lib/python3.X/site-packages elsewhere — a venv holds exactly one Python
+// version, so the first match is the only one.
 func sitePackagesOf(venv string) string {
 	if sp := filepath.Join(venv, "Lib", "site-packages"); isDir(sp) {
 		return sp
@@ -104,17 +96,14 @@ func isDir(path string) bool {
 	return err == nil && st.IsDir()
 }
 
-// pythonEnvScript prints the interpreter's stdlib and purelib directories.
 const pythonEnvScript = `import sysconfig; p = sysconfig.get_paths(); print(p["stdlib"]); print(p["purelib"])`
 
-// pyExtraRoots resolves where Python definitions outside the repo land:
-//   - the project's virtualenv in root, the tree dependencies live in (under
-//     range/PR focus the working tree, which is outside the sparse worktree
-//     the server runs in)
+// pyExtraRoots:
+//   - the virtualenv in root (under range/PR focus the working tree, outside
+//     the sparse worktree the server runs in)
 //   - the PATH interpreter's stdlib and site-packages
-//   - the typeshed bundled with pyright, where stdlib stubs live: a
-//     definition into the stdlib answers with both the .pyi there and the
-//     real .py
+//   - pyright's bundled typeshed: a definition into the stdlib answers with
+//     both the .pyi there and the real .py
 //
 // Each source is optional; only a lookup that finds nothing at all is nil.
 func pyExtraRoots(root string) []PeekRoot {
@@ -132,10 +121,8 @@ func pyExtraRoots(root string) []PeekRoot {
 	return roots
 }
 
-// pythonEnvRoots asks the interpreter on PATH for its stdlib and site-packages.
-// That is the interpreter pyright itself falls back to, so the paths it
-// reports are the ones its definitions land in. Never a repo-local
-// interpreter: only PATH is consulted.
+// pythonEnvRoots asks the PATH interpreter — the one pyright itself falls
+// back to, never a repo-local one.
 func pythonEnvRoots() []PeekRoot {
 	for _, bin := range []string{"python3", "python"} {
 		// -I (isolated mode) is required: without it the interpreter puts the
@@ -152,8 +139,6 @@ func pythonEnvRoots() []PeekRoot {
 	return nil
 }
 
-// parsePythonEnv turns pythonEnvScript's output — stdlib, then purelib, one
-// per line — into peek roots.
 func parsePythonEnv(out string) []PeekRoot {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	// Only site-packages is the local environment: the stdlib is the same
@@ -172,10 +157,8 @@ func parsePythonEnv(out string) []PeekRoot {
 	return roots
 }
 
-// pyrightTypeshed locates the typeshed stubs bundled with the installed
-// pyright, or "" when the binary is not laid out like the npm package. Peeks
-// into stdlib stubs then fall outside the readable roots; the real stdlib
-// source still opens.
+// pyrightTypeshed returns "" when the binary is not laid out like the npm
+// package; stdlib stub peeks are then unreadable, the real stdlib still opens.
 func pyrightTypeshed() string {
 	bin, err := exec.LookPath("pyright-langserver")
 	if err != nil {

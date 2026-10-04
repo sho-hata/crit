@@ -1,14 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import { clearAllComments, loadPage, goSection, mdSection } from './helpers';
 
-// LSP wiring in file mode (`crit server.go handler.js plan.md`), where code
-// files render in document view — the whole file, one .line-block per source
-// line — instead of the dual-gutter diff markup. Hover/definition used to be
-// bound to diff markup only, so the feature silently did nothing here.
+// LSP wiring in file mode, where code files render in document view (one
+// .line-block per source line) instead of diff markup — binding to diff
+// markup alone left the feature silently dead here.
 //
-// The language server itself is mocked: /api/lsp/* is intercepted so the test
-// runs on machines without gopls and asserts the frontend wiring (which line
-// and column the UI resolves, where the jump lands), not gopls's answers.
+// /api/lsp/* is mocked so the test runs without gopls and asserts the
+// frontend wiring (resolved line/column, where the jump lands), not gopls.
 
 const HOVER_MARKDOWN = 'authMiddleware checks for a valid API key.';
 
@@ -147,7 +145,6 @@ test.describe('LSP — local environment note', () => {
     const note = tooltip.locator('.lsp-tooltip-note');
     await expect(note).toHaveCount(1);
     await expect(note).toContainText('local environment');
-    // Order: docs, then note, then the key hint.
     const children = await tooltip.evaluate(el =>
       Array.from(el.children).map(c => c.className || c.tagName.toLowerCase()));
     expect(children.indexOf('lsp-tooltip-note')).toBeGreaterThan(-1);

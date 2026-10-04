@@ -130,8 +130,6 @@ func TestManagerRejectsUnsupportedExtension(t *testing.T) {
 	}
 }
 
-// writeTSInstall creates a node_modules/typescript/lib/tsserver.js under dir
-// and returns the tsserver.js path, standing in for an installed dependency.
 func writeTSInstall(t *testing.T, dir string) string {
 	t.Helper()
 	lib := filepath.Join(dir, "node_modules", "typescript", "lib")
@@ -184,9 +182,7 @@ func TestFindTSServer(t *testing.T) {
 		}
 	})
 
-	// The walk must stop at root: a path outside the workspace is not ours to
-	// resolve dependencies for, and walking on would escape into the parent
-	// tree (and, on a shallow root, towards /).
+	// Walking on would escape into the parent tree (towards / on a shallow root).
 	t.Run("path outside root", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
@@ -223,8 +219,8 @@ func TestTSInitOptions(t *testing.T) {
 	}
 }
 
-// The typescript language must actually carry the hook — registry wiring is
-// what the fix turns on, and it is a one-line omission away from silence.
+// Registry wiring is a one-line omission away from the hook silently not
+// running.
 func TestTypeScriptLanguageSendsInitOptions(t *testing.T) {
 	t.Parallel()
 

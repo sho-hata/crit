@@ -52,8 +52,7 @@ func (e *ResponseError) Error() string { return fmt.Sprintf("lsp: %s (code %d)",
 
 // Client is a JSON-RPC 2.0 client over a stdio-style transport.
 type Client struct {
-	// name is the registry language this client talks to, and debug whether
-	// CRIT_LSP_DEBUG was on when it was created; both only feed debug logging.
+	// name and debug only feed debug logging.
 	name  string
 	debug bool
 
@@ -64,44 +63,30 @@ type Client struct {
 	nextID  int64
 	pending map[int64]chan jsonrpcMessage
 
-	// done is closed exactly once — via doneOnce — when the transport dies:
-	// either the reader loop exits (gopls crashed / closed its stdout) or
-	// Close tears the client down, whichever happens first. doneOnce makes
-	// those two paths safe to race: close(done) would panic on a second
-	// call. A closed done makes Dead() report true and unblocks every
-	// in-flight call() waiting in its select, so no request hangs on a dead
-	// server.
+	// done is closed when the transport dies. readLoop exit and Close race
+	// to close it, hence doneOnce.
 	done     chan struct{}
 	doneOnce sync.Once
 
-	// progressMu guards the work-done progress bookkeeping fed by $/progress
-	// notifications: the tokens the server has begun and not yet ended, and
-	// whether it ever reported any. See WaitReady.
+	// progressMu guards the $/progress bookkeeping read by WaitReady.
 	progressMu     sync.Mutex
 	progressActive map[string]bool
 	progressSeen   bool
 
 	// settings answers the server's workspace/configuration pulls, keyed by
-	// section name. Set before Initialize (see SetSettings) and read-only
-	// after, so the reader goroutine needs no lock. Nil for a language that
-	// takes none.
+	// section name.
 	settings map[string]any
 
-	// kill terminates the underlying subprocess. Nil for in-memory pipe
-	// transports (tests).
+	// kill is nil for in-memory pipe transports (tests).
 	kill func()
 }
 
-// NewClient wraps an LSP server reachable via the given pipes and starts the
-// reader loop. kill, when non-nil, force-terminates the server process; it is
-// invoked from Close after the polite shutdown handshake.
-func NewClient(stdin io.WriteCloser, stdout io.Reader, kill func()) *Client {
-	return newClient("", stdin, stdout, kill)
-}
-
-// newClient is NewClient for a server of the named language, so debug log
-// lines say which server they belong to.
-func newClient(name string, stdin io.WriteCloser, stdout io.Reader, kill func()) *Client {
+// newClient wraps an LSP server reachable via the given pipes and starts the
+// reader loop. kill, when non-nil, force-terminates the server process after
+// Close's polite shutdown handshake. A non-empty settings also makes
+// Initialize declare workspace/configuration: a server only pulls
+// configuration from a client that says it can be asked.
+func newClient(name string, stdin io.WriteCloser, stdout io.Reader, kill func(), settings map[string]any) *Client {
 	c := &Client{
 		name:           name,
 		debug:          debugEnabled(),
@@ -109,6 +94,7 @@ func newClient(name string, stdin io.WriteCloser, stdout io.Reader, kill func())
 		pending:        make(map[int64]chan jsonrpcMessage),
 		done:           make(chan struct{}),
 		progressActive: make(map[string]bool),
+		settings:       settings,
 		kill:           kill,
 	}
 	go c.readLoop(stdout)
@@ -129,7 +115,6 @@ func (c *Client) Dead() bool {
 	}
 }
 
-// readLoop parses Content-Length framed messages until the transport closes.
 func (c *Client) readLoop(stdout io.Reader) {
 	defer c.markDone()
 	r := bufio.NewReader(stdout)
@@ -148,7 +133,6 @@ func (c *Client) readLoop(stdout io.Reader) {
 
 func (c *Client) markDone() {
 	c.doneOnce.Do(func() { close(c.done) })
-	// Unblock all in-flight calls.
 	c.mu.Lock()
 	for id, ch := range c.pending {
 		close(ch)
@@ -157,7 +141,6 @@ func (c *Client) markDone() {
 	c.mu.Unlock()
 }
 
-// readFrame reads one Content-Length framed JSON-RPC message.
 func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
 	var msg jsonrpcMessage
 	contentLen := -1
@@ -190,8 +173,6 @@ func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
 	return msg, nil
 }
 
-// dispatch routes one incoming message: responses to their waiting caller,
-// server->client requests to a default responder, notifications to /dev/null.
 func (c *Client) dispatch(msg jsonrpcMessage) {
 	if msg.Method != "" {
 		if msg.ID != nil {
@@ -222,9 +203,8 @@ func (c *Client) dispatch(msg jsonrpcMessage) {
 	}
 }
 
-// trackProgress records the begin/end of one work-done progress token. The
-// token is compared as raw JSON: LSP allows a string or a number, and either
-// one round-trips identically between the begin and its end.
+// trackProgress compares tokens as raw JSON: LSP allows a string or a number,
+// and either one round-trips identically between the begin and its end.
 func (c *Client) trackProgress(params json.RawMessage) {
 	var p struct {
 		Token json.RawMessage `json:"token"`
@@ -247,8 +227,6 @@ func (c *Client) trackProgress(params json.RawMessage) {
 	}
 }
 
-// progressState reports whether the server has announced any work, and
-// whether some of it is still running.
 func (c *Client) progressState() (seen, busy bool) {
 	c.progressMu.Lock()
 	defer c.progressMu.Unlock()
@@ -299,10 +277,9 @@ func (c *Client) WaitReady(grace, timeout time.Duration) {
 	}
 }
 
-// respondToServerRequest answers server->client requests with a minimal
-// default so a server never blocks waiting on us. workspace/configuration gets
-// the language's setting for each requested section (see SetSettings), and a
-// null for any section it has none for; everything else gets a null result.
+// respondToServerRequest answers every server->client request so a server
+// never blocks waiting on us: workspace/configuration from settings, anything
+// else with null.
 func (c *Client) respondToServerRequest(msg jsonrpcMessage) {
 	var result any
 	if msg.Method == "workspace/configuration" {
@@ -360,8 +337,6 @@ func (c *Client) writeFrame(v any) error {
 	return err
 }
 
-// call performs a request and unmarshals the result into out (skipped when
-// out is nil or the result is null).
 func (c *Client) call(method string, params any, out any) (err error) {
 	c.mu.Lock()
 	c.nextID++
@@ -417,19 +392,8 @@ func (c *Client) notify(method string, params any) error {
 	return c.writeFrame(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
 
-// SetSettings sets what the server gets when it pulls workspace/configuration,
-// keyed by section name. Call it before Initialize: a non-empty set also makes
-// Initialize declare the capability, since a server only pulls configuration
-// from a client that says it can be asked. Without settings the capability is
-// not declared, so a server that needs none is never asked.
-func (c *Client) SetSettings(settings map[string]any) {
-	c.settings = settings
-}
-
-// Initialize performs the LSP initialize handshake for the given workspace
-// root. initOpts, when non-nil, is sent as initializationOptions — the
-// server-specific settings a language needs at handshake time (see
-// Language.InitOptions).
+// Initialize performs the LSP initialize handshake for rootDir. initOpts, when
+// non-nil, is sent as initializationOptions (see Language.InitOptions).
 func (c *Client) Initialize(rootDir string, initOpts map[string]any) error {
 	rootURI := PathToURI(rootDir)
 	caps := map[string]any{
@@ -465,7 +429,6 @@ func (c *Client) Initialize(rootDir string, initOpts map[string]any) error {
 }
 
 // DidOpen tells the server a document is open with the given content.
-// languageID is the LSP language identifier (e.g. "go").
 func (c *Client) DidOpen(path, languageID, text string, version int) error {
 	return c.notify("textDocument/didOpen", map[string]any{
 		"textDocument": map[string]any{
@@ -530,9 +493,8 @@ func (c *Client) References(path string, line, character int) ([]Location, error
 // Close performs the polite shutdown handshake, then force-terminates the
 // server if it does not exit promptly.
 func (c *Client) Close() {
-	// Best effort: gopls exits on its own after shutdown/exit. The call has
-	// the full request timeout, so bound it with a short goroutine race
-	// instead of blocking a caller holding the manager lock.
+	// Bound the handshake (call's own timeout is requestTimeout): Close runs
+	// under the manager's locks.
 	sdDone := make(chan struct{})
 	go func() {
 		_ = c.call("shutdown", nil, nil)

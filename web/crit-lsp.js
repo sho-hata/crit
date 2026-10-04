@@ -1,12 +1,10 @@
 // crit-lsp.js — LSP hover, go-to-definition, and find-references for
 // code-review mode.
 //
-// Talks to the local Go server's /api/lsp/* endpoints (which proxy a
-// language server). Which file
-// extensions are eligible comes from /api/config's lsp_extensions.
-// Hover: rest the mouse over eligible code → documentation tooltip. Both
-// renderings of a code file are covered: the diff view and file mode's
-// document view (whole file, one .line-block per source line).
+// Talks to the server's /api/lsp/* endpoints (which proxy a language server);
+// eligible file extensions come from /api/config's lsp_extensions.
+// Hover: documentation tooltip, in both the diff view and file mode's
+// document view.
 // Definition: Cmd/Ctrl+Click → jump within the review, or a peek popup when
 // the target lives outside the visible diff / session / repo.
 // References: Cmd/Ctrl+Shift+Click → inline widget under the clicked line
@@ -25,11 +23,9 @@
 
   // ===== Pure helpers (exported for Node tests) =====
 
-  // textOffsetIn returns the UTF-16 offset of (target, offsetInNode) within
-  // root's textContent, or -1 when target is not inside root. Duck-typed
-  // (nodeType/childNodes/textContent) so tests can pass fake nodes.
-  // For text nodes (nodeType 3) offsetInNode is a character offset; for
-  // elements it is a child index (caretPositionFromPoint can return either).
+  // Duck-typed (nodeType/childNodes/textContent) so tests can pass fake nodes.
+  // offsetInNode is a character offset for a text node but a child index for
+  // an element — caretPositionFromPoint can return either.
   function textOffsetIn(root, target, offsetInNode) {
     let total = 0;
     let found = false;
@@ -62,8 +58,6 @@
     return found ? total : -1;
   }
 
-  // findHunkForLine returns the index of the hunk whose new-side range
-  // contains line (1-based), or -1.
   function findHunkForLine(hunks, line) {
     for (let i = 0; i < (hunks || []).length; i++) {
       const h = hunks[i];
@@ -72,9 +66,8 @@
     return -1;
   }
 
-  // findGapForLine returns {prevIdx, nextIdx} when line (1-based, new side)
-  // falls in the collapsed gap between two adjacent hunks, or null. Leading
-  // and trailing gaps are not covered — callers fall back to the peek popup.
+  // Only gaps between two hunks count; for leading and trailing gaps callers
+  // fall back to the peek popup.
   function findGapForLine(hunks, line) {
     for (let i = 1; i < (hunks || []).length; i++) {
       const prevEnd = hunks[i - 1].NewStart + hunks[i - 1].NewCount;
@@ -85,9 +78,8 @@
     return null;
   }
 
-  // groupLocationsByFile folds a flat reference-location list into per-file
-  // groups, preserving order. Each item keeps its index into the flat list so
-  // click handlers can address the original location.
+  // Each item keeps its index into the flat list so click handlers can
+  // address the original location.
   function groupLocationsByFile(locs) {
     const groups = [];
     const byPath = {};
@@ -104,12 +96,10 @@
     return groups;
   }
 
-  // makeExtensionMatcher builds a RegExp matching paths whose extension is
-  // in exts (server-provided, lower-case, no dots). An empty or missing list
-  // matches nothing: init only runs when the server reports lsp_available,
-  // which guarantees a non-empty list, and guessing an extension here would
-  // just offer hovers the server 4xxes — feeding the failure breaker instead
-  // of surfacing the bug.
+  // An empty list matches nothing rather than guessing: init only runs when
+  // the server reports lsp_available (non-empty list), and a guessed
+  // extension would offer hovers the server 4xxes — feeding the failure
+  // breaker instead of surfacing the bug.
   function makeExtensionMatcher(exts) {
     var list = (exts || []).filter(function (e) {
       return typeof e === 'string' && /^[a-z0-9]+$/.test(e);
@@ -118,9 +108,7 @@
     return new RegExp('\\.(' + list.join('|') + ')$', 'i');
   }
 
-  // hljsLanguageForPath maps a peek target's file extension to the highlight.js
-  // grammar used to render it, or null when no grammar applies (assembly,
-  // embed assets, …) — those render as escaped plain text.
+  // null (assembly, embed assets, …) means escaped plain text.
   var HLJS_LANG_BY_EXT = {
     go: 'go',
     ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'typescript',
@@ -133,10 +121,8 @@
     return HLJS_LANG_BY_EXT[m[1].toLowerCase()] || null;
   }
 
-  // composeTooltip assembles the hover tooltip: the documentation, then an
-  // optional one-line note, then the fixed key hint. The note is a quiet
-  // footnote (same muted size as the hint), not part of the documentation.
-  // esc escapes text.
+  // The note is a quiet footnote (same muted size as the hint), not part of
+  // the documentation.
   function composeTooltip(docHtml, noteText, hintText, esc) {
     return docHtml +
       (noteText ? '<div class="lsp-tooltip-note">' + esc(noteText) + '</div>' : '') +
@@ -152,8 +138,7 @@
     return '<div class="lsp-peek-note">' + esc(noteText) + '</div>';
   }
 
-  // refSnippet extracts the reference's own source line from its peek window,
-  // or '' when the location carries no peek (file outside readable roots).
+  // A location has no peek when its file is outside the readable roots.
   function refSnippet(loc) {
     if (!loc.peek || !loc.peek_start) return '';
     const idx = loc.line - loc.peek_start;
@@ -161,7 +146,6 @@
     return loc.peek[idx];
   }
 
-  // wordAt returns the identifier at (or ending at) UTF-16 offset char, or ''.
   const IDENT_CHAR = /[\p{L}\p{N}_$]/u;
   function wordAt(text, char) {
     if (!text || char < 0 || char > text.length) return '';
@@ -172,8 +156,8 @@
     return text.slice(start, end);
   }
 
-  // symbolRange returns null unless word sits at character, so an aliased
-  // import or stale column never highlights the wrong text.
+  // null unless word sits at character, so an aliased import or stale column
+  // never highlights the wrong text.
   function symbolRange(lineText, character, word) {
     if (!word || typeof character !== 'number' || character < 0) return null;
     if ((lineText || '').substr(character, word.length) !== word) return null;
@@ -183,36 +167,33 @@
   // ===== Controller =====
 
   const HOVER_DELAY_MS = 350;
+  // The first request after a server spawns can take seconds (workspace
+  // load); past this delay a placeholder makes the wait visible.
+  const LOADING_DELAY_MS = 400;
   const MAX_CONSECUTIVE_FAILURES = 3;
-  // Cap for a server error rendered into a tooltip or toast.
   const MAX_ERROR_CHARS = 200;
   // After the breaker trips, allow another attempt this long after the last
   // failure (half-open): gopls warm-up on large repos can outlast the
   // server's retry window, and a permanent disable would outlive the outage.
   const DISABLE_RETRY_MS = 30000;
 
-  let st = null; // controller state; null until init()
+  let st = null; // null until init()
 
   function esc(s) {
     return window.crit.shared.escapeHTML(s);
   }
 
-  // eligibleLineEl walks up from an event target to the enclosing source line
-  // of an LSP-covered file, returning {contentEl, path, line} or null. Both
-  // renderings of a code file have to be recognized, or the feature silently
-  // does nothing in whichever one is missing:
-  //   - diff view (git mode, and any file whose viewMode is 'diff')
-  //   - document view (code files in file mode: `crit some.ts`), which has no
-  //     diff markup at all
+  // Both renderings of a code file have to be recognized, or the feature
+  // silently does nothing in whichever one is missing: the diff view, and the
+  // document view (file mode: `crit some.ts`), which has no diff markup.
   function eligibleLineEl(target) {
     if (!target || !target.closest) return null;
     return diffLineHit(target) || documentLineHit(target);
   }
 
-  // diffLineHit resolves a position inside the dual-gutter diff renderer.
-  // Unified view rows are .diff-line; split view sides are .diff-split-side —
-  // both carry the same data-diff-* attributes via tagDiffLine. Only the new
-  // side maps to the file the language server reads.
+  // Unified rows (.diff-line) and split sides (.diff-split-side) carry the
+  // same data-diff-* attributes via tagDiffLine. Only the new side maps to the
+  // file the language server reads.
   function diffLineHit(target) {
     const contentEl = target.closest('.diff-content');
     if (!contentEl) return null;
@@ -222,7 +203,6 @@
     return lineHit(contentEl, lineEl.dataset.diffFilePath, lineEl.dataset.diffLineNum);
   }
 
-  // documentLineHit resolves a position inside a code file's document view.
   // buildCodeLineBlocks emits one .line-block per source line, so the block's
   // start line is the position's line and .line-content holds exactly that
   // line's text — the same contract caretCharOffset needs from .diff-content.
@@ -237,8 +217,6 @@
     return lineHit(contentEl, lineEl.dataset.filePath, lineEl.dataset.startLine);
   }
 
-  // lineHit builds the hit object once the renderer-specific lookup has found
-  // the file path and line number, dropping files no installed server covers.
   function lineHit(contentEl, path, lineNum) {
     if (!path || !st.extRe.test(path)) return null;
     const line = parseInt(lineNum, 10);
@@ -246,7 +224,6 @@
     return { contentEl: contentEl, path: path, line: line };
   }
 
-  // caretCharOffset computes the UTF-16 column under the pointer, or -1.
   function caretCharOffset(contentEl, x, y) {
     let node = null;
     let offset = 0;
@@ -267,10 +244,9 @@
     return textOffsetIn(contentEl, node, offset);
   }
 
-  // recordFailure counts one failed request and opens the breaker on the
-  // third in a row, returning whether this call opened it. The breaker stops
-  // hover from firing at all, so it has to announce itself: silently going
-  // dead is indistinguishable from the feature never having worked.
+  // Returns whether this call opened the breaker. The breaker stops hover
+  // from firing at all, so it has to announce itself: silently going dead is
+  // indistinguishable from the feature never having worked.
   function recordFailure() {
     st.failures++;
     if (st.failures >= MAX_CONSECUTIVE_FAILURES && !st.disabled) {
@@ -283,9 +259,8 @@
     return false;
   }
 
-  // isDisabled reports whether the failure breaker is open, letting one
-  // attempt through (half-open) once DISABLE_RETRY_MS has passed; a further
-  // failure re-trips it immediately.
+  // Half-open: once DISABLE_RETRY_MS has passed one attempt goes through, and
+  // a further failure re-trips the breaker immediately.
   function isDisabled() {
     if (!st.disabled) return false;
     if (Date.now() - st.disabledAt < DISABLE_RETRY_MS) return true;
@@ -312,8 +287,8 @@
   }
 
   function hideTooltip() {
-    if (st && st.tooltip) st.tooltip.hidden = true;
-    if (st) st.hoverKey = null;
+    if (st.tooltip) st.tooltip.hidden = true;
+    st.hoverKey = null;
     abortInflight();
   }
 
@@ -328,8 +303,7 @@
     const tip = ensureTooltip();
     tip.innerHTML = composeTooltip(html, note, st.defHintText, esc);
     tip.hidden = false;
-    // Position after layout so we can clamp to the viewport: prefer above
-    // the cursor, fall back to below.
+    // Measure after layout to clamp to the viewport; prefer above the cursor.
     tip.style.left = '0px';
     tip.style.top = '0px';
     const rect = tip.getBoundingClientRect();
@@ -362,18 +336,15 @@
     }, HOVER_DELAY_MS);
   }
 
-  // serverErrorText turns a failed LSP response into one line a reviewer can
-  // act on. The Go handlers answer with a plain-text reason (a language server
-  // that would not start, a workspace that could not be prepared) and that
-  // reason is the whole diagnosis — dropping it is what made a broken language
-  // server look like a flaky one.
+  // The Go handlers answer with a plain-text reason (a language server that
+  // would not start, a workspace that could not be prepared) and that reason
+  // is the whole diagnosis — without it a broken server looks like a flaky one.
   function serverErrorText(body, status) {
     const line = String(body || '').trim().split('\n')[0];
     if (!line) return 'Language server request failed (HTTP ' + status + ')';
     return line.length > MAX_ERROR_CHARS ? line.slice(0, MAX_ERROR_CHARS - 1) + '…' : line;
   }
 
-  // responseError rejects with the server's own reason for a non-ok response.
   function responseError(r) {
     return r.text().then(function (body) {
       throw new Error(serverErrorText(body, r.status));
@@ -388,13 +359,11 @@
     abortInflight();
     const ctl = new AbortController();
     st.inflight = ctl;
-    // Slow-response indicator: the first request after gopls spawns can take
-    // seconds (workspace load). Show a placeholder so the wait is visible.
     let loadingShown = false;
     const loadingTimer = setTimeout(function () {
       loadingShown = true;
       showTooltip('<div class="lsp-tooltip-loading">' + esc(st.loadingText) + '</div>', x, y);
-    }, 400);
+    }, LOADING_DELAY_MS);
     const url = '/api/lsp/hover?path=' + encodeURIComponent(hit.path) +
       '&line=' + hit.line + '&char=' + char;
     fetch(url, { signal: ctl.signal })
@@ -436,14 +405,10 @@
     document.documentElement.classList.toggle('lsp-busy', st.busyCount > 0);
   }
 
-  // fetchLocations GETs a location-list LSP endpoint with the busy cursor,
-  // response check, and breaker accounting in one place. onLocations handles
-  // the non-empty outcome; errors toast and count toward the failure breaker.
-  //
-  // Each call bumps st.defSeq and the UI callbacks only run while this
-  // request is still the newest one — a later click (or hidePeek, which also
-  // bumps the sequence) invalidates responses still in flight, so a stale
-  // result can never scroll the review or render into a closed peek.
+  // UI callbacks only run while this request is still the newest one: a
+  // later click (or hidePeek, which also bumps st.defSeq) invalidates
+  // responses still in flight, so a stale result can never scroll the review
+  // or render into a closed peek.
   function fetchLocations(url, onLocations, emptyText) {
     const seq = ++st.defSeq;
     setBusy(true);
@@ -499,8 +464,8 @@
     });
   }
 
-  // resolveJump tries the in-review jump first, falling back to the peek
-  // popup (the server always attaches a peek when the file is readable).
+  // The peek fallback works because the server attaches a peek whenever the
+  // file is readable.
   function resolveJump(loc) {
     Promise.resolve(loc.in_session ? st.jumpToLocation(loc) : false)
       .then(function (handled) {
@@ -527,7 +492,6 @@
   function onPeekKeydown(e) {
     if (e.key === 'Escape') {
       e.stopPropagation();
-      // Step back through chained jumps first; close once at the root.
       if (st.peek && st.peekStack.length > 0) {
         popPeekView(st.peek);
       } else {
@@ -544,13 +508,10 @@
     }
   }
 
-  // highlightPeek highlights all lines in ONE hljs pass — with the grammar
-  // matching the peeked file's extension — and splits the result per line
-  // with splitHighlightedCode (span state carries across lines), so
-  // multi-line constructs — block comments, raw/template strings — keep
-  // correct colors and a 2000-line peek costs one highlight call, not 2000.
-  // Falls back to escaped plain text when no grammar covers the file or
-  // hljs / the splitter is missing.
+  // One hljs pass over all lines, split per line by splitHighlightedCode
+  // (span state carries across lines): multi-line constructs — block
+  // comments, raw/template strings — keep correct colors, and a 2000-line
+  // peek costs one highlight call, not 2000.
   function highlightPeek(lines, path) {
     const lineBlocks = window.crit.lineBlocks;
     const language = hljsLanguageForPath(path);
@@ -564,7 +525,6 @@
     return lines.map(esc);
   }
 
-  // Maximum chained-jump history entries kept for the back button.
   const PEEK_HISTORY_MAX = 20;
 
   function renderPeekView(panel) {
@@ -627,10 +587,8 @@
     if (target) target.scrollIntoView({ block: 'center' });
   }
 
-  // chainedJumpFromPeek handles Cmd/Ctrl+Click on code inside the popup:
-  // definition-from-definition. The server only accepts these positions for
-  // files under repo root / GOROOT / GOMODCACHE — the same roots the peek
-  // content itself came from.
+  // The server accepts these absolute positions only under the same roots
+  // the peek content itself came from.
   function chainedJumpFromPeek(panel, e) {
     const codeEl = e.target.closest('.lsp-peek-code');
     if (!codeEl) return;
@@ -651,9 +609,7 @@
     const url = '/api/lsp/definition?path=' + encodeURIComponent(from.path) +
       '&line=' + lineNo + '&char=' + char;
     fetchLocations(url, function (locs) {
-      if (st.peek !== panel) return; // peek replaced while in flight
       if (locs.length === 1 && locs[0].in_session) {
-        // Chained jump landed back in the review: close and navigate.
         Promise.resolve(st.jumpToLocation(locs[0])).then(function (handled) {
           if (handled) {
             hidePeek();
@@ -730,8 +686,8 @@
     }, st.refsNotFoundText);
   }
 
-  // refsAnchorEl finds the element to insert the widget after (split view:
-  // the whole row), or null when the line is not rendered.
+  // Split view anchors after the whole row; null when the line is not
+  // rendered.
   function refsAnchorEl(at) {
     const path = CSS.escape(at.path);
     const side = document.querySelector(
@@ -777,7 +733,6 @@
     }
   }
 
-  // markSymbol wraps text offsets [start, end) of el in <mark>.
   function markSymbol(el, range) {
     if (!range) return;
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -953,23 +908,19 @@
 
   function onGlobalMousedown(e) {
     suppressChordSelection(e);
-    // A hover request armed just before the click must not resurrect the
-    // tooltip the click is dismissing: hideTooltip only nulls st.hoverKey,
-    // so the pending timer would fire past the dedup check.
+    // A hover armed just before the click must not resurrect the tooltip the
+    // click is dismissing.
     clearTimeout(st.hoverTimer);
     if (st.peek && !st.peek.contains(e.target)) hidePeek();
     if (st.tooltip && !st.tooltip.hidden && !st.tooltip.contains(e.target)) hideTooltip();
   }
 
   function onScroll() {
-    if (st) {
-      clearTimeout(st.hoverTimer);
-      hideTooltip();
-    }
+    clearTimeout(st.hoverTimer);
+    hideTooltip();
   }
 
-  // init wires the document-level listeners. Idempotent; call once after
-  // /api/config confirms lsp_available.
+  // Idempotent; call once after /api/config confirms lsp_available.
   function init(opts) {
     if (st) return;
     st = {

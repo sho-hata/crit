@@ -20,22 +20,18 @@ import (
 // pinning N server processes: only actively-hovered sessions hold one.
 const DefaultIdleTimeout = 3 * time.Minute
 
-// startFunc spawns an initialized LSP client for a workspace root and
-// language, sending initOpts as initializationOptions and answering the
-// server's workspace/configuration pulls from settings. Overridden in tests to
-// avoid spawning a real server.
+// startFunc spawns an initialized client; tests override it to avoid spawning
+// a real server.
 type startFunc func(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error)
 
-// fileState tracks the sync state of one open document.
 type fileState struct {
 	version int
 	hash    [sha256.Size]byte
 }
 
-// serverState is one running language server plus the documents synced to it.
-// mu serializes spawn, file sync, and requests for THIS server only —
-// per-language, so one language's cold start or warm-up retry loop never
-// blocks the other language's requests.
+// serverState is one language server plus the documents synced to it. mu is
+// per-language so one language's cold start or warm-up retry loop never blocks
+// another language's requests.
 type serverState struct {
 	mu     sync.Mutex
 	client *Client              // nil until the first request spawns it
@@ -47,10 +43,9 @@ type serverState struct {
 }
 
 // Manager owns at most one server process per language for a workspace root,
-// spawning each on first use and shutting all of them down after idleTimeout
-// without requests. All methods are safe for concurrent use; requests are
-// serialized per language, which is fine for a single-reviewer localhost
-// tool.
+// spawned on first use and shut down after idleTimeout without requests.
+// Requests are serialized per language, which is fine for a single-reviewer
+// localhost tool.
 type Manager struct {
 	root string
 	// depRoot is the working tree backing root, set only when root is the
@@ -71,12 +66,9 @@ type Manager struct {
 	extraRoots map[string][]PeekRoot // Language.Name -> resolved ExtraRoots
 }
 
-// NewManager creates a manager for the given workspace root. depRoot names
-// the working tree backing root and is only meaningful when root is a
-// range/PR focus worktree; pass "" when root is the working tree itself.
-// baseCtx, when non-nil, bounds the server subprocess lifetimes (daemon
-// shutdown kills them). No server is spawned here — only on the first LSP
-// request.
+// NewManager creates a manager for root. depRoot is the working tree behind a
+// range/PR focus worktree, "" when root is the working tree itself. baseCtx
+// bounds the server subprocess lifetimes (daemon shutdown kills them).
 func NewManager(root, depRoot string, baseCtx context.Context) *Manager {
 	if baseCtx == nil {
 		baseCtx = context.Background()
@@ -114,7 +106,7 @@ func (m *Manager) Definition(absPath string, line, character int) ([]Location, e
 	return out, err
 }
 
-// References returns reference locations.
+// References returns reference locations, declaration included.
 func (m *Manager) References(absPath string, line, character int) ([]Location, error) {
 	var out []Location
 	err := m.withClient(absPath, func(c *Client) error {
@@ -131,10 +123,9 @@ func (m *Manager) References(absPath string, line, character int) ([]Location, e
 const warmupTimeout = 15 * time.Second
 
 // withClient runs fn against a live, file-synced client for absPath's
-// language, restarting the server once if the previous process died and
-// absorbing warm-up errors. Only srv.mu is held across the spawn, the
-// request round-trip, and the warm-up retries — never m.mu — so a slow cold
-// start for one language cannot head-of-line block the other.
+// language. Only srv.mu is held across the spawn, the request, and the
+// warm-up retries — never m.mu — so a slow cold start for one language cannot
+// head-of-line block another.
 func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 	lang := LanguageForPath(absPath)
 	if lang == nil {
@@ -156,23 +147,17 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 		}
 		if opened && !lang.SkipReadyWait {
 			// Opening a document is what makes a TypeScript server build the
-			// project around it, and it answers from a half-built one without
-			// saying so (see WaitReady). Only the didOpen pays this wait: on
-			// a warm server the first loop inside WaitReady exits at once.
+			// project around it (see WaitReady).
 			srv.client.WaitReady(progressGrace, warmupTimeout)
 		}
 		reqErr := fn(srv.client)
 		if reqErr == nil {
 			return nil
 		}
-		// Restart once when the transport died mid-request (server crash).
 		if srv.client.Dead() && !restarted {
 			restarted = true
 			debugf(debugEnabled(), lang.Name, "server died during the request (%v), restarting once", reqErr)
-			srv.client.Close()
-			srv.client = nil
-			srv.files = make(map[string]fileState)
-			continue
+			continue // ensureClient replaces the dead client
 		}
 		var respErr *ResponseError
 		if lang.NoResult != nil && errors.As(reqErr, &respErr) && lang.NoResult(respErr) {
@@ -190,8 +175,8 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 	}
 }
 
-// lockServer returns lang's serverState with srv.mu held, re-fetching when
-// an idle shutdown dropped the state between the map lookup and the lock.
+// lockServer returns lang's serverState locked, re-fetching when an idle
+// shutdown dropped it between the map lookup and the lock.
 func (m *Manager) lockServer(lang *Language) *serverState {
 	for {
 		srv := m.serverFor(lang)
@@ -203,9 +188,8 @@ func (m *Manager) lockServer(lang *Language) *serverState {
 	}
 }
 
-// serverFor returns the state tracking lang's server, creating the empty
-// state (no process yet — that happens under srv.mu in ensureClient) if
-// needed, and re-arms the idle timer.
+// serverFor creates lang's state without a process (ensureClient spawns it
+// under srv.mu) and re-arms the idle timer.
 func (m *Manager) serverFor(lang *Language) *serverState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -218,10 +202,9 @@ func (m *Manager) serverFor(lang *Language) *serverState {
 	return srv
 }
 
-// ensureClient spawns + initializes lang's server if srv has no live client.
-// absPath is the file the triggering request is about; a language whose
-// handshake settings depend on where the file sits in the tree (see
-// tsInitOptions, pyConfigSettings) resolves them from it. Caller holds srv.mu.
+// ensureClient spawns lang's server if srv has no live client. absPath is
+// passed to the handshake hooks, whose settings depend on where the file sits
+// in the tree (nearest node_modules / .venv). Caller holds srv.mu.
 func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string) error {
 	if srv.client != nil && !srv.client.Dead() {
 		return nil
@@ -241,9 +224,8 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 	return nil
 }
 
-// handshake runs one of lang's handshake hooks (InitOptions, ConfigSettings)
-// against the workspace root and, when that finds nothing, against the working
-// tree behind it. A nil hook, or nothing found in either place, yields nil.
+// handshake runs a handshake hook (InitOptions, ConfigSettings) against the
+// workspace root, falling back to the working tree behind it.
 func (m *Manager) handshake(hook func(root, absPath string) map[string]any, absPath string) map[string]any {
 	if hook == nil {
 		return nil
@@ -254,12 +236,11 @@ func (m *Manager) handshake(hook func(root, absPath string) map[string]any, absP
 	return m.depHandshake(hook, absPath)
 }
 
-// depHandshake retries a handshake hook against depRoot, for the file at the
-// same repo-relative path. In range/PR focus the server is rooted at a sparse
-// worktree that by design contains tracked files only, so untracked dependency
-// directories (node_modules, .venv) are missing there. Borrowing just the
-// dependency location from the working tree keeps third-party code resolvable
-// while the reviewed sources still come from the checkout.
+// depHandshake retries a hook against depRoot at the same repo-relative path.
+// The range/PR focus worktree holds tracked files only, so node_modules and
+// .venv are missing there; borrowing just the dependency location keeps
+// third-party code resolvable while the reviewed sources still come from the
+// checkout.
 func (m *Manager) depHandshake(hook func(root, absPath string) map[string]any, absPath string) map[string]any {
 	if m.depRoot == "" || m.depRoot == m.root {
 		return nil
@@ -271,11 +252,8 @@ func (m *Manager) depHandshake(hook func(root, absPath string) map[string]any, a
 	return hook(m.depRoot, filepath.Join(m.depRoot, rel))
 }
 
-// syncFile makes the server's view of absPath match the disk content:
-// didOpen on first touch, didChange (full sync) when content changed. Agents
-// edit files between review rounds, so disk is always the source of truth.
-// It reports whether this call opened the document, which is the point where
-// a server starts building the project around it. Caller holds srv.mu.
+// syncFile makes the server's view of absPath match the disk, which agents
+// edit between review rounds. Caller holds srv.mu.
 func syncFile(srv *serverState, lang *Language, absPath string) (opened bool, err error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
@@ -302,7 +280,6 @@ func syncFile(srv *serverState, lang *Language, absPath string) (opened bool, er
 	return !open, nil
 }
 
-// touchIdleLocked (re)arms the idle shutdown timer.
 func (m *Manager) touchIdleLocked() {
 	if m.idleTimer != nil {
 		m.idleTimer.Stop()
@@ -310,8 +287,7 @@ func (m *Manager) touchIdleLocked() {
 	m.idleTimer = time.AfterFunc(m.idleTimeout, m.idleShutdown)
 }
 
-// idleShutdown stops every language server after a quiet period. The next
-// request respawns what it needs.
+// idleShutdown stops every server; the next request respawns what it needs.
 func (m *Manager) idleShutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -319,9 +295,8 @@ func (m *Manager) idleShutdown() {
 	m.dropAllLocked()
 }
 
-// dropServerLocked removes lang's server from the map and closes it. Caller
-// holds m.mu; the srv.mu acquisition waits for any in-flight request so its
-// transport is never yanked mid-call (lock order is always m.mu → srv.mu).
+// dropServerLocked waits on srv.mu for any in-flight request so its transport
+// is never yanked mid-call. Lock order is always m.mu → srv.mu.
 func (m *Manager) dropServerLocked(name string) {
 	srv, ok := m.servers[name]
 	if !ok {
@@ -343,7 +318,7 @@ func (m *Manager) dropAllLocked() {
 	}
 }
 
-// Shutdown terminates every running server. Called on daemon shutdown.
+// Shutdown terminates every running server.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -353,8 +328,6 @@ func (m *Manager) Shutdown() {
 	m.dropAllLocked()
 }
 
-// depBase is the tree a language's dependencies live in: depRoot when the
-// server is rooted at a range/PR focus worktree, the workspace root otherwise.
 func (m *Manager) depBase() string {
 	if m.depRoot != "" {
 		return m.depRoot
@@ -363,15 +336,11 @@ func (m *Manager) depBase() string {
 }
 
 // PeekRoots returns the extra source roots (beyond the workspace root) that
-// definition/reference peeks may read: each installed language's ExtraRoots
-// (stdlib, module caches, installed packages). Each is asked about the tree
-// the language's dependencies live in — the working tree under range/PR
-// focus, the workspace root otherwise — so the cache is per Manager, i.e.
-// per root, and a project-dependent language never sees another workspace's
-// answer.
-// Only a successful lookup is cached — a failure (e.g. the toolchain missing
-// from the daemon's PATH) is retried on the next call rather than pinning
-// empty roots for the daemon's lifetime.
+// definition/reference peeks may read: each installed language's ExtraRoots.
+// The cache is per Manager (per root), so a project-dependent language never
+// sees another workspace's answer. Only a successful lookup is cached: a
+// failure (e.g. the toolchain missing from the daemon's PATH) is retried
+// rather than pinning empty roots for the daemon's lifetime.
 func (m *Manager) PeekRoots() []PeekRoot {
 	m.rootsMu.Lock()
 	defer m.rootsMu.Unlock()
@@ -393,7 +362,6 @@ func (m *Manager) PeekRoots() []PeekRoot {
 	return roots
 }
 
-// startServer spawns a real language-server subprocess rooted at rootDir.
 func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
@@ -402,8 +370,6 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	cmd.Dir = rootDir
 	debug := debugEnabled()
 	if debug {
-		// A server's own stderr is where it explains why it is not answering,
-		// so surface it when debugging instead of throwing it away.
 		cmd.Stderr = &stderrLogger{name: lang.Name}
 	} else {
 		cmd.Stderr = io.Discard
@@ -420,15 +386,15 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 		return nil, fmt.Errorf("lsp: starting %s: %w", lang.Command[0], err)
 	}
 	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(lang.Command, " "), cmd.Process.Pid, rootDir)
-	// Reap the process when it exits so it never zombies.
+	// Reap the process so it never zombies.
 	waitDone := make(chan struct{})
 	go func() {
 		err := cmd.Wait()
 		debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
 		close(waitDone)
 	}()
-	// kill is invoked by Client.Close after the polite shutdown handshake
-	// already got its grace period, so don't wait again — reap or kill now.
+	// Close calls kill after the shutdown handshake's grace period, so don't
+	// wait again.
 	kill := func() {
 		select {
 		case <-waitDone: // already exited
@@ -436,8 +402,7 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 			_ = cmd.Process.Kill()
 		}
 	}
-	client := newClient(lang.Name, stdin, stdout, kill)
-	client.SetSettings(settings)
+	client := newClient(lang.Name, stdin, stdout, kill, settings)
 	initStart := time.Now()
 	if err := client.Initialize(rootDir, initOpts); err != nil {
 		client.Close()

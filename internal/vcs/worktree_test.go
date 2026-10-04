@@ -51,10 +51,7 @@ func TestAddSparseWorktreeChecksOutOnlyMatchingFiles(t *testing.T) {
 func TestAddSparseWorktreeKeepsBlobBytesUnderAutocrlf(t *testing.T) {
 	t.Parallel()
 	repo := InitTestRepo(t)
-	// core.autocrlf=true is the default on Windows. Left to it, git rewrites
-	// line endings on checkout: the worktree would stop matching the commit
-	// the review pane renders, and SparseTreeSize (blob bytes) would
-	// under-count what is on disk by one byte per line.
+	// The Windows default; see noEOLConversion.
 	GitRun(t, repo, "config", "core.autocrlf", "true")
 	const content = "package a\n\nfunc A() {}\n"
 	patterns := []string{"*.go"}
