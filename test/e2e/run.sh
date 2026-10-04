@@ -54,7 +54,6 @@ for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "
   e2e_kill_port "$port"
 done
 
-# Start fixture servers in parallel
 cd "$SCRIPT_DIR"
 FIXTURE_PIDS=()
 FIXTURE_PORTS=()
@@ -63,21 +62,20 @@ start_fixture() { # script port
   FIXTURE_PIDS+=($!)
   FIXTURE_PORTS+=("$2")
 }
-if [ "$E2E_GROUP" != rest ] || [ "$RUN_MOBILE" -eq 1 ]; then
-  start_fixture setup-fixtures.sh "$GIT_PORT"
-fi
+# Start every fixture regardless of group: playwright.config.ts lists them
+# all as webServers, and parallel Playwright processes would otherwise race
+# to start a missing one on the same port.
+start_fixture setup-fixtures.sh "$GIT_PORT"
 if [ "$E2E_GROUP" = all ]; then
   start_fixture setup-fixtures.sh "$GIT2_PORT"
 fi
-if [ "$E2E_GROUP" != git ]; then
-  start_fixture setup-fixtures-filemode.sh "$FILE_PORT"
-  start_fixture setup-fixtures-singlefile.sh "$SINGLE_PORT"
-  start_fixture setup-fixtures-nogit.sh "$NOGIT_PORT"
-  start_fixture setup-fixtures-multifile.sh "$MULTI_PORT"
-  start_fixture setup-fixtures-range-mode.sh "$RANGE_PORT"
-  start_fixture setup-fixtures-livemode.sh "$LIVE_PORT"
-  start_fixture setup-fixtures-perf.sh "$PERF_PORT"
-fi
+start_fixture setup-fixtures-filemode.sh "$FILE_PORT"
+start_fixture setup-fixtures-singlefile.sh "$SINGLE_PORT"
+start_fixture setup-fixtures-nogit.sh "$NOGIT_PORT"
+start_fixture setup-fixtures-multifile.sh "$MULTI_PORT"
+start_fixture setup-fixtures-range-mode.sh "$RANGE_PORT"
+start_fixture setup-fixtures-livemode.sh "$LIVE_PORT"
+start_fixture setup-fixtures-perf.sh "$PERF_PORT"
 
 cleanup() {
   kill "${FIXTURE_PIDS[@]}" 2>/dev/null || true
