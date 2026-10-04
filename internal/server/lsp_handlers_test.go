@@ -208,9 +208,6 @@ func TestLSPDisabledByConfig(t *testing.T) {
 	}
 }
 
-// TestLSPUnavailableUnderRangeFocus covers range/PR focus without a VCS
-// (files mode, or --remote/non-git — see rangeLSPSupported). Range focus
-// backed by a local git repo is covered by TestLSPRangeFocusUsesSparseWorktree.
 func TestLSPUnavailableUnderRangeFocus(t *testing.T) {
 	t.Parallel()
 
@@ -243,9 +240,6 @@ func TestLSPUnavailableForRemoteFocus(t *testing.T) {
 	}
 }
 
-// TestLSPRangeFocusUsesSparseWorktree covers the happy path: range/PR focus
-// backed by a local git repo is available, and an LSP request materializes
-// a sparse checkout of Focus.HeadSHA that lspRoot points at (not RepoRoot).
 func TestLSPRangeFocusUsesSparseWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -342,8 +336,6 @@ func TestLSPWorktreeDroppedOnSwitchToWorkingTreeFocus(t *testing.T) {
 	}
 }
 
-// TestShutdownLSPRemovesRangeWorktree covers daemon-shutdown cleanup: the
-// range-focus worktree must not outlive the daemon.
 func TestShutdownLSPRemovesRangeWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -365,9 +357,6 @@ func TestShutdownLSPRemovesRangeWorktree(t *testing.T) {
 	}
 }
 
-// TestLSPWorktreeSizeGuardBlocksOversizedCheckout covers the
-// lsp_worktree_max_mb guard: a HeadSHA whose sparse-checkout estimate
-// exceeds the configured limit must not be checked out.
 func TestLSPWorktreeSizeGuardBlocksOversizedCheckout(t *testing.T) {
 	t.Parallel()
 
@@ -751,7 +740,6 @@ func TestLSPAbsolutePathScoping(t *testing.T) {
 	}
 }
 
-// lspReferencesResponse mirrors the /api/lsp/references payload in tests.
 type lspReferencesResponse struct {
 	Locations []lspLocationResponse `json:"locations"`
 	Truncated bool                  `json:"truncated"`
@@ -845,8 +833,6 @@ func TestLSPReferencesCapKeepsRelevantFiles(t *testing.T) {
 	}
 }
 
-// TestReferenceCharacterTiebreak pins the character tiebreak: two references
-// on the same line must have a deterministic order.
 func TestReferenceCharacterTiebreak(t *testing.T) {
 	t.Parallel()
 
@@ -982,13 +968,10 @@ func TestLSPEnabledConfigDefault(t *testing.T) {
 	}
 }
 
-// TestLSPManagerDefaultProviderNoDeadlock covers the real provider branch of
-// lspManager (newProvider unset), which resolves the workspace root while
-// already holding s.lsp.mu. Every other test injects a fake provider and so
-// never enters that branch — which is how a self-deadlock there (routing
-// through lspRoot, which takes the same non-reentrant mutex, hanging every
-// LSP request for the daemon's lifetime) once shipped. lsp.NewManager does
-// not spawn gopls, so this needs no binary on PATH.
+// TestLSPManagerDefaultProviderNoDeadlock covers the real-provider branch of
+// lspManager, which resolves the root while holding s.lsp.mu; every other
+// test injects a fake and never enters it. lsp.NewManager spawns nothing, so
+// no binary is needed on PATH.
 func TestLSPManagerDefaultProviderNoDeadlock(t *testing.T) {
 	t.Parallel()
 
@@ -1011,8 +994,6 @@ func TestLSPManagerDefaultProviderNoDeadlock(t *testing.T) {
 	srv.ShutdownLSP()
 }
 
-// TestLSPHoverTypeScriptFile covers multi-language support: the endpoints
-// accept any extension a registered language server covers, not just .go.
 func TestLSPHoverTypeScriptFile(t *testing.T) {
 	t.Parallel()
 
@@ -1041,9 +1022,6 @@ func TestLSPHoverTypeScriptFile(t *testing.T) {
 	}
 }
 
-// TestLSPExtensions covers the /api/config extension list: all registered
-// extensions when the availability hook reports servers installed, nil when
-// LSP is unavailable.
 func TestLSPExtensions(t *testing.T) {
 	t.Parallel()
 
@@ -1067,9 +1045,6 @@ func TestLSPExtensions(t *testing.T) {
 	}
 }
 
-// TestLSPExtensionsPerLanguage covers mixed availability — the headline
-// behavior of multi-language support: only the installed language's
-// extensions are offered to the frontend.
 func TestLSPExtensionsPerLanguage(t *testing.T) {
 	t.Parallel()
 

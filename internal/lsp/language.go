@@ -33,22 +33,18 @@ type Language struct {
 	// IDByExt maps a file extension (lower-case, no dot) to the LSP
 	// languageId sent with didOpen.
 	IDByExt map[string]string
-	// SparsePatterns is the sparse-checkout pattern set for the range-focus
-	// LSP worktree: source and project files, enough for the server without
-	// the rest of the tree.
+	// SparsePatterns is what the range-focus LSP worktree checks out: the
+	// source and project files the server needs, not the rest of the tree.
 	SparsePatterns []string
-	// InitOptions returns the initializationOptions to send with initialize
-	// for a server rooted at root whose first request is about absPath, or
-	// nil to send none. Runs on the request path (once per server spawn) —
-	// keep it filesystem-cheap.
+	// InitOptions returns the initializationOptions for a server rooted at
+	// root whose first request is about absPath, or nil. Runs on the request
+	// path (once per server spawn) — keep it filesystem-cheap.
 	InitOptions func(root, absPath string) map[string]any
-	// ConfigSettings returns the settings the server pulls with
-	// workspace/configuration, keyed by section name ("python"), for a server
-	// rooted at root whose first request is about absPath, or nil when the
-	// language needs none. Some servers take settings only this way (pyright
+	// ConfigSettings answers workspace/configuration pulls, keyed by section
+	// name ("python"). Some servers take settings only this way (pyright
 	// ignores initializationOptions), hence separate from InitOptions. A nil
-	// result leaves the capability undeclared. Runs once per server spawn, so
-	// keep it filesystem-cheap, and never execute anything the repo supplies.
+	// result leaves the capability undeclared. Same cost rule as InitOptions,
+	// and never execute anything the repo supplies.
 	ConfigSettings func(root, absPath string) map[string]any
 	// LocalEnv says third-party answers (types, definitions) for this
 	// language come from the reviewer's own environment. Under range/PR focus
@@ -81,20 +77,11 @@ type Language struct {
 	ExtraRoots func(root string) []PeekRoot
 }
 
-// languages is the registry of supported language servers.
-//
-// TypeScript note: node_modules is not tracked by git, so a range-focus
-// sparse worktree has no dependencies — cross-package hover/definition
-// degrades there, while intra-repo symbols keep working. The normal
-// working-tree focus resolves node_modules as usual.
-//
-// Python note: the same holds for a virtualenv (.venv is untracked), and
-// Manager.depRoot covers it the same way. pyright does not discover a .venv
-// on its own, so pyConfigSettings tells it where the packages are.
-//
-// Terraform note: modules installed by `terraform init` live in the untracked
-// .terraform/, so under range focus registry/git module references don't
-// resolve; local modules and provider schemas (embedded in terraform-ls) do.
+// node_modules, .venv and .terraform are untracked, so a range-focus sparse
+// worktree has none of them. Manager.depRoot borrows the working tree's for the
+// handshake (the tsserver to pin, the site-packages for pyright); TypeScript
+// cross-package hover/definition and Terraform registry/git module references
+// still degrade there, intra-repo symbols keep working.
 var languages = []*Language{
 	{
 		Name:    "go",
@@ -149,14 +136,12 @@ var languages = []*Language{
 	},
 }
 
-// tsInitOptions pins the TypeScript installation typescript-language-server
-// should run. The server resolves the "typescript" package from its workspace
-// root and exits during initialize when it finds none — which is the ordinary
-// layout in a monorepo, where the dependency belongs to the package that owns
-// the file (e.g. frontend/node_modules/typescript) and not to the repo root
-// crit anchors the workspace to. So walk up from the file and pin the nearest
-// install. Returning nil leaves the server's own resolution in charge, which
-// is right for a single-package repo or a global typescript.
+// tsInitOptions pins the nearest TypeScript install. typescript-language-server
+// resolves "typescript" from its workspace root and exits during initialize
+// when it finds none — the ordinary monorepo layout, where the dependency
+// belongs to the owning package (frontend/node_modules/typescript), not the
+// repo root crit anchors the workspace to. nil leaves the server's own
+// resolution in charge (single-package repo, global typescript).
 func tsInitOptions(root, absPath string) map[string]any {
 	tsserver := findTSServer(root, absPath)
 	if tsserver == "" {
@@ -165,10 +150,9 @@ func tsInitOptions(root, absPath string) map[string]any {
 	return map[string]any{"tsserver": map[string]any{"path": tsserver}}
 }
 
-// findTSServer returns the tsserver.js of the node_modules/typescript nearest
-// to absPath, searching its directory upwards through root (inclusive), or ""
-// when there is none. The search never leaves root: a file outside it is not
-// ours to resolve dependencies for.
+// findTSServer walks up from absPath's directory through root (inclusive).
+// It never leaves root: a file outside it is not ours to resolve
+// dependencies for.
 func findTSServer(root, absPath string) string {
 	root = filepath.Clean(root)
 	dir := filepath.Dir(absPath)
@@ -194,9 +178,7 @@ func findTSServer(root, absPath string) string {
 	}
 }
 
-// goExtraRoots resolves GOROOT and GOMODCACHE, where Go definitions outside
-// the repo land (stdlib, module cache). Both are machine-wide, so the
-// workspace root is not consulted.
+// goExtraRoots ignores root: GOROOT and GOMODCACHE are machine-wide.
 func goExtraRoots(_ string) []PeekRoot {
 	out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
 	if err != nil {
@@ -216,11 +198,9 @@ func goExtraRoots(_ string) []PeekRoot {
 	return roots
 }
 
-// npmGlobalRoots resolves the global node_modules directory, where the
-// typescript lib.*.d.ts files land when typescript-language-server and
-// typescript are installed globally (the README's install command) and the
-// repo has no local typescript dependency. The global root is machine-wide,
-// so the workspace root is not consulted.
+// npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
+// installed globally (the README's install command) and the repo has no
+// local typescript. Machine-wide, so root is ignored.
 func npmGlobalRoots(_ string) []PeekRoot {
 	out, err := exec.Command("npm", "root", "-g").Output()
 	if err != nil {
@@ -233,13 +213,11 @@ func npmGlobalRoots(_ string) []PeekRoot {
 	return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
 }
 
-// pathExt returns the lower-case extension of path without the dot.
 func pathExt(path string) string {
 	return strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 }
 
-// LanguageForPath returns the registered language covering path's extension,
-// or nil when no language server handles it.
+// LanguageForPath returns nil when no registered language covers path.
 func LanguageForPath(path string) *Language {
 	ext := pathExt(path)
 	if ext == "" {
@@ -265,8 +243,6 @@ func (l *Language) Available() bool {
 }
 
 // Any reports whether include matches at least one registered language.
-// Callers pass their availability predicate — the real PATH lookup, or a
-// test stub.
 func Any(include func(*Language) bool) bool {
 	for _, l := range languages {
 		if include(l) {
@@ -277,8 +253,7 @@ func Any(include func(*Language) bool) bool {
 }
 
 // Extensions returns the sorted extensions (no dots) of every language
-// matched by include. The frontend uses this to decide which files get
-// hover/definition affordances.
+// matched by include.
 func Extensions(include func(*Language) bool) []string {
 	var exts []string
 	for _, l := range languages {
@@ -293,12 +268,10 @@ func Extensions(include func(*Language) bool) []string {
 	return exts
 }
 
-// SparsePatternsForFiles returns the union of sparse-checkout patterns for
-// the languages that cover at least one of paths AND are matched by include,
-// for the range-focus LSP worktree. Content-based on purpose: a language
-// that is installed on the machine but absent from the review must not
-// inflate the checkout (or its size estimate against lsp_worktree_max_mb)
-// with files its server will never be asked about.
+// SparsePatternsForFiles unions the patterns of the languages that cover at
+// least one of paths and match include. Content-based on purpose: a language
+// installed on the machine but absent from the review must not inflate the
+// checkout (or its size estimate against lsp_worktree_max_mb).
 func SparsePatternsForFiles(paths []string, include func(*Language) bool) []string {
 	need := make(map[string]bool)
 	for _, p := range paths {

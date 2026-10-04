@@ -186,7 +186,7 @@ func TestRealPyrightStdlibDefinitionIsPeekable(t *testing.T) {
 	m := NewManager(dir, "", context.Background())
 	defer m.Shutdown()
 
-	// `json.dumps` on line 8 (0-based 7): "    print(json.dumps(" — dumps at 16.
+	// `json.dumps` on line 8 (0-based 7): "    print(json.dumps(" — dumps at 15.
 	locs, err := m.Definition(app, 7, 17)
 	if err != nil {
 		t.Fatalf("Definition: %v", err)

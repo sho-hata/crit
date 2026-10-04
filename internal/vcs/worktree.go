@@ -13,20 +13,17 @@ import (
 	"strings"
 )
 
-// AddSparseWorktree checks out sha into dir as a detached git worktree that
-// contains only the paths matching patterns (git sparse-checkout, non-cone
-// mode, so "*.go" matches at every depth). The worktree shares the
-// repository's object store, so the on-disk cost is the matched files only.
+// AddSparseWorktree checks out sha into dir as a detached worktree holding
+// only the paths matching patterns (non-cone sparse-checkout, so "*.go"
+// matches at every depth). It shares the repository's object store, so the
+// on-disk cost is the matched files only. Files land byte-for-byte as in the
+// commit — see noEOLConversion.
 //
 // dir must not exist yet: this function only ever deletes directories it
 // created itself. sha is resolved with `rev-parse --verify <sha>^{commit}`
 // so a hex-looking branch name or ambiguous prefix cannot check out the
-// wrong tree. On any failure the partially created worktree is removed so a
-// retry starts clean.
-//
-// Used to give a language server a real filesystem view of a commit that is
-// not the working tree (range/PR focus). Files land byte-for-byte as they are
-// in the commit — see noEOLConversion.
+// wrong tree. On failure the partial worktree is removed so a retry starts
+// clean.
 func AddSparseWorktree(ctx context.Context, repoRoot, sha, dir string, patterns []string) error {
 	dir, err := absWorktreeDir(dir)
 	if err != nil {
@@ -75,11 +72,11 @@ func noEOLConversion() []string {
 	return []string{"-c", "core.autocrlf=false", "-c", "core.eol=lf"}
 }
 
-// RemoveWorktree is idempotent (a missing worktree is not an error) and never
-// deletes a directory git doesn't list as a worktree of repoRoot. It only
-// prunes worktree metadata when it had to fall back to deleting the
-// directory itself — a repo-wide prune would also drop the user's other
-// worktrees whose directories are temporarily missing (unmounted volume).
+// RemoveWorktree is idempotent and never deletes a directory git doesn't
+// list as a worktree of repoRoot. It prunes metadata only after falling back
+// to deleting the directory itself — a repo-wide prune would also drop the
+// user's other worktrees whose directories are temporarily missing
+// (unmounted volume).
 func RemoveWorktree(ctx context.Context, repoRoot, dir string) error {
 	dir, err := absWorktreeDir(dir)
 	if err != nil {
@@ -111,8 +108,6 @@ func removeWorktree(ctx context.Context, repoRoot, dir string, ownDir bool) erro
 	return err
 }
 
-// isRegisteredWorktree reports whether git lists dir as a linked worktree of
-// repoRoot.
 func isRegisteredWorktree(ctx context.Context, repoRoot, dir string) bool {
 	out, err := runGit(ctx, repoRoot, "worktree", "list", "--porcelain")
 	if err != nil {
@@ -126,8 +121,7 @@ func isRegisteredWorktree(ctx context.Context, repoRoot, dir string) bool {
 	return false
 }
 
-// samePath compares two paths after symlink resolution (macOS /tmp vs
-// /private/tmp).
+// samePath resolves symlinks first (macOS /tmp vs /private/tmp).
 func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)
@@ -137,9 +131,9 @@ func samePath(a, b string) bool {
 	return ra == rb
 }
 
-// SparseTreeSize sums the blob sizes at sha for paths matching patterns,
-// without checking anything out — a fast estimate of what AddSparseWorktree
-// would write to disk (a 31k-entry tree lists in well under 100ms).
+// SparseTreeSize estimates what AddSparseWorktree would write to disk by
+// summing blob sizes, without checking anything out (a 31k-entry tree lists
+// in well under 100ms).
 func SparseTreeSize(ctx context.Context, repoRoot, sha string, patterns []string) (int64, error) {
 	if err := validateSparsePatterns(patterns); err != nil {
 		return 0, err

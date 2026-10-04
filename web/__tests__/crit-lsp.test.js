@@ -1,7 +1,7 @@
 'use strict';
 
-// Tests for the pure helpers in crit-lsp.js (offset math + hunk lookup).
-// DOM-dependent behavior (tooltip, peek popup) is exercised in E2E.
+// Pure helpers only; DOM-dependent behavior (tooltip, peek, references) is
+// exercised in E2E.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -135,9 +135,7 @@ test('makeExtensionMatcher: matches server-provided extensions, case-insensitive
 });
 
 test('makeExtensionMatcher: empty list matches nothing, unsafe entries dropped', function () {
-  // No guessed fallback: an empty/missing list must not offer hovers the
-  // server would reject (init only runs when lsp_available is true, which
-  // guarantees a non-empty list from the server).
+  // No guessed fallback: it would offer hovers the server rejects.
   assert.strictEqual(lsp.makeExtensionMatcher(null).test('a.go'), false);
   assert.strictEqual(lsp.makeExtensionMatcher([]).test('a.ts'), false);
   assert.strictEqual(lsp.makeExtensionMatcher(['t(s', '.*']).test('a.t(s'), false);
@@ -163,21 +161,17 @@ test('hljsLanguageForPath: grammar follows the peeked file, not Go', function ()
 });
 
 test('serverErrorText: keeps the server reason, one line, bounded', function () {
-  // The reason IS the diagnosis — a language server that will not start says
-  // exactly why, and that line is what the reviewer needs in the tooltip.
   const real = 'lsp hover: lsp: initializing typescript-language-server: ' +
     'Could not find a valid TypeScript installation.';
   assert.strictEqual(lsp.serverErrorText(real, 502), real);
 
-  // Only the first line: Go errors can carry a stack-ish tail.
+  // Go errors can carry a stack-ish tail.
   assert.strictEqual(lsp.serverErrorText('first line\nsecond line', 502), 'first line');
 
-  // An empty body still has to say something actionable.
   assert.match(lsp.serverErrorText('', 502), /HTTP 502/);
   assert.match(lsp.serverErrorText('   \n  ', 503), /HTTP 503/);
   assert.match(lsp.serverErrorText(null, 500), /HTTP 500/);
 
-  // Long bodies are truncated rather than blowing out the tooltip.
   const long = lsp.serverErrorText('x'.repeat(500), 502);
   assert.ok(long.length <= 200, 'length = ' + long.length);
   assert.ok(long.endsWith('…'));

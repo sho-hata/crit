@@ -1,8 +1,6 @@
-// Package pathsafe centralizes the symlink-resolving containment check crit
-// uses wherever it reads or serves files under a trusted root. Keeping the
-// logic in one place stops the three call sites (static /files/ serving,
-// session disk snapshots, LSP handlers) from drifting apart on
-// security-sensitive path validation.
+// Package pathsafe is the one symlink-resolving containment check for every
+// place crit reads or serves files under a trusted root, so the
+// security-sensitive validation cannot drift apart between call sites.
 package pathsafe
 
 import (
@@ -20,9 +18,9 @@ var (
 	ErrDenied   = errors.New("pathsafe: path escapes root")
 )
 
-// ResolveUnder resolves path through symlinks and returns the resolved
-// location when it lies strictly inside root. The root itself is rejected —
-// no caller legitimately reads or serves the root directory.
+// ResolveUnder returns path with symlinks resolved when it lies strictly
+// inside root. The root itself is rejected — no caller legitimately reads or
+// serves the root directory.
 func ResolveUnder(path, root string) (string, error) {
 	if root == "" {
 		return "", ErrDenied
