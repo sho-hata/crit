@@ -9,16 +9,9 @@ import (
 	"time"
 )
 
-// DebugEnv names the environment variable that turns on LSP debug logging.
-// The daemon reads it at startup (it inherits the CLI's environment), so an
-// already-running daemon has to be restarted to pick it up.
-//
-// When enabled, everything goes through the standard logger — i.e. into the
-// daemon log at ~/.crit/sessions/<key>.log:
-//   - each server's stderr, which is discarded otherwise
-//   - every JSON-RPC frame in both directions, payloads truncated
-//   - one summary line per request with its duration and outcome
-//   - server lifecycle: spawn, handshake, exit, restart, idle shutdown
+// DebugEnv turns on LSP debug logging into the daemon log
+// (~/.crit/sessions/<key>.log). The daemon inherits it from the CLI, so a
+// running daemon must be restarted to pick it up.
 const DebugEnv = "CRIT_LSP_DEBUG"
 
 // maxDebugPayload caps how much of one JSON-RPC frame or stderr line is
@@ -26,9 +19,8 @@ const DebugEnv = "CRIT_LSP_DEBUG"
 // hundreds of entries; the head of the frame is what identifies it.
 const maxDebugPayload = 1024
 
-// debugEnabled reports whether DebugEnv is set to something other than an
-// explicit "off" value. It reads the environment on every call so tests can
-// flip it with t.Setenv.
+// debugEnabled reads the environment on every call so tests can flip it with
+// t.Setenv.
 func debugEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(DebugEnv))) {
 	case "", "0", "false", "off", "no":
@@ -37,9 +29,6 @@ func debugEnabled() bool {
 	return true
 }
 
-// debugf writes one debug line tagged with the language name, or nothing when
-// debug logging is off. name is "" for clients that aren't tied to a
-// registry language (in-memory test transports).
 func debugf(enabled bool, name, format string, args ...any) {
 	if !enabled {
 		return
@@ -60,8 +49,7 @@ func roundDuration(d time.Duration) time.Duration {
 	return d.Round(time.Millisecond)
 }
 
-// truncateForLog shortens b to maxDebugPayload bytes for a log line, noting
-// how much was cut. Newlines are escaped so one frame stays on one line.
+// truncateForLog escapes newlines so one frame stays on one log line.
 func truncateForLog(b []byte) string {
 	cut := 0
 	if len(b) > maxDebugPayload {
@@ -76,9 +64,8 @@ func truncateForLog(b []byte) string {
 	return s
 }
 
-// stderrLogger is an io.Writer that logs a language server's stderr one line
-// at a time. os/exec drives it from a single copy goroutine, so it needs no
-// locking.
+// stderrLogger logs a language server's stderr line by line. os/exec drives
+// it from a single copy goroutine, so it needs no locking.
 type stderrLogger struct {
 	name string
 	buf  []byte

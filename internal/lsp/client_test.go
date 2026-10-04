@@ -54,6 +54,10 @@ type fakeServer struct {
 // each client request; initialize is answered automatically when handler
 // returns nil for it.
 func startFake(handler func(method string, params json.RawMessage) any) *fakeServer {
+	return startFakeWithSettings(handler, nil)
+}
+
+func startFakeWithSettings(handler func(method string, params json.RawMessage) any, settings map[string]any) *fakeServer {
 	c2sR, c2sW := io.Pipe()
 	s2cR, s2cW := io.Pipe()
 	fs := &fakeServer{
@@ -62,7 +66,7 @@ func startFake(handler func(method string, params json.RawMessage) any) *fakeSer
 		in:      c2sR,
 		reqDone: make(map[int64]chan jsonrpcMessage),
 	}
-	fs.client = NewClient(c2sW, s2cR, nil)
+	fs.client = newClient("", c2sW, s2cR, nil, settings)
 	go fs.loop()
 	return fs
 }
@@ -308,7 +312,7 @@ func TestClientInitializeDeclaresConfigurationOnlyWithSettings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var caps map[string]any
-			fs := startFake(func(method string, params json.RawMessage) any {
+			fs := startFakeWithSettings(func(method string, params json.RawMessage) any {
 				if method == "initialize" {
 					var p struct {
 						Capabilities map[string]any `json:"capabilities"`
@@ -319,9 +323,8 @@ func TestClientInitializeDeclaresConfigurationOnlyWithSettings(t *testing.T) {
 					caps = p.Capabilities
 				}
 				return nil
-			})
+			}, tc.settings)
 			defer fs.client.Close()
-			fs.client.SetSettings(tc.settings)
 			if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
 				t.Fatalf("Initialize: %v", err)
 			}
@@ -342,12 +345,11 @@ func TestClientInitializeDeclaresConfigurationOnlyWithSettings(t *testing.T) {
 func TestClientAnswersConfigurationFromSettings(t *testing.T) {
 	t.Parallel()
 
-	fs := startFake(nil)
-	defer fs.client.Close()
 	extra := []string{"/venv/lib/python3.13/site-packages"}
-	fs.client.SetSettings(map[string]any{
+	fs := startFakeWithSettings(nil, map[string]any{
 		"python": map[string]any{"analysis": map[string]any{"extraPaths": extra}},
 	})
+	defer fs.client.Close()
 
 	id := json.RawMessage(`7`)
 	fs.send(map[string]any{

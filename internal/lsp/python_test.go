@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// writeVenv makes dir/name look like a virtualenv — its site-packages exists —
-// and returns that site-packages path.
+// writeVenv returns the site-packages path it creates.
 func writeVenv(t *testing.T, dir, name string) string {
 	t.Helper()
 	sp := filepath.Join(dir, name, "lib", "python3.13", "site-packages")
@@ -37,8 +36,6 @@ func TestFindSitePackages(t *testing.T) {
 			writeVenv(t, root, "venv")
 			return filepath.Join(root, "app.py"), writeVenv(t, root, ".venv")
 		}},
-		// A monorepo keeps one venv per service; the one nearest the file is
-		// the one its imports resolve against.
 		{"nearest venv wins", func(t *testing.T, _, root string) (string, string) {
 			writeVenv(t, root, ".venv")
 			svc := filepath.Join(root, "services", "api")
@@ -66,8 +63,6 @@ func TestFindSitePackages(t *testing.T) {
 		{"no venv", func(_ *testing.T, _, root string) (string, string) {
 			return filepath.Join(root, "app.py"), ""
 		}},
-		// The walk stops at root: a file outside the workspace is not ours to
-		// resolve dependencies for.
 		{"file outside root", func(t *testing.T, base, _ string) (string, string) {
 			other := filepath.Join(base, "other")
 			writeVenv(t, other, ".venv")
@@ -135,8 +130,6 @@ func TestParsePythonEnv(t *testing.T) {
 		out  string
 		want []PeekRoot
 	}{
-		// Only site-packages is the reviewer's local environment; the stdlib
-		// is the same for every checkout of the code.
 		{"stdlib and site-packages", "/py/lib/python3.13\n/py/lib/python3.13/site-packages\n", []PeekRoot{
 			{Path: "/py/lib/python3.13", Label: "$PYTHON_STDLIB"},
 			{Path: "/py/lib/python3.13/site-packages", Label: "$SITE_PACKAGES", LocalEnv: true},
@@ -187,9 +180,6 @@ func TestPyExtraRootsIncludesTheVenvOfRoot(t *testing.T) {
 	}
 }
 
-// Which hooks each language has. Only Python takes workspace/configuration
-// settings, marks its answers as local-environment, and skips the startup
-// progress wait.
 func TestRegisteredLanguageHooks(t *testing.T) {
 	t.Parallel()
 
