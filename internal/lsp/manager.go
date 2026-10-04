@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -157,6 +158,11 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 			restarted = true
 			debugf(debugEnabled(), lang.Name, "server died during the request (%v), restarting once", reqErr)
 			continue // ensureClient replaces the dead client
+		}
+		var respErr *ResponseError
+		if lang.NoResult != nil && errors.As(reqErr, &respErr) && lang.NoResult(respErr) {
+			debugf(debugEnabled(), lang.Name, "nothing at this position: %v", reqErr)
+			return nil
 		}
 		// "no views" means gopls's workspace view isn't built yet — transient
 		// during startup, so retry briefly instead of surfacing an error.

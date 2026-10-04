@@ -59,6 +59,13 @@ type Language struct {
 	// wait would only sit out its grace period. Don't set it for a server that
 	// answers from a half-built project.
 	SkipReadyWait bool
+	// NoResult reports whether an error answer to a position request
+	// (hover, definition, references) means there is simply nothing at that
+	// position, for a server that says so with an error instead of null; nil
+	// for one that answers null like gopls. The Manager turns such an error
+	// into an empty result: the UI counts errors toward its failure breaker,
+	// and hovering over whitespace must not trip it.
+	NoResult func(*ResponseError) bool
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for
 	// TypeScript). root is the tree the language's dependencies live in — the
@@ -70,10 +77,11 @@ type Language struct {
 	ExtraRoots func(root string) []PeekRoot
 }
 
-// node_modules and .venv are untracked, so a range-focus sparse worktree has
-// neither. Manager.depRoot borrows the working tree's for the handshake (the
-// tsserver to pin, the site-packages for pyright); TypeScript cross-package
-// hover/definition still degrades there, intra-repo symbols keep working.
+// node_modules, .venv and .terraform are untracked, so a range-focus sparse
+// worktree has none of them. Manager.depRoot borrows the working tree's for the
+// handshake (the tsserver to pin, the site-packages for pyright); TypeScript
+// cross-package hover/definition and Terraform registry/git module references
+// still degrade there, intra-repo symbols keep working.
 var languages = []*Language{
 	{
 		Name:    "go",
@@ -116,6 +124,15 @@ var languages = []*Language{
 		LocalEnv:       true,
 		SkipReadyWait:  true,
 		ExtraRoots:     pyExtraRoots,
+	},
+	{
+		Name:           "terraform",
+		Command:        []string{"terraform-ls", "serve"},
+		IDByExt:        map[string]string{"tf": "terraform", "tfvars": "terraform-vars"},
+		SparsePatterns: []string{"*.tf", "*.tfvars"},
+		InitOptions:    tfInitOptions,
+		NoResult:       tfNoResult,
+		SkipReadyWait:  true,
 	},
 }
 
