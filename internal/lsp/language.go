@@ -63,13 +63,13 @@ type Language struct {
 	// wait would only sit out its grace period. Don't set it for a server that
 	// answers from a half-built project.
 	SkipReadyWait bool
-	// NoResultCode is the JSON-RPC error code the server answers a position
-	// request (hover, definition, references) with when there is simply
-	// nothing at that position, or 0 for a server that answers null like
-	// gopls. The Manager turns such an error into an empty result: the UI
-	// counts errors toward its failure breaker, and hovering over whitespace
-	// must not trip it.
-	NoResultCode int
+	// NoResult reports whether an error answer to a position request
+	// (hover, definition, references) means there is simply nothing at that
+	// position, for a server that says so with an error instead of null; nil
+	// for one that answers null like gopls. The Manager turns such an error
+	// into an empty result: the UI counts errors toward its failure breaker,
+	// and hovering over whitespace must not trip it.
+	NoResult func(*ResponseError) bool
 	// ExtraRoots resolves the language's out-of-workspace source roots where
 	// definitions can land (e.g. GOROOT for Go, the global node_modules for
 	// TypeScript). root is the tree the language's dependencies live in — the
@@ -144,7 +144,7 @@ var languages = []*Language{
 		IDByExt:        map[string]string{"tf": "terraform", "tfvars": "terraform-vars"},
 		SparsePatterns: []string{"*.tf", "*.tfvars"},
 		InitOptions:    tfInitOptions,
-		NoResultCode:   tfNoResultCode,
+		NoResult:       tfNoResult,
 		SkipReadyWait:  true,
 	},
 }

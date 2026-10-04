@@ -175,7 +175,7 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 			continue
 		}
 		var respErr *ResponseError
-		if lang.NoResultCode != 0 && errors.As(reqErr, &respErr) && respErr.Code == lang.NoResultCode {
+		if lang.NoResult != nil && errors.As(reqErr, &respErr) && lang.NoResult(respErr) {
 			debugf(debugEnabled(), lang.Name, "nothing at this position: %v", reqErr)
 			return nil
 		}

@@ -1,14 +1,41 @@
 package lsp
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
-// tfNoResultCode is what terraform-ls answers hover, definition and
-// references with when nothing is at the position ("position outside of any
-// attribute name, value or block", "no reference origin found"): it returns
-// plain Go errors, which its JSON-RPC library (jrpc2) reports as SystemError.
-// Measured against terraform-ls 0.39.0, about a third of the positions in an
-// ordinary .tf file come back this way on hover.
-const tfNoResultCode = -32098
+// tfSystemErrorCode is the code terraform-ls's JSON-RPC library (jrpc2)
+// gives every plain Go error. It is generic: real failures share it.
+const tfSystemErrorCode = -32098
+
+// tfNoResultMessages are the errors terraform-ls (via hcl-lang) answers hover,
+// definition and references with when nothing is at the position. Measured
+// against terraform-ls 0.39.0, about a third of the positions in an ordinary
+// .tf file come back this way on hover.
+var tfNoResultMessages = []string{
+	"position outside of",       // whitespace, block headers, between blocks
+	"unknown attribute",         // attribute missing from the schema
+	"unknown block type",        // block missing from the schema
+	"unexpected label",          // label beyond the schema's
+	"no reference origin found", // definition on a non-reference
+	"no reference target found", // reference whose target is not indexed
+}
+
+// tfNoResult reports whether a terraform-ls error means "nothing here". Only
+// the known messages count: anything else with the same code (a file not
+// found, no schema available) is a real failure and must surface.
+func tfNoResult(e *ResponseError) bool {
+	if e.Code != tfSystemErrorCode {
+		return false
+	}
+	for _, msg := range tfNoResultMessages {
+		if strings.Contains(e.Message, msg) {
+			return true
+		}
+	}
+	return false
+}
 
 // tfInitOptions stops terraform-ls from running terraform.
 //
