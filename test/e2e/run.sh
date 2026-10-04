@@ -33,35 +33,55 @@ fi
 # when the build is already cached, so it's a fast no-op in CI and on reruns.
 (cd "$SCRIPT_DIR" && npx playwright install chromium)
 
+# E2E_GROUP: all (default) | git (git-mode, sharded by E2E_SHARD) | rest
+E2E_GROUP="${E2E_GROUP:-all}"
+E2E_SHARD="${E2E_SHARD:-1/1}"
+case "$E2E_GROUP" in
+  all|git|rest) ;;
+  *) echo "Unknown E2E_GROUP: $E2E_GROUP (want all, git or rest)" >&2; exit 2 ;;
+esac
+[ $# -eq 0 ] || E2E_GROUP=all
+
+# Skip mobile on Windows — Windows headless has reliability issues with
+# touchscreen.tap().
+RUN_MOBILE=1
+if [[ "$OSTYPE" == msys || "$OSTYPE" == cygwin ]]; then
+  RUN_MOBILE=0
+fi
+
 # Kill any stale processes on our test ports before starting fresh
 for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT" "$PERF_PORT"; do
   e2e_kill_port "$port"
 done
 
-# Start both fixture servers in parallel
+# Start fixture servers in parallel
 cd "$SCRIPT_DIR"
-bash setup-fixtures.sh "$GIT_PORT" &
-GIT_PID=$!
-bash setup-fixtures.sh "$GIT2_PORT" &
-GIT2_PID=$!
-bash setup-fixtures-filemode.sh "$FILE_PORT" &
-FILE_PID=$!
-bash setup-fixtures-singlefile.sh "$SINGLE_PORT" &
-SINGLE_PID=$!
-bash setup-fixtures-nogit.sh "$NOGIT_PORT" &
-NOGIT_PID=$!
-bash setup-fixtures-multifile.sh "$MULTI_PORT" &
-MULTI_PID=$!
-bash setup-fixtures-range-mode.sh "$RANGE_PORT" &
-RANGE_PID=$!
-bash setup-fixtures-livemode.sh "$LIVE_PORT" &
-LIVE_PID=$!
-bash setup-fixtures-perf.sh "$PERF_PORT" &
-PERF_PID=$!
+FIXTURE_PIDS=()
+FIXTURE_PORTS=()
+start_fixture() { # script port
+  bash "$1" "$2" &
+  FIXTURE_PIDS+=($!)
+  FIXTURE_PORTS+=("$2")
+}
+if [ "$E2E_GROUP" != rest ] || [ "$RUN_MOBILE" -eq 1 ]; then
+  start_fixture setup-fixtures.sh "$GIT_PORT"
+fi
+if [ "$E2E_GROUP" = all ]; then
+  start_fixture setup-fixtures.sh "$GIT2_PORT"
+fi
+if [ "$E2E_GROUP" != git ]; then
+  start_fixture setup-fixtures-filemode.sh "$FILE_PORT"
+  start_fixture setup-fixtures-singlefile.sh "$SINGLE_PORT"
+  start_fixture setup-fixtures-nogit.sh "$NOGIT_PORT"
+  start_fixture setup-fixtures-multifile.sh "$MULTI_PORT"
+  start_fixture setup-fixtures-range-mode.sh "$RANGE_PORT"
+  start_fixture setup-fixtures-livemode.sh "$LIVE_PORT"
+  start_fixture setup-fixtures-perf.sh "$PERF_PORT"
+fi
 
 cleanup() {
-  kill "$GIT_PID" "$GIT2_PID" "$FILE_PID" "$SINGLE_PID" "$NOGIT_PID" "$MULTI_PID" "$RANGE_PID" "$LIVE_PID" "$PERF_PID" 2>/dev/null || true
-  wait "$GIT_PID" "$GIT2_PID" "$FILE_PID" "$SINGLE_PID" "$NOGIT_PID" "$MULTI_PID" "$RANGE_PID" "$LIVE_PID" "$PERF_PID" 2>/dev/null || true
+  kill "${FIXTURE_PIDS[@]}" 2>/dev/null || true
+  wait "${FIXTURE_PIDS[@]}" 2>/dev/null || true
   # On Git Bash `kill <bash-pid>` doesn't reap the spawned crit.exe child;
   # taskkill /T flushes the whole tree.
   e2e_kill_stray_crit
@@ -70,7 +90,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Wait for servers to be ready
-for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT" "$PERF_PORT"; do
+for port in "${FIXTURE_PORTS[@]}"; do
   while ! curl -sf "http://localhost:$port/api/session" >/dev/null 2>&1; do
     sleep 0.1
   done
@@ -78,7 +98,6 @@ done
 
 # Run tests
 if [ $# -eq 0 ]; then
-  # No args: run all projects in parallel (mobile after git-mode; see below)
   PWLOGS=$(mktemp -d)
   FAILED=0
 
@@ -92,48 +111,50 @@ if [ $# -eq 0 ]; then
     [ "$rc" -eq 0 ] || FAILED=1
   }
 
-  npx playwright test --project=git-mode --shard=1/2 > "$PWLOGS/git-1.log" 2>&1 &
-  PW_GIT1=$!
-  CRIT_TEST_PORT="$GIT2_PORT" npx playwright test --project=git-mode --shard=2/2 > "$PWLOGS/git-2.log" 2>&1 &
-  PW_GIT2=$!
-  npx playwright test --project=file-mode > "$PWLOGS/file.log" 2>&1 &
-  PW_FILE=$!
-  npx playwright test --project=single-file-mode > "$PWLOGS/single.log" 2>&1 &
-  PW_SINGLE=$!
-  npx playwright test --project=no-git-mode > "$PWLOGS/nogit.log" 2>&1 &
-  PW_NOGIT=$!
-  npx playwright test --project=multi-file-mode > "$PWLOGS/multi.log" 2>&1 &
-  PW_MULTI=$!
-  npx playwright test --project=range-mode > "$PWLOGS/range.log" 2>&1 &
-  PW_RANGE=$!
-  npx playwright test --project=live-mode > "$PWLOGS/live.log" 2>&1 &
-  PW_LIVE=$!
-  npx playwright test --project=perf > "$PWLOGS/perf.log" 2>&1 &
-  PW_PERF=$!
+  LAUNCHED_NAMES=()
+  LAUNCHED_PIDS=()
+  REAPED=0
+  launch() { # name cmd...
+    local name=$1
+    shift
+    "$@" > "$PWLOGS/$name.log" 2>&1 &
+    LAUNCHED_NAMES+=("$name")
+    LAUNCHED_PIDS+=($!)
+  }
+  reap_upto() {
+    local n=${1:-${#LAUNCHED_PIDS[@]}}
+    while [ "$REAPED" -lt "$n" ]; do
+      reap "${LAUNCHED_NAMES[$REAPED]}" "${LAUNCHED_PIDS[$REAPED]}"
+      REAPED=$((REAPED + 1))
+    done
+  }
+
+  if [ "$E2E_GROUP" = git ]; then
+    launch git npx playwright test --project=git-mode --shard="$E2E_SHARD"
+  elif [ "$E2E_GROUP" = all ]; then
+    launch git-1 npx playwright test --project=git-mode --shard=1/2
+    launch git-2 env CRIT_TEST_PORT="$GIT2_PORT" npx playwright test --project=git-mode --shard=2/2
+  fi
+  if [ "$E2E_GROUP" != git ]; then
+    launch file   npx playwright test --project=file-mode
+    launch single npx playwright test --project=single-file-mode
+    launch nogit  npx playwright test --project=no-git-mode
+    launch multi  npx playwright test --project=multi-file-mode
+    launch range  npx playwright test --project=range-mode
+    launch live   npx playwright test --project=live-mode
+    launch perf   npx playwright test --project=perf
+  fi
 
   # Mobile shares the git-mode fixture (port 3123) and both projects call
-  # DELETE /api/comments in beforeEach, so they must not overlap. Wait for
-  # both git-mode shards, then launch mobile against the first fixture.
-  # Skip on Windows — touch emulation is a Chromium feature identical across
-  # OS, and Windows headless has reliability issues with touchscreen.tap().
-  reap git-1 $PW_GIT1
-  reap git-2 $PW_GIT2
-  if [[ "$OSTYPE" != msys && "$OSTYPE" != cygwin ]]; then
-    npx playwright test --project=mobile > "$PWLOGS/mobile.log" 2>&1 &
-    PW_MOBILE=$!
+  # DELETE /api/comments in beforeEach, so they must not overlap.
+  if [ "$RUN_MOBILE" -eq 1 ] && [ "$E2E_GROUP" != git ]; then
+    if [ "$E2E_GROUP" = all ]; then
+      reap_upto 2
+    fi
+    launch mobile npx playwright test --project=mobile
   fi
 
-  # Now wait for everything else.
-  reap file   $PW_FILE
-  reap single $PW_SINGLE
-  reap nogit  $PW_NOGIT
-  reap multi  $PW_MULTI
-  reap range  $PW_RANGE
-  reap live   $PW_LIVE
-  reap perf   $PW_PERF
-  if [ -n "${PW_MOBILE:-}" ]; then
-    reap mobile $PW_MOBILE
-  fi
+  reap_upto
 
   # Print results — show summary for passing projects, full output for failures
   for f in "$PWLOGS"/*.log; do
