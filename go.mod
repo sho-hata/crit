@@ -12,3 +12,6 @@ require (
 require github.com/gorilla/websocket v1.5.3
 
 require golang.org/x/image v0.44.0
+
+// v1.1.6 was tagged by mistake (meant v0.1.6); v1.1.7 exists only to carry this retraction.
+retract [v1.1.6, v1.1.7]
