@@ -35,13 +35,21 @@ const vueReg =
 // highlightjs-astro-js dist/astro.js is a CDN build that self-registers on load.
 const astro = readFileSync("node_modules/highlightjs-astro-js/dist/astro.js", "utf8");
 
+// @taga3s/highlightjs-terraform is ESM-only. Strip the exports and register the
+// definer directly (registers 'terraform' with aliases tf / hcl).
+const tfSrc = readFileSync("node_modules/@taga3s/highlightjs-terraform/dist/index.js", "utf8");
+const tfBody = tfSrc.replace(/export default function[\s\S]*$/, "");
+const tfReg =
+  `var hljsDefineTerraform=(function(){\n${tfBody}\nreturn hljsDefineTerraform;\n})();\n` +
+  `hljs.registerLanguage('terraform', hljsDefineTerraform);`;
+
 // Some npm packages contain CRLF. Normalize generated bundles so their bytes are
 // identical on every platform and are not changed by Git's eol=lf policy.
 const lf = value => value.replace(/\r\n/g, "\n");
 
 writeFileSync(
   `${dest}/highlight.min.js`,
-  lf(core + "\n" + langs + "\n" + patch + "\n" + heexReg + "\n" + vueReg + "\n" + astro)
+  lf(core + "\n" + langs + "\n" + patch + "\n" + heexReg + "\n" + vueReg + "\n" + astro + "\n" + tfReg)
 );
 
 // mermaid

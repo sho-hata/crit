@@ -1138,7 +1138,8 @@
   // .dockerfile → dockerfile, .makefile → makefile). Only extensions that hljs
   // does NOT cover via aliases need entries here.
   const EXT_OVERRIDES = {
-    tf: 'hcl',         // Terraform — hljs has no .tf alias
+    tf: 'terraform',   // third-party grammar (@taga3s/highlightjs-terraform)
+    tfvars: 'terraform',
     htm: 'xml',        // hljs aliases html but not htm
     svg: 'xml',
     cs: 'csharp',
