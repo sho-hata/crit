@@ -90,10 +90,11 @@ test.describe('File Tree — Git Mode', () => {
   });
 
   test('file tree lists all files from the session', async ({ page }) => {
-    // Git fixture has: plan.md, skill.md, server.go, handler.js, deleted.txt, routes.go, legacy.go (committed)
-    // + utils.go, login.feature (staged), config.yaml (untracked) = 10 total
+    // Git fixture has: plan.md, skill.md, server.go, handler.js, deleted.txt, routes.go, legacy.go,
+    // main.tf, terraform.tfvars (committed)
+    // + utils.go, login.feature (staged), config.yaml (untracked) = 12 total
     const treeFiles = page.locator('.tree-file');
-    await expect(treeFiles).toHaveCount(10);
+    await expect(treeFiles).toHaveCount(12);
   });
 
   test('file tree shows correct file names', async ({ page }) => {
@@ -111,7 +112,7 @@ test.describe('File Tree — Git Mode', () => {
   test('file tree header shows file count', async ({ page }) => {
     const stats = page.locator('#fileTreeStats');
     await expect(stats).toBeVisible();
-    await expect(stats).toContainText('10');
+    await expect(stats).toContainText('12');
   });
 
   test('file tree header shows addition stats', async ({ page }) => {
@@ -185,9 +186,9 @@ test.describe('File Tree — Git Mode', () => {
   });
 
   test('file status icons have correct classes', async ({ page }) => {
-    // plan.md, skill.md, handler.js, login.feature, and config.yaml (untracked) are added
+    // plan.md, skill.md, handler.js, main.tf, terraform.tfvars, login.feature, and config.yaml (untracked) are added
     const addedIcons = page.locator('.tree-file-status-icon.added');
-    await expect(addedIcons).toHaveCount(5);
+    await expect(addedIcons).toHaveCount(7);
 
     // server.go, routes.go, legacy.go, and utils.go (staged modification) are modified
     const modifiedIcons = page.locator('.tree-file-status-icon.modified');

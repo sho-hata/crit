@@ -63,8 +63,8 @@ test.describe('Commit Selection', () => {
     const fileSections = page.locator('.file-section');
     await expect(async () => {
       const count = await fileSections.count();
-      // Auth commit touches several files; skill.md is included (branch fixture).
-      expect(count).toBeLessThanOrEqual(6);
+      // Auth commit touches several files; skill.md and the Terraform files are included (branch fixture).
+      expect(count).toBeLessThanOrEqual(8);
       expect(count).toBeGreaterThan(0);
     }).toPass();
   });

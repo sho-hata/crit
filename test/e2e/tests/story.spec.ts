@@ -115,6 +115,8 @@ const MERGED_HUNK_STORY = {
         { file_path: 'routes.go', old_start: 1 },
         { file_path: 'routes.go', old_start: 48 },
         { file_path: 'plan.md', old_start: 0 },
+        { file_path: 'main.tf', old_start: 0 },
+        { file_path: 'terraform.tfvars', old_start: 0 },
       ],
       reason: 'Additional fixture hunks keep the story above ingestion coverage requirements.',
     },

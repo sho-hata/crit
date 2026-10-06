@@ -83,6 +83,20 @@ test.describe('Syntax Highlighting — hljs alias resolution', () => {
   });
 });
 
+test.describe('Syntax Highlighting — Terraform', () => {
+  for (const name of ['main.tf', 'terraform.tfvars']) {
+    test(`${name} gets Terraform syntax highlighting`, async ({ page }) => {
+      await loadPage(page);
+      const section = page.locator(`#file-section-${name.replace('.', '\\.')}`);
+      await expect(section).toBeVisible();
+
+      // Only the extension mapping selects the third-party terraform grammar;
+      // without it the file renders as plain text with no hljs spans.
+      await expect(section.locator('.diff-content span.hljs-string').first()).toBeVisible();
+    });
+  }
+});
+
 test.describe('Syntax Highlighting — Unified Mode', () => {
   test('Go file has syntax-highlighted code in unified diff', async ({ page }) => {
     await loadPage(page);
