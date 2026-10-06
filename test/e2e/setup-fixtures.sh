@@ -543,6 +543,22 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 GOFILE
 
+# Terraform files (.tf/.tfvars map to the third-party terraform grammar)
+cat > main.tf << 'TFFILE'
+variable "environment" {
+  type    = string
+  default = "staging"
+}
+
+resource "aws_s3_bucket" "reviews" {
+  bucket = "crit-${var.environment}-reviews"
+}
+TFFILE
+
+cat > terraform.tfvars << 'TFVARS'
+environment = "production"
+TFVARS
+
 git add -A
 git commit -q -m "feat: add auth middleware and plan"
 

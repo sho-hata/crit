@@ -24,6 +24,7 @@ export const vendoredAssets = [
       "highlightjs-heex@1.0.1",
       "highlightjs-vue@1.0.0",
       "highlightjs-astro-js@1.0.0",
+      "@taga3s/highlightjs-terraform@1.0.7",
     ],
     packagePath: "-",
     kind: "generated",

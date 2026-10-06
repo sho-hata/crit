@@ -46,5 +46,10 @@ const astroOut = hljs.highlight(astroSample, { language: 'astro', ignoreIllegals
 check('astro highlight emits hljs spans', astroOut.includes('hljs-'));
 check('astro frontmatter fence marked', astroOut.includes('hljs-punctuation') || astroOut.includes('---'));
 
+check('terraform language registered', !!hljs.getLanguage('terraform'));
+const tfSample = 'resource "aws_s3_bucket" "b" {\n  bucket = "x-${var.env}"\n  count  = 2\n}\n';
+const tfOut = hljs.highlight(tfSample, { language: 'terraform', ignoreIllegals: true }).value;
+check('terraform highlight emits hljs spans', tfOut.includes('hljs-keyword') && tfOut.includes('hljs-string'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
