@@ -106,6 +106,8 @@ jobs:
             desc "Fork of crit with Go LSP code intelligence in diffs"
             homepage "https://github.com/sho-hata/crit"
             version "${VERSION}"
+            # Bumped after v1.1.6 was published by mistake, so 0.x reads as newer.
+            version_scheme 1
             license "MIT"
 
             # Installs the same \`crit\` binary as homebrew-core's upstream formula.
