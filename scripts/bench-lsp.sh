@@ -69,3 +69,9 @@ if ! grep -q '^BenchmarkRealLSP' "$OUT/bench-new.txt"; then
   echo "error: no BenchmarkRealLSP results — are the language servers on PATH?" >&2
   exit 2
 fi
+# The fallback above can build a base that predates BenchmarkRealLSP; benchstat
+# would then compare against nothing and pass.
+if ! grep -q '^BenchmarkRealLSP' "$OUT/bench-old.txt"; then
+  echo "error: no BenchmarkRealLSP results for $BASE — nothing to compare against" >&2
+  exit 2
+fi

@@ -11,6 +11,8 @@
 # rather than `go install`.
 #
 # Usage: bash scripts/install-lsp-servers.sh [bin-dir]   (default ~/.local/lsp/bin)
+# Outside CI, put both bin-dir and bin-dir/npm/bin on PATH and export
+# NPM_CONFIG_PREFIX=bin-dir/npm; the script prints the lines to use.
 set -euo pipefail
 
 GOPLS_VERSION=v0.23.0
@@ -24,6 +26,10 @@ mkdir -p "$BIN"
 
 GOBIN="$BIN" go install "golang.org/x/tools/gopls@${GOPLS_VERSION}"
 
+# npm's global prefix is often root-owned; keep its packages under BIN too.
+# The prefix is exported, not passed as --prefix, so `npm root -g` (crit's
+# peek root for global TypeScript libs) points at the same place.
+export NPM_CONFIG_PREFIX="$BIN/npm"
 npm install -g --no-audit --no-fund \
   "typescript-language-server@${TSLS_VERSION}" \
   "typescript@${TYPESCRIPT_VERSION}" \
@@ -46,10 +52,18 @@ unzip -o -q "$tmp/$zip" terraform-ls -d "$BIN"
 
 if [ -n "${GITHUB_PATH:-}" ]; then
   echo "$BIN" >>"$GITHUB_PATH"
+  echo "$NPM_CONFIG_PREFIX/bin" >>"$GITHUB_PATH"
+  echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >>"$GITHUB_ENV"
 fi
 
-export PATH="$BIN:$PATH"
+export PATH="$BIN:$NPM_CONFIG_PREFIX/bin:$PATH"
 gopls version
 typescript-language-server --version
 command -v pyright-langserver
 terraform-ls version
+
+if [ -z "${GITHUB_PATH:-}" ]; then
+  echo
+  echo "export PATH=\"$BIN:$NPM_CONFIG_PREFIX/bin:\$PATH\""
+  echo "export NPM_CONFIG_PREFIX=\"$NPM_CONFIG_PREFIX\""
+fi
