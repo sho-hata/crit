@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // PeekRoot is one directory tree outside the workspace root that definition
@@ -236,9 +238,35 @@ func (l *Language) LanguageID(path string) string {
 	return l.IDByExt[pathExt(path)]
 }
 
+// availableTTL bounds how long a PATH lookup is reused. /api/config asks
+// about every language on each request, and on Windows each exec.LookPath
+// walks PATH × PATHEXT (~13ms on a CI runner, against 0.05ms on Linux). A
+// server installed mid-session still shows up within this window.
+const availableTTL = 30 * time.Second
+
+// availableCache maps PATH + "\x00" + binary to an availableEntry; keying on
+// PATH keeps a changed PATH from being answered from a stale lookup.
+var availableCache sync.Map
+
+type availableEntry struct {
+	ok bool
+	at time.Time
+}
+
 // Available reports whether the language's server binary is on PATH.
 func (l *Language) Available() bool {
+	return l.availableAt(time.Now())
+}
+
+func (l *Language) availableAt(now time.Time) bool {
+	key := os.Getenv("PATH") + "\x00" + l.Command[0]
+	if v, ok := availableCache.Load(key); ok {
+		if e := v.(availableEntry); now.Sub(e.at) < availableTTL {
+			return e.ok
+		}
+	}
 	_, err := exec.LookPath(l.Command[0])
+	availableCache.Store(key, availableEntry{ok: err == nil, at: now})
 	return err == nil
 }
 
