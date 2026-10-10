@@ -457,6 +457,7 @@ func (s *Server) CheckForUpdates() {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	defer timing.Span("handleConfig")()
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -593,6 +594,7 @@ func (s *Server) handleCodeFonts(w http.ResponseWriter, r *http.Request) {
 
 // addIntegrationStatus populates integration detection fields in the config response.
 func (s *Server) addIntegrationStatus(resp map[string]interface{}) {
+	defer timing.Span("addIntegrationStatus")()
 	if s.cfg.NoIntegrationCheck {
 		resp["integrations"] = []IntegrationStatus{}
 		resp["any_integration_installed"] = false
@@ -1343,6 +1345,7 @@ func (s *Server) handleFileCommentUpdate(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleCommits(w http.ResponseWriter, r *http.Request) {
+	defer timing.Span("handleCommits")()
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

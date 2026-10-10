@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // computeFileHash returns the hex-encoded SHA256 hash of data.
@@ -483,7 +485,7 @@ func detectPresentAgents(homeDir string) []string {
 			continue
 		}
 		for _, bin := range p.bins {
-			if _, err := exec.LookPath(bin); err == nil {
+			if _, err := timing.LookPath(bin); err == nil {
 				if p.versionMatch == "" || confirmBinaryVersion(bin, p.versionMatch) {
 					present = append(present, p.agent)
 					seen[p.agent] = true

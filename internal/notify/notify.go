@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 const defaultTitle = "Crit"
@@ -118,6 +120,6 @@ func windowsToastScript(title, body string) string {
 }
 
 func commandExists(name string) bool {
-	_, err := exec.LookPath(name)
+	_, err := timing.LookPath(name)
 	return err == nil
 }

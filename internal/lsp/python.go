@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // venvDirs is in preference order.
@@ -160,7 +162,7 @@ func parsePythonEnv(out string) []PeekRoot {
 // pyrightTypeshed returns "" when the binary is not laid out like the npm
 // package; stdlib stub peeks are then unreadable, the real stdlib still opens.
 func pyrightTypeshed() string {
-	bin, err := exec.LookPath("pyright-langserver")
+	bin, err := timing.LookPath("pyright-langserver")
 	if err != nil {
 		return ""
 	}

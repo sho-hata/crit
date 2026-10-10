@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // OpenBrowserWithCommand launches url with the configured opener before falling
@@ -116,6 +118,6 @@ func looksLikeWSL(goos, distroName, interop, procVersion string) bool {
 }
 
 func commandExists(name string) bool {
-	_, err := exec.LookPath(name)
+	_, err := timing.LookPath(name)
 	return err == nil
 }

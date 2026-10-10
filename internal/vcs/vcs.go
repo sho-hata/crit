@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // VCS abstracts version control operations so crit can support multiple backends
@@ -155,7 +156,7 @@ func DetectVCS(vcsOverride string) VCS {
 	case "git":
 		return &GitVCS{}
 	case "sl", "sapling":
-		if _, err := exec.LookPath("sl"); err == nil {
+		if _, err := timing.LookPath("sl"); err == nil {
 			return &SaplingVCS{}
 		}
 		fmt.Fprintf(os.Stderr, "Warning: vcs=%q requested but sl not in PATH, falling back to git\n", vcsOverride)
@@ -164,7 +165,7 @@ func DetectVCS(vcsOverride string) VCS {
 		}
 		return nil
 	case "jj", "jujutsu":
-		if _, err := exec.LookPath("jj"); err == nil {
+		if _, err := timing.LookPath("jj"); err == nil {
 			return &JJVCS{}
 		}
 		fmt.Fprintf(os.Stderr, "Warning: vcs=%q requested but jj not in PATH, falling back to git\n", vcsOverride)
@@ -176,14 +177,14 @@ func DetectVCS(vcsOverride string) VCS {
 
 	// Auto-detect: check for .jj/ first since colocated JJ repos also have .git/.
 	if hasJJDir() {
-		if _, err := exec.LookPath("jj"); err == nil {
+		if _, err := timing.LookPath("jj"); err == nil {
 			return &JJVCS{}
 		}
 	}
 
 	// Check for .sl/ before git since Sapling repos on top of git have both.
 	if hasSLDir() {
-		if _, err := exec.LookPath("sl"); err == nil {
+		if _, err := timing.LookPath("sl"); err == nil {
 			return &SaplingVCS{}
 		}
 	}

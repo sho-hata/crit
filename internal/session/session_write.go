@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // scheduleWrite debounces writes to disk.
@@ -272,6 +274,7 @@ func critJSONIsEmpty(cj CritJSON) bool {
 // and surfaces write errors. Bare WriteFiles is for the timer callback and
 // best-effort flushes (focus change, shutdown).
 func (s *Session) WriteFiles() {
+	defer timing.Span("WriteFiles")()
 	_ = s.writeFilesErr()
 }
 

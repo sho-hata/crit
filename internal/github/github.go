@@ -21,6 +21,7 @@ import (
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/timing"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -115,7 +116,7 @@ func isGHAuthFailure(out []byte) bool {
 
 // requireGH checks that the gh CLI is installed and authenticated.
 func requireGH() error {
-	if _, err := exec.LookPath("gh"); err != nil {
+	if _, err := timing.LookPath("gh"); err != nil {
 		return fmt.Errorf("gh CLI not found. Install it: https://cli.github.com")
 	}
 	cmd := exec.Command("gh", "auth", "status")

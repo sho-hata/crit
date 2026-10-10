@@ -11,6 +11,7 @@ import (
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/timing"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -380,6 +381,7 @@ func dropStaleCacheOnPRSwitch(oldFocus, newFocus Focus) {
 // (working-tree), so a stale "layer" doesn't linger from a previous range
 // session and confuse the push gate.
 func (s *Session) persistActiveDiffScope(scope string) error {
+	defer timing.Span("persistActiveDiffScope")()
 	critPath := s.critJSONPath()
 	if critPath == "" {
 		return nil
@@ -461,6 +463,7 @@ func (s *Session) ensureRemoteFileCache() *bytesLRU {
 // FileDiffBetweenSHAs and ChangedFilesBetweenSHAs still go through local git
 // — the GitHub API has no clean equivalent for those operations.
 func (s *Session) buildFilesForFocus(f Focus, v vcs.VCS, repoRoot string) ([]*FileEntry, string, error) {
+	defer timing.Span("buildFilesForFocus")()
 	if f.Kind != FocusRange {
 		return s.buildFilesForWorkingTree(v, repoRoot)
 	}

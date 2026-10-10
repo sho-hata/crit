@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // PeekRoot is one directory tree outside the workspace root that definition
@@ -265,7 +267,7 @@ func (l *Language) availableAt(now time.Time) bool {
 			return e.ok
 		}
 	}
-	_, err := exec.LookPath(l.Command[0])
+	_, err := timing.LookPath(l.Command[0])
 	availableCache.Store(key, availableEntry{ok: err == nil, at: now})
 	return err == nil
 }

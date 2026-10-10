@@ -13,6 +13,7 @@ import (
 	"github.com/sho-hata/crit/internal/hooks"
 	"github.com/sho-hata/crit/internal/prompt"
 	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 func (s *Server) promptTrustState() (prompt.TrustState, error) {
@@ -119,6 +120,7 @@ func (s *Server) projectPromptsUntrusted() bool {
 }
 
 func (s *Server) projectPromptTrustPayload() map[string]any {
+	defer timing.Span("projectPromptTrustPayload")()
 	trust, err := s.promptTrustState()
 	if err != nil {
 		return map[string]any{"project_prompts_untrusted": false}

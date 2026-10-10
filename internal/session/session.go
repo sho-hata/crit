@@ -18,6 +18,7 @@ import (
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/diff"
 	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/timing"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -2338,6 +2339,7 @@ func (s *Session) restoreFileCommentsLocked(cj *CritJSON) {
 // (loadCritJSON) gets away without the lock because no other goroutine has
 // observed the session yet.
 func (s *Session) loadCritJSONLocked() {
+	defer timing.Span("loadCritJSONLocked")()
 	identity := s.critJSONPath()
 
 	// Capture identity-on-entry. If ReviewFilePath / OutputDir were set

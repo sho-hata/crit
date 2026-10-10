@@ -83,3 +83,15 @@ func (c *Cmd) CombinedOutput() ([]byte, error) {
 	defer Log("exec", c.label, time.Now())
 	return c.Cmd.CombinedOutput()
 }
+
+// LookPath times exec.LookPath, which walks PATH × PATHEXT on Windows.
+func LookPath(file string) (string, error) {
+	defer Log("lookpath", file, time.Now())
+	return exec.LookPath(file)
+}
+
+// Span returns a func that logs the elapsed time under name: defer timing.Span("x")().
+func Span(name string) func() {
+	start := time.Now()
+	return func() { Log("span", name, start) }
+}
