@@ -3,6 +3,7 @@ package lsp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -264,6 +265,54 @@ func TestClientReferences(t *testing.T) {
 		if locs[i] != want[i] {
 			t.Errorf("location[%d] = %+v, want %+v", i, locs[i], want[i])
 		}
+	}
+}
+
+func TestClientTimeoutCancelsRequest(t *testing.T) {
+	t.Parallel()
+
+	fs := startFake(func(method string, params json.RawMessage) any {
+		if method == "textDocument/references" {
+			time.Sleep(200 * time.Millisecond) // outlives the client's timeout
+		}
+		return nil
+	})
+	defer fs.client.Close()
+	fs.client.timeout = 20 * time.Millisecond
+
+	_, err := fs.client.References(nativePath("/tmp/repo/main.go"), 4, 1)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("References error = %v, want ErrTimeout", err)
+	}
+
+	var cancelled []jsonrpcMessage
+	waitFor(t, "$/cancelRequest", func() bool {
+		fs.mu.Lock()
+		defer fs.mu.Unlock()
+		cancelled = cancelled[:0]
+		for _, n := range fs.notifications {
+			if n.Method == "$/cancelRequest" {
+				cancelled = append(cancelled, n)
+			}
+		}
+		return len(cancelled) > 0
+	})
+	var p struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(cancelled[0].Params, &p); err != nil {
+		t.Fatal(err)
+	}
+	// initialize is never sent here, so references is the client's first request.
+	if p.ID != 1 {
+		t.Errorf("cancelled id = %d, want 1 (the timed-out references)", p.ID)
+	}
+
+	// The late answer to the cancelled id must not leak into the next call.
+	fs.client.timeout = requestTimeout
+	locs, err := fs.client.Definition(nativePath("/tmp/repo/main.go"), 4, 1)
+	if err != nil || len(locs) != 0 {
+		t.Errorf("Definition after timeout = %v, %v; want no locations, no error", locs, err)
 	}
 }
 

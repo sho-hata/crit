@@ -8,6 +8,7 @@ package lsp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -21,6 +22,12 @@ import (
 // requestTimeout bounds a single LSP request round-trip. The first hover on a
 // large module can take several seconds while gopls loads packages.
 const requestTimeout = 15 * time.Second
+
+// ErrTimeout marks a request the server did not answer within the client's
+// timeout. A cold gopls can take 20-30s on references to a widely imported
+// identifier while it type-checks the importers, so callers report it as
+// "try again" rather than as a broken server.
+var ErrTimeout = errors.New("timed out")
 
 // progressGrace bounds the wait for a server to report ANY startup work
 // after initialize. typescript-language-server begins its within ~100ms;
@@ -79,6 +86,9 @@ type Client struct {
 
 	// kill is nil for in-memory pipe transports (tests).
 	kill func()
+
+	// timeout bounds each call; requestTimeout outside tests.
+	timeout time.Duration
 }
 
 // newClient wraps an LSP server reachable via the given pipes and starts the
@@ -96,6 +106,7 @@ func newClient(name string, stdin io.WriteCloser, stdout io.Reader, kill func(),
 		progressActive: make(map[string]bool),
 		settings:       settings,
 		kill:           kill,
+		timeout:        requestTimeout,
 	}
 	go c.readLoop(stdout)
 	return c
@@ -378,11 +389,15 @@ func (c *Client) call(method string, params any, out any) (err error) {
 			return nil
 		}
 		return json.Unmarshal(msg.Result, out)
-	case <-time.After(requestTimeout):
+	case <-time.After(c.timeout):
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return fmt.Errorf("lsp: %s timed out after %s", method, requestTimeout)
+		// Without the cancel the server keeps working on an answer nobody
+		// reads, competing with the requests that follow. gopls keeps the
+		// type-checks it finished, so a retry still starts warmer.
+		_ = c.notify("$/cancelRequest", map[string]any{"id": id})
+		return fmt.Errorf("lsp: %s %w after %s", method, ErrTimeout, c.timeout)
 	case <-c.done:
 		return fmt.Errorf("lsp: server exited during %s", method)
 	}
