@@ -116,7 +116,10 @@ if [ $# -eq 0 ]; then
     local name=$1
     shift
     mkdir -p "$SCRIPT_DIR/timing"
-    env PLAYWRIGHT_JSON_OUTPUT_FILE="$SCRIPT_DIR/timing/$name.json" "$@" > "$PWLOGS/$name.log" 2>&1 &
+    # Git Bash paths (/d/a/...) reach node unconverted under MSYS_NO_PATHCONV.
+    local tdir
+    tdir=$(cd "$SCRIPT_DIR/timing" && (pwd -W 2>/dev/null || pwd))
+    env PLAYWRIGHT_JSON_OUTPUT_FILE="$tdir/$name.json" "$@" > "$PWLOGS/$name.log" 2>&1 &
     LAUNCHED_NAMES+=("$name")
     LAUNCHED_PIDS+=($!)
   }
