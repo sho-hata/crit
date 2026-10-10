@@ -336,6 +336,9 @@ jobs:
           go build -cover -o /tmp/crit-cover-bin ./cmd/crit
 
       - name: Run E2E tests
+        # ~2x the slowest recent run (4.3 min); a hung one would otherwise
+        # hold the runner until the 6h default.
+        timeout-minutes: 8
         working-directory: test/e2e
         run: bash run.sh
         env:
@@ -425,6 +428,8 @@ jobs:
           go build -cover -o crit-cover-bin.exe ./cmd/crit
 
       - name: Run E2E tests
+        # ~2x the slowest recent run (8 min).
+        timeout-minutes: 15
         working-directory: test/e2e
         shell: bash
         run: bash run.sh
