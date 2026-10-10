@@ -48,9 +48,14 @@ func TestHandleRoundCompleteFiles_DiscoversNewFiles(t *testing.T) {
 	srv.SetSession(sess)
 	t.Cleanup(sess.QuiesceForTest)
 
+	// Registered after QuiesceForTest, so it runs first: stop the watcher and
+	// wait for the round it is handling to finish writing.
 	stop := make(chan struct{})
-	defer close(stop)
-	sess.StartWatchFileMtimesForTest(stop)
+	done := sess.StartWatchFileMtimesForTest(stop)
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+	})
 
 	if names := sessionFilePaths(t, srv); !containsString(names, "existing.md") {
 		t.Fatalf("pre-condition: existing.md missing from /api/session, got %v", names)
