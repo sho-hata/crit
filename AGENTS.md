@@ -59,7 +59,12 @@ make build-all                                        # Cross-compile to dist/
 ./crit                                                # Git mode (auto-detect changed files)
 ./crit test-plan.md                                   # Review specific file(s)
 ./crit --no-open --port 3000 test-plan.md             # Headless on fixed port
+bash scripts/install-lsp-servers.sh                   # Pinned language servers (what CI uses)
+CRIT_LSP_REAL=1 go test ./internal/lsp -run TestReal  # Real-server tests, incl. the cross-language contract
+bash scripts/bench-lsp.sh main                        # LSP latency, base vs working tree (then benchstat)
 ```
+
+A new LSP language needs a `realCases` entry in `internal/lsp/real_contract_manual_test.go`; the ungated `TestRealCasesCoverRegistry` fails without it. CI runs the contract (`lsp-real`) and gates on base-vs-PR latency (`lsp-bench`).
 </important>
 
 <important if="you need to know what crit subcommands do or are adding/modifying a CLI subcommand">
