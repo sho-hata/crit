@@ -197,6 +197,7 @@ jobs:
         run: bash scripts/install-lsp-servers.sh
 
       - name: Run real-server tests
+        timeout-minutes: 5
         run: go test -run 'TestReal' -count=1 -v ./internal/lsp/
         env:
           CRIT_LSP_REAL: 1
@@ -230,6 +231,7 @@ jobs:
         run: bash scripts/install-lsp-servers.sh
 
       - name: Run LSP benchmarks (base vs PR head, interleaved)
+        timeout-minutes: 15
         # Same base resolution as the bench job.
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
