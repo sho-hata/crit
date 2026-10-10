@@ -21,7 +21,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI
-    ? [['github'], ['html', { open: 'never' }], ['list']]
+    ? [['github'], ['html', { open: 'never' }], ['list'], ['json']]
     : [['html', { open: 'never' }], ['list']],
 
   // Per-test timeout: 60s on CI (some tests write review files and wait for

@@ -440,6 +440,14 @@ jobs:
           flags: e2e
           token: ${{ secrets.CODECOV_TOKEN }}
 
+      - name: Upload E2E timing
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: timing-${{ matrix.name }}
+          path: test/e2e/timing/
+          retention-days: 3
+
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v7
@@ -532,6 +540,14 @@ jobs:
           files: e2e-coverage.out
           flags: e2e
           token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload E2E timing
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: timing-windows-${{ matrix.name }}
+          path: test/e2e/timing/
+          retention-days: 3
 
       - name: Upload test results
         if: failure()

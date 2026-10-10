@@ -115,7 +115,8 @@ if [ $# -eq 0 ]; then
   launch() { # name cmd...
     local name=$1
     shift
-    "$@" > "$PWLOGS/$name.log" 2>&1 &
+    mkdir -p "$SCRIPT_DIR/timing"
+    env PLAYWRIGHT_JSON_OUTPUT_FILE="$SCRIPT_DIR/timing/$name.json" "$@" > "$PWLOGS/$name.log" 2>&1 &
     LAUNCHED_NAMES+=("$name")
     LAUNCHED_PIDS+=($!)
   }
