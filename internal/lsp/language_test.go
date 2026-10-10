@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestLanguageForPath(t *testing.T) {
@@ -232,5 +234,37 @@ func TestTypeScriptLanguageSendsInitOptions(t *testing.T) {
 	writeTSInstall(t, root)
 	if lang.InitOptions(root, filepath.Join(root, "src", "App.tsx")) == nil {
 		t.Error("InitOptions returned nil with an install present")
+	}
+}
+
+func TestAvailableCachesLookupPerPath(t *testing.T) {
+	// Its own binary name, so no other test's lookups share the cache keys.
+	lang := &Language{Name: "fake", Command: []string{"crit-fake-lsp-for-cache-test"}}
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	now := time.Now()
+
+	if lang.availableAt(now) {
+		t.Fatal("available before the binary exists")
+	}
+	name := lang.Command[0]
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if lang.availableAt(now.Add(availableTTL / 2)) {
+		t.Error("within the TTL the earlier miss should be reused")
+	}
+	if !lang.availableAt(now.Add(availableTTL)) {
+		t.Error("after the TTL the binary should be found")
+	}
+
+	// A different PATH is a different key: looked up even within the TTL.
+	other := t.TempDir()
+	t.Setenv("PATH", other)
+	if lang.availableAt(now.Add(availableTTL)) {
+		t.Error("PATH without the binary answered from the other PATH's entry")
 	}
 }
