@@ -173,6 +173,84 @@ jobs:
           benchstat bench-old.txt bench-new.txt | tee benchstat.txt
           python3 scripts/bench-compare.py benchstat.txt
 
+  lsp-real:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Cache Go build cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: go-build-${{ runner.os }}-
+
+      - name: Install language servers
+        run: bash scripts/install-lsp-servers.sh
+
+      - name: Run real-server tests
+        timeout-minutes: 5
+        run: go test -run 'TestReal' -count=1 -v ./internal/lsp/
+        env:
+          CRIT_LSP_REAL: 1
+
+  lsp-bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Cache Go build cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: go-build-${{ runner.os }}-
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Install language servers
+        run: bash scripts/install-lsp-servers.sh
+
+      - name: Run LSP benchmarks (base vs PR head, interleaved)
+        timeout-minutes: 15
+        # Same base resolution as the bench job.
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE_SHA" ] || ! git rev-parse --verify "$BASE_SHA^{commit}" >/dev/null 2>&1; then
+            BASE_REF="${{ github.base_ref }}"
+            [ -z "$BASE_REF" ] && BASE_REF="main"
+            git fetch origin "$BASE_REF" 2>/dev/null || true
+            BASE_SHA="origin/$BASE_REF"
+          fi
+          bash scripts/bench-lsp.sh "$BASE_SHA" 6
+
+      - name: Compare with benchstat
+        # No -benchmem: allocs against a real server track how much it
+        # chooses to send (progress, diagnostics), so only time/op gates.
+        run: |
+          benchstat bench-old.txt bench-new.txt | tee benchstat.txt
+          { echo '### LSP benchmarks (base vs PR)'; echo '```'; cat benchstat.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          python3 scripts/bench-compare.py benchstat.txt
+
   nix:
     runs-on: ubuntu-latest
     steps:
