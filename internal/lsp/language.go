@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // PeekRoot is one directory tree outside the workspace root that definition
@@ -238,7 +240,7 @@ func (l *Language) LanguageID(path string) string {
 
 // Available reports whether the language's server binary is on PATH.
 func (l *Language) Available() bool {
-	_, err := exec.LookPath(l.Command[0])
+	_, err := timing.LookPath(l.Command[0])
 	return err == nil
 }
 

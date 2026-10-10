@@ -19,6 +19,7 @@ import (
 	"github.com/sho-hata/crit/internal/lsp"
 	"github.com/sho-hata/crit/internal/pathsafe"
 	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/timing"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -82,6 +83,7 @@ type lspState struct {
 }
 
 func (s *Server) lspAvailable() bool {
+	defer timing.Span("lspAvailable")()
 	if !s.cfg.LSPEnabled() {
 		return false
 	}

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // atomicWriteFile writes data to the target path atomically using a
@@ -17,6 +19,7 @@ import (
 // (savePlanSlug), and aider integration files (installAider). Keep this
 // function's signature stable — multiple call sites depend on it.
 func AtomicWriteFile(target string, data []byte, perm os.FileMode) error {
+	defer timing.Span("AtomicWriteFile")()
 	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating directory %s: %w", dir, err)
