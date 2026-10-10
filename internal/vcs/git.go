@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/sho-hata/crit/internal/diff"
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 const gitOpTimeout = 30 * time.Second
@@ -62,7 +63,7 @@ func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := timing.CommandContext(ctx, "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -160,7 +161,7 @@ func DefaultBaseRef() string {
 		return branch
 	}
 	remote := "origin/" + branch
-	if exec.Command("git", "rev-parse", "--verify", "refs/remotes/"+remote).Run() == nil {
+	if timing.Command("git", "rev-parse", "--verify", "refs/remotes/"+remote).Run() == nil {
 		return remote
 	}
 	return branch
@@ -168,7 +169,7 @@ func DefaultBaseRef() string {
 
 func detectDefaultBranch() string {
 	// Try remote HEAD first
-	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd := timing.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
 	out, err := cmd.Output()
 	if err == nil {
 		ref := strings.TrimSpace(string(out))
@@ -180,11 +181,11 @@ func detectDefaultBranch() string {
 	}
 
 	// Fallback: check if main exists
-	if err := exec.Command("git", "rev-parse", "--verify", "main").Run(); err == nil {
+	if err := timing.Command("git", "rev-parse", "--verify", "main").Run(); err == nil {
 		return "main"
 	}
 	// Fallback: check if master exists
-	if err := exec.Command("git", "rev-parse", "--verify", "master").Run(); err == nil {
+	if err := timing.Command("git", "rev-parse", "--verify", "master").Run(); err == nil {
 		return "master"
 	}
 	return "main"
@@ -193,7 +194,7 @@ func detectDefaultBranch() string {
 // RemoteBranches returns the names of all remote branches (without the "origin/" prefix).
 // The result excludes HEAD. If dir is non-empty, git runs in that directory.
 func RemoteBranches(dir string) ([]string, error) {
-	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/")
+	cmd := timing.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -214,7 +215,7 @@ func RemoteBranches(dir string) ([]string, error) {
 
 // CurrentBranch returns the name of the current branch.
 func CurrentBranch() string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := timing.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -231,12 +232,12 @@ func isOnDefaultBranch() bool {
 // Falls back to origin/<base> when the local ref is missing — common in
 // worktrees off a bare repo where only the remote-tracking ref exists.
 func MergeBase(base string) (string, error) {
-	out, err := exec.Command("git", "merge-base", "HEAD", base).Output()
+	out, err := timing.Command("git", "merge-base", "HEAD", base).Output()
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
 	}
 	if !strings.HasPrefix(base, "origin/") {
-		fallback, fbErr := exec.Command("git", "merge-base", "HEAD", "origin/"+base).Output()
+		fallback, fbErr := timing.Command("git", "merge-base", "HEAD", "origin/"+base).Output()
 		if fbErr == nil {
 			return strings.TrimSpace(string(fallback)), nil
 		}
@@ -261,7 +262,7 @@ func FileContentAtRef(path, ref, dir string) string {
 	if ref == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "show", ref+":"+path)
+	cmd := timing.Command("git", "show", ref+":"+path)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -341,17 +342,17 @@ func changedFilesBranch(baseRef string) ([]FileChange, error) {
 // When ignoreWhitespace is true, whitespace-only changes collapse to context ("-w").
 func FileDiffScoped(path, scope, baseRef, dir string, ignoreWhitespace bool) ([]DiffHunk, error) {
 	base := diffBaseArgs(ignoreWhitespace)
-	var cmd *exec.Cmd
+	var cmd *timing.Cmd
 	switch scope {
 	case "branch":
 		if baseRef == "" {
 			return nil, nil
 		}
-		cmd = exec.Command("git", append(base, baseRef+"..HEAD", "--", path)...)
+		cmd = timing.Command("git", append(base, baseRef+"..HEAD", "--", path)...)
 	case "staged":
-		cmd = exec.Command("git", append(base, "--cached", "--", path)...)
+		cmd = timing.Command("git", append(base, "--cached", "--", path)...)
 	case "unstaged":
-		cmd = exec.Command("git", append(base, "--", path)...)
+		cmd = timing.Command("git", append(base, "--", path)...)
 	default:
 		return fileDiffUnified(path, baseRef, dir, ignoreWhitespace)
 	}
@@ -395,7 +396,7 @@ func CommitLog(baseRef, headRef, dir string) ([]CommitInfo, error) {
 	if headRef == "" {
 		headRef = "HEAD"
 	}
-	cmd := exec.Command("git", "log", "--format=%H%n%h%n%s%n%an%n%aI", baseRef+".."+headRef)
+	cmd := timing.Command("git", "log", "--format=%H%n%h%n%s%n%an%n%aI", baseRef+".."+headRef)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -452,7 +453,7 @@ func SplitCommitRange(commit string) (base, head string, ok bool) {
 // ChangedFilesForCommit returns the files changed in a single commit.
 // The dir parameter sets the working directory for the git command.
 func ChangedFilesForCommit(sha, dir string) ([]FileChange, error) {
-	cmd := exec.Command("git", "diff-tree", "--no-commit-id", "-r", "--name-status", sha)
+	cmd := timing.Command("git", "diff-tree", "--no-commit-id", "-r", "--name-status", sha)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -468,7 +469,7 @@ func ChangedFilesForCommit(sha, dir string) ([]FileChange, error) {
 // For the initial (root) commit, sha^ is undefined so we diff against the empty tree.
 // When ignoreWhitespace is true, whitespace-only changes collapse to context ("-w").
 func FileDiffForCommit(path, sha, dir string, ignoreWhitespace bool) ([]DiffHunk, error) {
-	cmd := exec.Command("git", append(diffBaseArgs(ignoreWhitespace), sha+"^.."+sha, "--", path)...)
+	cmd := timing.Command("git", append(diffBaseArgs(ignoreWhitespace), sha+"^.."+sha, "--", path)...)
 	cmd.Env = stripExternalDiffEnv()
 	if dir != "" {
 		cmd.Dir = dir
@@ -482,7 +483,7 @@ func FileDiffForCommit(path, sha, dir string, ignoreWhitespace bool) ([]DiffHunk
 		case errors.As(err, &exitErr) && exitErr.ExitCode() == 128:
 			// sha^ failed (root commit) — diff against the empty tree
 			emptyTree := "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-			cmd2 := exec.Command("git", append(diffBaseArgs(ignoreWhitespace), emptyTree+".."+sha, "--", path)...)
+			cmd2 := timing.Command("git", append(diffBaseArgs(ignoreWhitespace), emptyTree+".."+sha, "--", path)...)
 			cmd2.Env = stripExternalDiffEnv()
 			if dir != "" {
 				cmd2.Dir = dir
@@ -509,14 +510,14 @@ func changedFilesOnDefault() ([]FileChange, error) {
 
 func changedFilesOnDefaultInDir(dir string) ([]FileChange, error) {
 	// Staged + unstaged changes vs HEAD
-	cmd := exec.Command("git", "diff", "HEAD", "--name-status")
+	cmd := timing.Command("git", "diff", "HEAD", "--name-status")
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	out, err := cmd.Output()
 	if err != nil {
 		// If there's no HEAD (empty repo), try diff --cached + working tree
-		cmd = exec.Command("git", "diff", "--name-status")
+		cmd = timing.Command("git", "diff", "--name-status")
 		if dir != "" {
 			cmd.Dir = dir
 		}
@@ -556,7 +557,7 @@ func changedFilesFromBase(baseRef string) ([]FileChange, error) {
 // changedFilesFromBaseInDir is like changedFilesFromBase but runs git from the specified directory.
 func changedFilesFromBaseInDir(baseRef, dir string) ([]FileChange, error) {
 	// All changes from base ref to working tree
-	cmd := exec.Command("git", "diff", baseRef, "--name-status")
+	cmd := timing.Command("git", "diff", baseRef, "--name-status")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -636,7 +637,7 @@ func initialGitChangesAndScopes(baseRef, dir string) ([]FileChange, []string, bo
 }
 
 func gitStatusSnapshotInDir(dir string) (gitStatusSnapshot, error) {
-	cmd := exec.Command("git", "--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=normal")
+	cmd := timing.Command("git", "--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=normal")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -750,7 +751,7 @@ func HeadSHAInDir(dir string) (string, error) {
 // RunGitInDir runs `git <args...>` in dir and returns the stdout. Mirrors the
 // existing inline exec.Command pattern used elsewhere in git.go.
 func RunGitInDir(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := timing.Command("git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -1048,7 +1049,7 @@ func remoteBranchTipsSapling(repoRoot, defaultBranch string) ([]BranchEntry, err
 // and Path set to the new path.
 // Untracked working-tree files are NOT included — this is a pure git-history range.
 func ChangedFilesBetweenSHAs(baseSHA, headSHA, dir string) ([]FileChange, error) {
-	cmd := exec.Command("git", "diff", "--name-status", "-M", baseSHA+".."+headSHA)
+	cmd := timing.Command("git", "diff", "--name-status", "-M", baseSHA+".."+headSHA)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -1066,7 +1067,7 @@ func ChangedFilesBetweenSHAs(baseSHA, headSHA, dir string) ([]FileChange, error)
 // When ignoreWhitespace is true, whitespace-only changes collapse to context ("-w").
 func FileDiffBetweenSHAs(path, oldPath, baseSHA, headSHA, dir string, ignoreWhitespace bool) ([]DiffHunk, error) {
 	pathArgs := diffPathArgs(oldPath, path)
-	cmd := exec.Command("git", append(diffBaseArgs(ignoreWhitespace), append([]string{baseSHA + ".." + headSHA, "--"}, pathArgs...)...)...)
+	cmd := timing.Command("git", append(diffBaseArgs(ignoreWhitespace), append([]string{baseSHA + ".." + headSHA, "--"}, pathArgs...)...)...)
 	cmd.Env = stripExternalDiffEnv()
 	if dir != "" {
 		cmd.Dir = dir
@@ -1086,7 +1087,7 @@ func FileDiffBetweenSHAs(path, oldPath, baseSHA, headSHA, dir string, ignoreWhit
 // Returns (nil, nil) when the file does not exist at that SHA (deleted/added cases).
 // Errors are reserved for "git command failed" (e.g. SHA not present locally).
 func ReadFileAtSHA(sha, path, dir string) ([]byte, error) {
-	cmd := exec.Command("git", "show", sha+":"+path)
+	cmd := timing.Command("git", "show", sha+":"+path)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -1126,7 +1127,7 @@ func ReadFileAtSHA(sha, path, dir string) ([]byte, error) {
 // HasObject reports whether sha is reachable as a commit object in the local store.
 // Cheap (no walk).
 func HasObject(sha, dir string) bool {
-	cmd := exec.Command("git", "cat-file", "-e", sha+"^{commit}")
+	cmd := timing.Command("git", "cat-file", "-e", sha+"^{commit}")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -1142,7 +1143,7 @@ func untrackedFiles() ([]FileChange, error) {
 // files exactly and collapses wholly-untracked directories with a trailing slash.
 // Only those directories require the slower full enumeration.
 func untrackedFilesInDir(dir string) ([]FileChange, error) {
-	cmd := exec.Command("git", "--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=normal")
+	cmd := timing.Command("git", "--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=normal")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -1172,7 +1173,7 @@ func parseNormalUntrackedStatus(out []byte) ([]FileChange, bool) {
 }
 
 func untrackedFilesFullScanInDir(dir string) ([]FileChange, error) {
-	cmd := exec.Command("git", "ls-files", "-z", "--others", "--exclude-standard")
+	cmd := timing.Command("git", "ls-files", "-z", "--others", "--exclude-standard")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -1315,14 +1316,14 @@ func parseNameStatus(output string) []FileChange {
 func fileStatusInRepo(path, repoRoot, baseRef string) string {
 	if baseRef == "" {
 		// No base ref — check if the file is tracked at all.
-		cmd := exec.Command("git", "ls-files", "--error-unmatch", "--", path)
+		cmd := timing.Command("git", "ls-files", "--error-unmatch", "--", path)
 		cmd.Dir = repoRoot
 		if err := cmd.Run(); err != nil {
 			return "untracked"
 		}
 		return "modified"
 	}
-	cmd := exec.Command("git", "diff", "--name-status", baseRef, "--", path)
+	cmd := timing.Command("git", "diff", "--name-status", baseRef, "--", path)
 	cmd.Dir = repoRoot
 	out, err := cmd.Output()
 	if err != nil {
@@ -1332,7 +1333,7 @@ func fileStatusInRepo(path, repoRoot, baseRef string) string {
 	if line == "" {
 		// File exists but is unchanged relative to baseRef.
 		// Check if it's tracked; if not, it's untracked.
-		chk := exec.Command("git", "ls-files", "--error-unmatch", "--", path)
+		chk := timing.Command("git", "ls-files", "--error-unmatch", "--", path)
 		chk.Dir = repoRoot
 		if err := chk.Run(); err != nil {
 			return "untracked"
@@ -1396,7 +1397,7 @@ func FileDiffUnifiedCtx(ctx context.Context, path, oldPath, baseRef, dir string,
 	}
 	pathArgs := diffPathArgs(oldPath, path)
 	args := append(diffBaseArgs(ignoreWhitespace), append([]string{ref, "--"}, pathArgs...)...)
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := timing.CommandContext(ctx, "git", args...)
 	cmd.Env = stripExternalDiffEnv()
 	if dir != "" {
 		cmd.Dir = dir
@@ -1465,7 +1466,7 @@ func DiffNumstatBetweenSHAs(baseSHA, headSHA, dir string) (map[string]NumstatEnt
 
 func runDiffNumstat(dir string, refs ...string) (map[string]NumstatEntry, error) {
 	args := append([]string{"-c", "diff.external=", "diff", "--no-ext-diff", "--numstat"}, refs...)
-	cmd := exec.Command("git", args...)
+	cmd := timing.Command("git", args...)
 	cmd.Env = stripExternalDiffEnv()
 	if dir != "" {
 		cmd.Dir = dir
@@ -1603,7 +1604,7 @@ func ParseUnifiedDiff(diff string) []DiffHunk {
 // WorkingTreeFingerprint returns a string representing the current working tree state.
 // Compare consecutive calls to detect changes.
 func WorkingTreeFingerprint() string {
-	cmd := exec.Command("git", "--no-optional-locks", "status", "--porcelain")
+	cmd := timing.Command("git", "--no-optional-locks", "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

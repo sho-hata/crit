@@ -2,8 +2,9 @@ package vcs
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // CompareTargets lists revision names the user may pick as the diff comparison
@@ -80,7 +81,7 @@ func jjCompareTargets(v VCS, dir string) (CompareTargets, error) {
 
 // LocalBranches returns local branch short names (git refs/heads).
 func LocalBranches(dir string) ([]string, error) {
-	cmd := exec.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+	cmd := timing.Command("git", "for-each-ref", "--format=%(refname:short)", "refs/heads/")
 	if dir != "" {
 		cmd.Dir = dir
 	}
