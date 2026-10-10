@@ -43,11 +43,17 @@ func renameAtomic(src, dst string) error {
 // ERROR_LOCK_VIOLATION when a writer is mid-rename over the destination.
 // MoveFileEx with MOVEFILE_REPLACE_EXISTING can also briefly surface
 // ERROR_FILE_NOT_FOUND on the destination between delete-and-replace;
-// retry that the same way (see TestConcurrentSaveCritJSON_NoCorruption).
+// retry that too (see TestConcurrentSaveCritJSON_NoCorruption), but only
+// maxNotExistRetries times: far more often the file is simply absent (no
+// review saved yet), and the full budget cost ~320ms on every such read.
 // 10 attempts with 1→50ms backoff covers any realistic crit workload.
 func ReadFileShared(path string) ([]byte, error) {
-	const maxAttempts = 10
+	const (
+		maxAttempts        = 10
+		maxNotExistRetries = 3 // 1+2+4ms
+	)
 	delay := 1 * time.Millisecond
+	notExist := 0
 	var (
 		data []byte
 		err  error
@@ -56,6 +62,12 @@ func ReadFileShared(path string) ([]byte, error) {
 		data, err = os.ReadFile(path)
 		if err == nil || !isWindowsTransientIOErr(err) {
 			return data, err
+		}
+		if os.IsNotExist(err) {
+			if notExist == maxNotExistRetries {
+				return data, err
+			}
+			notExist++
 		}
 		time.Sleep(delay)
 		if delay < 50*time.Millisecond {
