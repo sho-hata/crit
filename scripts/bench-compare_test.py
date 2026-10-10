@@ -3,8 +3,9 @@
 
 The gate cannot detect its own parser regressions, so checked-in benchstat
 samples lock the parsing contract: significant time slowdowns fail, noise
-(~), geomean summaries, and high-variance time rows pass, ANY allocs
-increase on a real bench (including 0 -> N rendered as +Inf%) fails, B/op
+(~), geomean summaries, high-variance time rows and sub-0.1% allocs drift
+pass, any other allocs increase on a real bench (including 0 -> N rendered
+as +Inf%) fails, B/op
 only warns, and malformed input exits 2.
 
 Run: python3 scripts/bench-compare_test.py
@@ -72,6 +73,26 @@ class GateTest(unittest.TestCase):
     def test_alloc_stable_passes(self):
         r = run_gate(ALLOC_TABLE.format(old="100 ± 0%", new="100 ± 0%", delta="~     (all equal)"))
         self.assertEqual(r.returncode, 0)
+
+    def test_alloc_io_noise_passes(self):
+        # Real CI failure on a YAML-only PR: identical code, a few allocs of
+        # drift in an I/O-bound bench, still marked significant.
+        content = (
+            "                               │   allocs/op   │  allocs/op   vs base                │\n"
+            "ReviewSaveLoad/50x50-4            13.25k ± 0%   13.25k ± 0%  +0.02% (p=0.024 n=6)\n"
+        )
+        r = run_gate(content)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_alloc_single_extra_on_smallest_bench_fails(self):
+        # The noise floor must not hide one real extra alloc: 597 -> 598.
+        content = (
+            "                               │   allocs/op   │  allocs/op   vs base                │\n"
+            "ComputeLineDiff/100_lines-4        597.0 ± 0%    598.0 ± 0%   +0.17%  (p=0.002 n=6)\n"
+        )
+        r = run_gate(content)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("allocs/op regression", r.stdout)
 
     def test_bop_only_warns(self):
         content = (
