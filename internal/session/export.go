@@ -115,8 +115,17 @@ func RemoveStaleReviewPath(path string) bool {
 	return removeStaleReviewPath(path)
 }
 
-func (s *Session) StartWatchFileMtimesForTest(stop <-chan struct{}) {
-	go s.watchFileMtimes(stop)
+// StartWatchFileMtimesForTest runs the files-mode watcher until stop closes.
+// The returned channel closes once it has exited: a round it is handling
+// still writes the snapshots sidecar off writeMu, which QuiesceForTest does
+// not wait for, so a test must join it before its temp dir is removed.
+func (s *Session) StartWatchFileMtimesForTest(stop <-chan struct{}) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.watchFileMtimes(stop)
+	}()
+	return done
 }
 
 func (s *Session) QuiesceForTest() {
