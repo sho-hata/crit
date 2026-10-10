@@ -915,6 +915,23 @@ func TestLSPReferencesProviderError(t *testing.T) {
 	}
 }
 
+// A cold gopls can outlast the request timeout on references; that answer is
+// "try again", not a broken server, so it must not share the 502.
+func TestLSPReferencesTimeoutIs504(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeLSPProvider{referencesErr: fmt.Errorf("lsp: textDocument/references %w after 15s", lsp.ErrTimeout)}
+	srv, _ := newLSPTestServer(t, fake)
+
+	w := doLSPRequest(t, srv, "/api/lsp/references?path=main.go&line=1&char=0")
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "try again") {
+		t.Errorf("body = %q, want the retry hint", w.Body.String())
+	}
+}
+
 func TestLSPReferencesMethodNotAllowed(t *testing.T) {
 	t.Parallel()
 

@@ -347,7 +347,9 @@
 
   function responseError(r) {
     return r.text().then(function (body) {
-      throw new Error(serverErrorText(body, r.status));
+      const err = new Error(serverErrorText(body, r.status));
+      err.status = r.status;
+      throw err;
     });
   }
 
@@ -432,7 +434,10 @@
       })
       .catch(function (err) {
         if (err && err.name === 'AbortError') return;
-        const tripped = recordFailure(); // already toasted the breaker notice
+        // 504 = the server is alive but still indexing (a cold gopls takes
+        // 20-30s on references to a widely imported name). Counting it would
+        // let a couple of clicks switch hover off for a healthy server.
+        const tripped = err && err.status === 504 ? false : recordFailure(); // already toasted the breaker notice
         if (seq !== st.defSeq || tripped) return;
         st.toast(err.message || st.errorText);
       });

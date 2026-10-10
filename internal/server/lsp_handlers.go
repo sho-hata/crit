@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -408,6 +409,17 @@ func classifyRoot(absPath, root string, extras []lsp.PeekRoot) int {
 	return rootNone
 }
 
+// writeLSPError answers a failed language-server request. A timeout gets 504
+// so the frontend can tell "still indexing" from a broken server and keep it
+// out of the failure breaker.
+func writeLSPError(w http.ResponseWriter, what string, err error) {
+	if errors.Is(err, lsp.ErrTimeout) {
+		http.Error(w, fmt.Sprintf("%s: %v (the language server may still be indexing; try again)", what, err), http.StatusGatewayTimeout)
+		return
+	}
+	http.Error(w, fmt.Sprintf("%s: %v", what, err), http.StatusBadGateway)
+}
+
 // GET /api/lsp/hover?path=internal/foo.go&line=42&char=13
 func (s *Server) handleLSPHover(w http.ResponseWriter, r *http.Request) {
 	absPath, line0, char, ok := s.parseLSPParams(w, r)
@@ -416,7 +428,7 @@ func (s *Server) handleLSPHover(w http.ResponseWriter, r *http.Request) {
 	}
 	contents, err := s.lspManager().Hover(absPath, line0, char)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("lsp hover: %v", err), http.StatusBadGateway)
+		writeLSPError(w, "lsp hover", err)
 		return
 	}
 	resp := map[string]any{"contents": contents}
@@ -468,7 +480,7 @@ func (s *Server) handleLSPDefinition(w http.ResponseWriter, r *http.Request) {
 	mgr := s.lspManager()
 	locations, err := mgr.Definition(absPath, line0, char)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("lsp definition: %v", err), http.StatusBadGateway)
+		writeLSPError(w, "lsp definition", err)
 		return
 	}
 	sess := s.session.Load()
@@ -489,7 +501,7 @@ func (s *Server) handleLSPReferences(w http.ResponseWriter, r *http.Request) {
 	mgr := s.lspManager()
 	locations, err := mgr.References(absPath, line0, char)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("lsp references: %v", err), http.StatusBadGateway)
+		writeLSPError(w, "lsp references", err)
 		return
 	}
 	sess := s.session.Load()
