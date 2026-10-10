@@ -30,6 +30,7 @@ import (
 	"github.com/sho-hata/crit/internal/prompt"
 	"github.com/sho-hata/crit/internal/review"
 	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/timing"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -258,6 +259,7 @@ func requestHost(hostport string) string {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer timing.Log("http", r.Method+" "+r.URL.Path, time.Now())
 	if !s.checkHost(r) {
 		http.Error(w, s.hostForbiddenMessage(r), http.StatusForbidden)
 		return

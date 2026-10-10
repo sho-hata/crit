@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sho-hata/crit/internal/timing"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -618,7 +619,7 @@ func lockGlobalConfig(path string) (func(), error) {
 
 // gitUserName returns the git-configured user name, or empty string on error.
 func gitUserName() string {
-	out, err := exec.Command("git", "config", "user.name").Output()
+	out, err := timing.Command("git", "config", "user.name").Output()
 	if err != nil {
 		return ""
 	}

@@ -3,8 +3,9 @@ package vcs
 import (
 	"context"
 	"os"
-	"os/exec"
 	"strings"
+
+	"github.com/sho-hata/crit/internal/timing"
 )
 
 // GitVCS implements VCS for git repositories. Each method delegates to the
@@ -100,7 +101,7 @@ func (g *GitVCS) DiffNumstatBetweenSHAs(baseSHA, headSHA, dir string) (map[strin
 }
 
 func (g *GitVCS) UserName() string {
-	out, err := exec.Command("git", "config", "user.name").Output()
+	out, err := timing.Command("git", "config", "user.name").Output()
 	if err != nil {
 		return ""
 	}

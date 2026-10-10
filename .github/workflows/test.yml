@@ -422,6 +422,7 @@ jobs:
         env:
           CRIT_BIN: /tmp/crit-cover-bin
           GOCOVERDIR: /tmp/crit-coverdir
+          CRIT_TIMING_DIR: /tmp/crit-timing
           E2E_GROUP: ${{ matrix.group }}
           E2E_SHARD: ${{ matrix.shard }}
 
@@ -439,6 +440,14 @@ jobs:
           files: e2e-coverage.out
           flags: e2e
           token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload crit timing
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: crit-timing-${{ matrix.name }}
+          path: /tmp/crit-timing/
+          retention-days: 3
 
       - name: Upload test results
         if: failure()
@@ -514,6 +523,7 @@ jobs:
         env:
           CRIT_BIN: ${{ github.workspace }}/crit-cover-bin.exe
           GOCOVERDIR: ${{ runner.temp }}/crit-coverdir
+          CRIT_TIMING_DIR: ${{ runner.temp }}/crit-timing
           E2E_GROUP: ${{ matrix.group }}
           E2E_SHARD: ${{ matrix.shard }}
 
@@ -532,6 +542,14 @@ jobs:
           files: e2e-coverage.out
           flags: e2e
           token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload crit timing
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: crit-timing-windows-${{ matrix.name }}
+          path: ${{ runner.temp }}/crit-timing/
+          retention-days: 3
 
       - name: Upload test results
         if: failure()
