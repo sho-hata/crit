@@ -104,6 +104,18 @@ test.describe('Syntax Highlighting — language detection', () => {
     await expectHighlighted(line);
     expect(await colourOf(token(line, 'Feature'))).not.toBe(await colourOf(token(line, 'User login')));
   });
+
+  // The fork's Terraform fixture files: .tf and .tfvars must pick Shiki's
+  // terraform grammar from the file name, or they render as plain text.
+  for (const name of ['main.tf', 'terraform.tfvars']) {
+    test(`${name} gets Terraform syntax highlighting`, async ({ page }) => {
+      await loadPage(page);
+      const item = await revealFile(page, name);
+      const line = diffLine(item, 1);
+      await expect(line).toHaveAttribute('data-line-type', 'change-addition');
+      await expectHighlighted(line);
+    });
+  }
 });
 
 test.describe('Syntax Highlighting — Expanded Context', () => {
