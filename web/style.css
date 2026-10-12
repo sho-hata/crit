@@ -4314,39 +4314,11 @@ body.file-tree-anim #fileTreeResizer { transition: flex-basis 0.22s ease; }
   scroll-margin-top: calc(var(--header-height, 49px) + 8px); /* accounts for sticky app header + gap */
 }
 
-/* GitHub-style gutter: the file list is inset from the tree sidebar and the
-   right edge instead of running edge-to-edge, and each file becomes its own
-   bordered card. Lines up with `.review-conversation`'s 24px margin above it,
-   and mirrors the story view's per-file card (`.crit-story-file-group`).
-   Scoped to `#filesContainer` so the story pane keeps its own chrome. */
+/* Space above the first file and below the last. The sides come from
+   `padding-inline` on `body.pierre-review #filesContainer`, and each file's
+   card from its `diffs-container` rule. */
 #filesContainer {
   padding: 16px 24px 96px;
-}
-#filesContainer > .file-section {
-  margin-bottom: 16px;
-  border: 1px solid var(--crit-border);
-  border-radius: var(--crit-r-md);
-}
-/* The card draws the outer edges, so the header only keeps the divider under
-   itself and rounds with the card's top corners. */
-#filesContainer > .file-section > .file-header {
-  border-top: none;
-  border-radius: var(--crit-r-md) var(--crit-r-md) 0 0;
-}
-/* Collapsed: the header IS the card, so it owns all four corners and the
-   section border already draws the bottom edge. */
-#filesContainer > .file-section:not([open]) > .file-header {
-  border-bottom: none;
-  border-radius: var(--crit-r-md);
-}
-/* Bottom edge comes from the card border. Round the diff surface and clip it,
-   or the last row's addition/deletion background paints square over the
-   corner. `clip` rather than `hidden` so this never becomes a scroll container
-   (scrollIntoView for comment navigation walks ancestor scrollports). */
-#filesContainer > .file-section > .file-body > .diff-container {
-  border-bottom: none;
-  border-radius: 0 0 var(--crit-r-md) var(--crit-r-md);
-  overflow: clip;
 }
 .file-header {
   /* stylelint-disable-next-line declaration-block-no-duplicate-properties */
