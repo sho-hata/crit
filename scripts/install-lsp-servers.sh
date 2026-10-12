@@ -20,6 +20,7 @@ TSLS_VERSION=6.0.2
 TYPESCRIPT_VERSION=6.0.3
 PYRIGHT_VERSION=1.1.414
 TERRAFORM_LS_VERSION=0.39.0
+INTELEPHENSE_VERSION=1.18.5
 
 BIN="${1:-$HOME/.local/lsp/bin}"
 mkdir -p "$BIN"
@@ -33,7 +34,8 @@ export NPM_CONFIG_PREFIX="$BIN/npm"
 npm install -g --no-audit --no-fund \
   "typescript-language-server@${TSLS_VERSION}" \
   "typescript@${TYPESCRIPT_VERSION}" \
-  "pyright@${PYRIGHT_VERSION}"
+  "pyright@${PYRIGHT_VERSION}" \
+  "intelephense@${INTELEPHENSE_VERSION}"
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$(uname -m)" in
@@ -61,6 +63,7 @@ gopls version
 typescript-language-server --version
 command -v pyright-langserver
 terraform-ls version
+command -v intelephense
 
 if [ -z "${GITHUB_PATH:-}" ]; then
   echo
