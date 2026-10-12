@@ -241,9 +241,11 @@ func TestRealPHPWritesNothingIntoTheRepo(t *testing.T) {
 	before := listTree(t, dir)
 
 	m := NewManager(dir, "", context.Background())
+	t.Cleanup(m.Shutdown) // a failed Hover must not leak the server
 	if _, err := m.Hover(app, phpSpinUseLine, phpSpinUseChar); err != nil {
 		t.Fatalf("Hover: %v", err)
 	}
+	// Stop it before listing: a still-running server could write afterwards.
 	m.Shutdown()
 
 	if after := listTree(t, dir); !slices.Equal(after, before) {
