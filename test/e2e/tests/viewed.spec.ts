@@ -212,17 +212,18 @@ test.describe('Collapse/Expand All — Git Mode', () => {
 
     await page.locator('.file-tree-collapse-btn').click();
 
-    // Collapsed files are header-only, so all ten fit on screen at once:
-    // every file is mounted and every one is collapsed with no code rows.
-    await expect(page.locator('.pierre-file-header')).toHaveCount(10);
-    await expect(page.locator('.pierre-file-header.collapsed')).toHaveCount(10);
+    // Collapsed files are header-only, so all twelve (incl. the fork's two
+    // Terraform files) fit on screen at once: every file is mounted and every
+    // one is collapsed with no code rows.
+    await expect(page.locator('.pierre-file-header')).toHaveCount(12);
+    await expect(page.locator('.pierre-file-header.collapsed')).toHaveCount(12);
     await expect(page.locator('diffs-container [data-line]')).toHaveCount(0);
   });
 
   test('clicking expand all after collapse opens all sections', async ({ page }) => {
     // Collapse all first
     await page.locator('.file-tree-collapse-btn').click();
-    await expect(page.locator('.pierre-file-header.collapsed')).toHaveCount(10);
+    await expect(page.locator('.pierre-file-header.collapsed')).toHaveCount(12);
 
     // Now expand all
     await page.locator('.file-tree-collapse-btn').click();
