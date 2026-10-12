@@ -226,7 +226,14 @@ test('tree jump to the deepest file lands on it and stays put while content sett
   // Header sits at the top of the list and does not drift over ~1s.
   const tops: number[] = [];
   for (let i = 0; i < 10; i++) {
-    const box = await header.boundingBox();
+    // Hydration can swap the header element for a fresh one between two
+    // reads; re-resolve it instead of sampling the gap. A header that is
+    // gone for good still fails here, and a moved one fails the drift check.
+    let box = await header.boundingBox();
+    if (!box) {
+      await expect(header).toBeVisible();
+      box = await header.boundingBox();
+    }
     tops.push(box ? Math.round(box.y) : NaN);
     await page.waitForFunction(() => new Promise((r) => setTimeout(() => r(true), 100)));
   }
