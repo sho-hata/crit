@@ -106,6 +106,10 @@ crit comment --author 'Copilot' <path> '<body>'
 crit comment --author 'Copilot' <path>:<line> '<body>'
 crit comment --author 'Copilot' <path>:<start>-<end> '<body>'
 
+# DOM pin (live review or HTML preview). File:line is rejected there.
+crit comment --author 'Copilot' --selector '<css>' '<body>'
+crit comment --author 'Copilot' --selector '<css>' --route <path> '<body>'
+
 # Reply to an existing comment
 crit comment --reply-to <id> --author 'Copilot' '<body>'
 ```
@@ -116,6 +120,7 @@ Hard rules:
 - **Line numbers reference the file on disk** (1-indexed), not diff line numbers.
 - **Reply bodies support markdown** — use code fences and inline code where helpful.
 - **Only pass `--resolve` when the user explicitly asks.** Never resolve proactively.
+- **Live reviews and HTML preview** do not take `<path>:<line>`. Pin with `--selector <css>`. `--route` is the page path (default `/` for live, `/preview-content` for preview). In `--json`, use `"selector"` and `"route"`.
 
 ## Bulk commenting with `--json`
 
@@ -153,6 +158,8 @@ Per-entry schema:
 | `scope` | string | optional | `"review"` / `"file"` — usually inferred |
 | `reply_to` | string | replies | Comment ID (`c_…` or `r_…`) |
 | `resolve` | bool | optional | Only when user explicitly asks |
+| `quote` | string | optional | Line comments only: the exact text the comment is about, when it is part of the lines |
+| `quote_offset` | int | optional | Where `quote` starts in the lines' text, whitespace collapsed (as the web UI records it); needs `quote` |
 
 Scope inference (when `scope` omitted): has `reply_to` → reply; no `file`/`path` and no `line` → review-level; `path` but no `line` → file-level; `file`/`path` + `line` → line.
 

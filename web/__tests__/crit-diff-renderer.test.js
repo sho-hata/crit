@@ -125,19 +125,19 @@ test('applyWordDiffToHtml skips over HTML tags without counting them', function(
   assert.equal(result, '<span>a</span><span class="hl">b</span>');
 });
 
-test('applyWordDiffToHtml keeps highlight spans open across nested hljs tags', function() {
-  // highlight.js can nest many spans inside a single changed token (e.g. HEEx #{...}).
+test('applyWordDiffToHtml keeps highlight spans open across nested syntax spans', function() {
+  // Syntax highlighting can nest many spans inside a single changed token (e.g. HEEx #{...}).
   // Closing/reopening word-diff spans at every tag boundary creates empty highlight
   // spans that render as phantom whitespace in the diff viewer.
   var oldLine = '                <span class="text-gray-500 sm:text-sm" id="price-currency-for-sms">USD</span>';
   var newLine = '                <span class="text-gray-500 sm:text-sm" id={"price-currency-for-feature-#{ef.index}"}>';
   var hlLine =
-    '<span class="language-xml"><span class="hljs-tag">&lt;<span class="hljs-name">span</span> ' +
-    '<span class="hljs-attr">class</span>=<span class="hljs-string">"text-gray-500 sm:text-sm"</span> ' +
-    '<span class="hljs-attr">id</span>=<span class="hljs-string">{</span></span></span>' +
-    '<span class="language-elixir"><span class="hljs-string"><span class="hljs-subst">' +
-    '<span class="hljs-string">"price-currency-for-feature-#{ef.index}"</span></span></span></span>' +
-    '<span class="language-xml"><span class="hljs-tag">}&gt;</span></span>';
+    '<span style="color:var(--t)"><span style="color:var(--t)">&lt;<span style="color:var(--t)">span</span> ' +
+    '<span style="color:var(--t)">class</span>=<span style="color:var(--t)">"text-gray-500 sm:text-sm"</span> ' +
+    '<span style="color:var(--t)">id</span>=<span style="color:var(--t)">{</span></span></span>' +
+    '<span style="color:var(--t)"><span style="color:var(--t)"><span style="color:var(--t)">' +
+    '<span style="color:var(--t)">"price-currency-for-feature-#{ef.index}"</span></span></span></span>' +
+    '<span style="color:var(--t)"><span style="color:var(--t)">}&gt;</span></span>';
   var wd = diffRenderer.wordDiff(oldLine, newLine);
   assert.ok(wd && wd.newRanges.length > 0);
   var result = diffRenderer.applyWordDiffToHtml(hlLine, wd.newRanges, 'diff-word-add');
@@ -180,42 +180,6 @@ test('bestWordDiffPairing skips dissimilar 1:1 pairs', function() {
   assert.deepEqual(pairs, []);
 });
 
-// --- buildHunkWordDiffs ---
-
-test('buildHunkWordDiffs returns diff data for hunk lines', function() {
-  var hunk = {
-    Lines: [
-      { Type: 'context', Content: 'unchanged line' },
-      { Type: 'del', Content: 'hello world' },
-      { Type: 'add', Content: 'hello earth' },
-      { Type: 'context', Content: 'another line' },
-    ],
-  };
-  var map = diffRenderer.buildHunkWordDiffs(hunk);
-  // del at index 1, add at index 2 should be paired
-  assert.ok(map instanceof Map);
-  // With our mock DMP, "hello world" -> "hello earth" produces a diff
-  // The del line (index 1) should have diff-word-del class
-  if (map.has(1)) {
-    assert.equal(map.get(1).cssClass, 'diff-word-del');
-    assert.ok(Array.isArray(map.get(1).ranges));
-  }
-  if (map.has(2)) {
-    assert.equal(map.get(2).cssClass, 'diff-word-add');
-    assert.ok(Array.isArray(map.get(2).ranges));
-  }
-});
-
-test('buildHunkWordDiffs returns empty map for context-only hunks', function() {
-  var hunk = {
-    Lines: [
-      { Type: 'context', Content: 'line 1' },
-      { Type: 'context', Content: 'line 2' },
-    ],
-  };
-  var map = diffRenderer.buildHunkWordDiffs(hunk);
-  assert.equal(map.size, 0);
-});
 
 // --- wordDiff ---
 
@@ -237,290 +201,52 @@ test('wordDiff returns ranges for small changes', function() {
   }
 });
 
-// --- buildSplitChangeRows ---
-
-function lineNums(rows, side) {
-  return rows.map(function(r) {
-    if (side === 'old') return r.del ? r.del.OldNum : null;
-    return r.add ? r.add.NewNum : null;
-  });
-}
-
-function assertMonotonic(nums, label) {
-  var prev = null;
-  for (var i = 0; i < nums.length; i++) {
-    if (nums[i] == null) continue;
-    if (prev != null && nums[i] < prev) {
-      assert.fail(label + ' not monotonic: ' + JSON.stringify(nums));
-    }
-    prev = nums[i];
-  }
-}
-
-test('buildSplitChangeRows pairs del[i] with add[i] positionally', function() {
-  var dels = [
-    { Type: 'del', Content: 'old loop', OldNum: 268 },
-  ];
-  var adds = [
-    { Type: 'add', Content: 'g, gctx := errgroup.WithContext(ctx)', NewNum: 267 },
-    { Type: 'add', Content: 'g.Go(func() error {', NewNum: 268 },
-    { Type: 'add', Content: 'return g.Wait()', NewNum: 269 },
-  ];
-  var rows = diffRenderer.buildSplitChangeRows(dels, adds, function() { return null; });
-  assert.equal(rows.length, 3);
-  assert.equal(rows[0].del.OldNum, 268);
-  assert.equal(rows[0].add.NewNum, 267);
-  assert.equal(rows[1].del, null);
-  assert.equal(rows[1].add.NewNum, 268);
-  assert.equal(rows[2].add.NewNum, 269);
-  assertMonotonic(lineNums(rows, 'new'), 'new line numbers');
-});
-
-test('buildSplitChangeRows keeps old line numbers monotonic for multi-del runs', function() {
-  var dels = [
-    { Type: 'del', Content: 'a', OldNum: 267 },
-    { Type: 'del', Content: 'b', OldNum: 268 },
-    { Type: 'del', Content: 'c', OldNum: 269 },
-  ];
-  var adds = [
-    { Type: 'add', Content: 'a2', NewNum: 267 },
-    { Type: 'add', Content: 'b2', NewNum: 268 },
-  ];
-  var rows = diffRenderer.buildSplitChangeRows(dels, adds, function() { return null; });
-  assert.equal(rows.length, 3);
-  assert.deepEqual(lineNums(rows, 'old'), [267, 268, 269]);
-  assert.deepEqual(lineNums(rows, 'new'), [267, 268, null]);
-});
-
-test('buildSplitChangeRows handles dels-only and adds-only', function() {
-  assert.equal(diffRenderer.buildSplitChangeRows([], [], function() { return null; }).length, 0);
-  var delOnly = diffRenderer.buildSplitChangeRows(
-    [{ Type: 'del', Content: 'x', OldNum: 5 }], [], function() { return null; }
-  );
-  assert.equal(delOnly.length, 1);
-  assert.equal(delOnly[0].del.OldNum, 5);
-  assert.equal(delOnly[0].add, null);
-  var addOnly = diffRenderer.buildSplitChangeRows(
-    [], [{ Type: 'add', Content: 'y', NewNum: 3 }], function() { return null; }
-  );
-  assert.equal(addOnly.length, 1);
-  assert.equal(addOnly[0].add.NewNum, 3);
-});
-
-// --- resolveUnifiedDragFormRange ---
-// Unified drag may cross old/new number spaces. The form must resolve to a
-// single side (the release line's) with start/end from that side only, so
-// appendDiffForm can attach it under the selected change.
-
-test('resolveUnifiedDragFormRange uses release side across del→add selection', function() {
-  // Visual selection: old 33-36 then new 34-37 (user's screenshot case).
-  // Released on the last added line.
-  var selected = [
-    { visualIdx: 10, lineNum: 33, side: 'old' },
-    { visualIdx: 11, lineNum: 34, side: 'old' },
-    { visualIdx: 12, lineNum: 35, side: 'old' },
-    { visualIdx: 13, lineNum: 36, side: 'old' },
-    { visualIdx: 14, lineNum: 34, side: '' },
-    { visualIdx: 15, lineNum: 35, side: '' },
-    { visualIdx: 16, lineNum: 36, side: '' },
-    { visualIdx: 17, lineNum: 37, side: '' },
-  ];
-  var fallback = { startLine: 33, endLine: 37, side: 'old' }; // buggy mixed-space range
-  var resolved = diffRenderer.resolveUnifiedDragFormRange(selected, 17, fallback);
-  assert.deepEqual(resolved, { startLine: 34, endLine: 37, side: '' });
-});
-
-test('resolveUnifiedDragFormRange uses release side across add→del selection', function() {
-  var selected = [
-    { visualIdx: 10, lineNum: 33, side: 'old' },
-    { visualIdx: 11, lineNum: 34, side: 'old' },
-    { visualIdx: 12, lineNum: 35, side: 'old' },
-    { visualIdx: 13, lineNum: 36, side: 'old' },
-    { visualIdx: 14, lineNum: 34, side: '' },
-    { visualIdx: 15, lineNum: 35, side: '' },
-    { visualIdx: 16, lineNum: 36, side: '' },
-    { visualIdx: 17, lineNum: 37, side: '' },
-  ];
-  var fallback = { startLine: 33, endLine: 37, side: '' };
-  // Released on the first deleted line (dragged upward).
-  var resolved = diffRenderer.resolveUnifiedDragFormRange(selected, 10, fallback);
-  assert.deepEqual(resolved, { startLine: 33, endLine: 36, side: 'old' });
-});
-
-test('resolveUnifiedDragFormRange keeps same-side ranges intact', function() {
-  var selected = [
-    { visualIdx: 5, lineNum: 33, side: 'old' },
-    { visualIdx: 6, lineNum: 34, side: 'old' },
-    { visualIdx: 7, lineNum: 36, side: 'old' },
-  ];
-  var fallback = { startLine: 33, endLine: 36, side: 'old' };
-  var resolved = diffRenderer.resolveUnifiedDragFormRange(selected, 7, fallback);
-  assert.deepEqual(resolved, { startLine: 33, endLine: 36, side: 'old' });
-});
-
-test('resolveUnifiedDragFormRange returns fallback when selection is empty', function() {
-  var fallback = { startLine: 10, endLine: 12, side: 'old' };
-  assert.deepEqual(
-    diffRenderer.resolveUnifiedDragFormRange([], 0, fallback),
-    fallback
-  );
-  assert.deepEqual(
-    diffRenderer.resolveUnifiedDragFormRange(null, 0, fallback),
-    fallback
-  );
-});
-
 // --- resolveTextSelectionLineRange ---
-// Text selection (select-to-comment via `c`) can intersect both diff sides:
-// - split: multi-line right selection includes left nodes via DOM order
-// - unified: selection spanning del+add mixes old/new sides
-// Resolve to the preferred side (selection start) and that side's line range.
-
-test('resolveTextSelectionLineRange keeps same-side split selection', function() {
-  var candidates = [
-    { filePath: 'a.ex', startLine: 7, endLine: 7, blockIndex: null, side: '' },
-    { filePath: 'a.ex', startLine: 8, endLine: 8, blockIndex: null, side: '' },
-  ];
-  assert.deepEqual(
-    diffRenderer.resolveTextSelectionLineRange(candidates, ''),
-    { filePath: 'a.ex', startLine: 7, endLine: 8, afterBlockIndex: null, side: '' }
-  );
-});
-
-test('resolveTextSelectionLineRange filters split bleed to preferred new side', function() {
-  // Multi-line right selection also intersects left lines between rows.
-  var candidates = [
-    { filePath: 'a.ex', startLine: 7, endLine: 7, blockIndex: null, side: '' },
-    { filePath: 'a.ex', startLine: 8, endLine: 8, blockIndex: null, side: 'old' },
-    { filePath: 'a.ex', startLine: 8, endLine: 8, blockIndex: null, side: '' },
-    { filePath: 'a.ex', startLine: 9, endLine: 9, blockIndex: null, side: 'old' },
-  ];
-  assert.deepEqual(
-    diffRenderer.resolveTextSelectionLineRange(candidates, ''),
-    { filePath: 'a.ex', startLine: 7, endLine: 8, afterBlockIndex: null, side: '' }
-  );
-});
-
-test('resolveTextSelectionLineRange filters split bleed to preferred old side', function() {
-  var candidates = [
-    { filePath: 'a.ex', startLine: 7, endLine: 7, blockIndex: null, side: 'old' },
-    { filePath: 'a.ex', startLine: 8, endLine: 8, blockIndex: null, side: '' },
-    { filePath: 'a.ex', startLine: 8, endLine: 8, blockIndex: null, side: 'old' },
-  ];
-  assert.deepEqual(
-    diffRenderer.resolveTextSelectionLineRange(candidates, 'old'),
-    { filePath: 'a.ex', startLine: 7, endLine: 8, afterBlockIndex: null, side: 'old' }
-  );
-});
-
-test('resolveTextSelectionLineRange filters unified del+add to start side', function() {
-  var candidates = [
-    { filePath: 'a.ex', startLine: 33, endLine: 33, blockIndex: null, side: 'old' },
-    { filePath: 'a.ex', startLine: 34, endLine: 34, blockIndex: null, side: 'old' },
-    { filePath: 'a.ex', startLine: 34, endLine: 34, blockIndex: null, side: '' },
-    { filePath: 'a.ex', startLine: 35, endLine: 35, blockIndex: null, side: '' },
-  ];
-  assert.deepEqual(
-    diffRenderer.resolveTextSelectionLineRange(candidates, 'old'),
-    { filePath: 'a.ex', startLine: 33, endLine: 34, afterBlockIndex: null, side: 'old' }
-  );
-  assert.deepEqual(
-    diffRenderer.resolveTextSelectionLineRange(candidates, ''),
-    { filePath: 'a.ex', startLine: 34, endLine: 35, afterBlockIndex: null, side: '' }
-  );
-});
+// Markdown select-to-comment: the line blocks a selection touches resolve to
+// one file's line range (Pierre diffs resolve their own selections).
 
 test('resolveTextSelectionLineRange returns null for multi-file selection', function() {
   var candidates = [
-    { filePath: 'a.ex', startLine: 1, endLine: 1, blockIndex: null, side: '' },
-    { filePath: 'b.ex', startLine: 2, endLine: 2, blockIndex: null, side: '' },
+    { filePath: 'a.md', startLine: 1, endLine: 1, blockIndex: 0 },
+    { filePath: 'b.md', startLine: 2, endLine: 2, blockIndex: 0 },
   ];
-  assert.equal(diffRenderer.resolveTextSelectionLineRange(candidates, ''), null);
+  assert.equal(diffRenderer.resolveTextSelectionLineRange(candidates), null);
 });
 
 test('resolveTextSelectionLineRange returns null for empty candidates', function() {
-  assert.equal(diffRenderer.resolveTextSelectionLineRange([], ''), null);
-  assert.equal(diffRenderer.resolveTextSelectionLineRange(null, ''), null);
+  assert.equal(diffRenderer.resolveTextSelectionLineRange([]), null);
+  assert.equal(diffRenderer.resolveTextSelectionLineRange(null), null);
 });
 
 test('resolveTextSelectionLineRange preserves markdown afterBlockIndex', function() {
   var candidates = [
-    { filePath: 'doc.md', startLine: 10, endLine: 12, blockIndex: 3, side: undefined },
-    { filePath: 'doc.md', startLine: 13, endLine: 14, blockIndex: 4, side: undefined },
+    { filePath: 'doc.md', startLine: 10, endLine: 12, blockIndex: 3 },
+    { filePath: 'doc.md', startLine: 13, endLine: 14, blockIndex: 4 },
   ];
   assert.deepEqual(
-    diffRenderer.resolveTextSelectionLineRange(candidates, undefined),
-    { filePath: 'doc.md', startLine: 10, endLine: 14, afterBlockIndex: 4, side: undefined }
+    diffRenderer.resolveTextSelectionLineRange(candidates),
+    { filePath: 'doc.md', startLine: 10, endLine: 14, afterBlockIndex: 4 }
   );
 });
 
-test('preferredSideFromNode walks to nearest diff line side', function() {
-  // Minimal element chain: text parent → content → side el with dataset
-  var sideEl = {
-    dataset: { diffLineNum: '8', diffSide: '' },
-    closest: function(sel) {
-      if (sel === '[data-diff-line-num]') return this;
-      return null;
-    },
-  };
-  var textParent = {
-    closest: function(sel) { return sideEl.closest(sel); },
-  };
-  assert.equal(diffRenderer.preferredSideFromNode(textParent), '');
-
-  var oldSideEl = {
-    dataset: { diffLineNum: '8', diffSide: 'old' },
-    closest: function(sel) {
-      if (sel === '[data-diff-line-num]') return this;
-      return null;
-    },
-  };
-  assert.equal(diffRenderer.preferredSideFromNode(oldSideEl), 'old');
-});
-
-test('preferredSideFromNode returns undefined for markdown line blocks', function() {
-  var block = {
-    closest: function(sel) {
-      if (sel === '[data-diff-line-num]') return null;
-      if (sel === '.line-block[data-file-path]') return this;
-      return null;
-    },
-  };
-  assert.equal(diffRenderer.preferredSideFromNode(block), undefined);
-});
-
-test('resolveTextSelectionLineRange returns null when mixed sides lack preferredSide', function() {
-  var candidates = [
-    { filePath: 'a.ex', startLine: 7, endLine: 7, blockIndex: null, side: '' },
-    { filePath: 'a.ex', startLine: 8, endLine: 8, blockIndex: null, side: 'old' },
-  ];
-  assert.equal(diffRenderer.resolveTextSelectionLineRange(candidates, undefined), null);
-  assert.equal(diffRenderer.resolveTextSelectionLineRange(candidates, null), null);
-});
-
-// Wiring: app.js must resolve mixed-side text selections via the helpers above
-// (not bail on side mismatch).
+// Wiring: markdown text selections resolve through resolveTextSelectionLineRange
+// (Pierre diffs use getComposedRanges in pierreSelectionForComment instead).
 test('app.js wires text selection through resolveTextSelectionLineRange', function() {
   var appJs = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   assert.match(
     appJs,
-    /preferredSideFromNode\(selection\.anchorNode\)/,
-    'getLineRangeFromSelection must prefer selection.anchorNode for side'
-  );
-  assert.match(
-    appJs,
     /selectedTextWithinElements\(selection,\s*contentEls\)/,
-    'quote capture must clip to side-filtered contentEls'
+    'quote capture must clip to contentEls'
   );
   assert.match(
     appJs,
-    /resolveTextSelectionLineRange\(candidates,\s*preferredSide\)/,
+    /resolveTextSelectionLineRange\(candidates\)/,
     'getLineRangeFromSelection must resolve via resolveTextSelectionLineRange'
   );
-  assert.doesNotMatch(
-    appJs,
-    /If the selection straddles\s+multiple files or diff sides, bail out/,
-    'old bail-out comment for mixed sides must be gone'
+  assert.match(
+    fs.readFileSync(path.join(__dirname, '..', 'crit-pierre-dom.js'), 'utf8'),
+    /getComposedRanges\(\{\s*shadowRoots:/,
+    'Pierre diff selections must read shadow-root ranges via getComposedRanges'
   );
 });
 
@@ -571,4 +297,3 @@ test('selectedTextWithinElements joins only intersecting contentEls', function()
     sandbox.document.createTreeWalker = prevTW;
   }
 });
-

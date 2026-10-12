@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { addComment, clearAllComments, getMdPath, loadPage } from './helpers';
+import { addComment, clearAllComments, fileHeader, fileItem, getMdPath, goSection, loadPage } from './helpers';
 
 test.describe('Interactive accessibility', () => {
   test.beforeEach(async ({ page, request }) => {
@@ -21,6 +21,13 @@ test.describe('Interactive accessibility', () => {
     await expect(shortcutsTab).toBeFocused();
     await expect(shortcutsTab).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('#shortcutsPane')).toHaveClass(/active/);
+
+    // Audit the settled dialog: its open animation and the tab color
+    // transitions blend foreground into background while running, which axe
+    // reports as contrast failures (seen on main too, not a product issue).
+    await overlay.evaluate(async (el) => {
+      await Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished));
+    });
 
     const results = await new AxeBuilder({ page })
       .include('#settingsOverlay')
@@ -64,5 +71,38 @@ test.describe('Interactive accessibility', () => {
     await expect(resolvedFilter).toBeFocused();
     await expect(resolvedFilter).toHaveAttribute('aria-checked', 'true');
     await expect(page.locator('.panel-comment-block .comment-body')).toHaveText('Resolved filter comment');
+  });
+
+  test('file header collapse is a keyboard button with aria-expanded', async ({ page }) => {
+    await goSection(page);
+    const chevron = () => fileHeader(page, 'server.go').locator('.file-header-chevron');
+    const collapsed = () =>
+      fileHeader(page, 'server.go').evaluate((el) => el.classList.contains('collapsed'));
+    await expect(chevron()).toHaveJSProperty('tagName', 'BUTTON');
+    await expect(chevron()).toHaveAttribute('aria-expanded', 'true');
+    await expect(chevron()).toHaveAccessibleName(/server\.go/);
+
+    // Focus + keypress must be atomic: a remount between focus() and the
+    // keypress drops focus and the toggle never fires. State guards make
+    // retries idempotent (no double-toggle).
+    await expect(async () => {
+      if (await collapsed()) return;
+      await chevron().focus();
+      await page.keyboard.press('Enter');
+      await expect(fileHeader(page, 'server.go')).toHaveClass(/\bcollapsed\b/, { timeout: 2_000 });
+    }).toPass({ timeout: 15_000 });
+    await expect(chevron()).toHaveAttribute('aria-expanded', 'false');
+    await expect(chevron()).toBeFocused();
+    await expect(fileItem(page, 'server.go').locator('[data-line]')).toHaveCount(0);
+
+    await expect(async () => {
+      if (!(await collapsed())) return;
+      await chevron().focus();
+      await page.keyboard.press('Space');
+      await expect(fileHeader(page, 'server.go')).not.toHaveClass(/\bcollapsed\b/, { timeout: 2_000 });
+    }).toPass({ timeout: 15_000 });
+    await expect(chevron()).toHaveAttribute('aria-expanded', 'true');
+    await expect(chevron()).toBeFocused();
+    await expect(fileItem(page, 'server.go').locator('[data-line]').first()).toBeVisible();
   });
 });

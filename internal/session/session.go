@@ -457,8 +457,8 @@ type Session struct {
 	sessionStarted atomic.Uint32
 
 	// deletedCommentIDs tracks IDs of file comments deleted in-memory but not
-	// yet written to disk. Keyed by file path -> set of comment IDs. This
-	// prevents mergeFileSnapshotIntoCritJSON from re-adding them from disk.
+	// yet written to disk. Keyed by file path -> set of comment IDs. buildCritJSON's
+	// applyDeletedCommentIDs drops them after merging with disk.
 	deletedCommentIDs map[string]map[string]struct{}
 
 	// pendingGitHubDeletes holds GitHub comment IDs (root or reply) that the
@@ -494,6 +494,7 @@ type Session struct {
 	lastCritJSONMtime   time.Time // mtime after our last WriteFiles(); used to detect external changes
 	awaitingFirstReview bool      // true until first review-cycle completes
 	waitingForAgent     bool      // true between finish (with unresolved comments) and round-complete
+	planHook            string    // plan_mode | codex while a plan hook waits on review-cycle
 	browserClients      int32     // number of connected SSE browser clients (atomic)
 
 	// Focus is the discriminator that selects what the session is showing.
@@ -529,6 +530,12 @@ type CritJSON struct {
 	ReviewComments []Comment               `json:"review_comments,omitempty"`
 	CliArgs        []string                `json:"cli_args,omitempty"`
 	Files          map[string]CritJSONFile `json:"files"`
+
+	// SharedLines maps each comment id to the lines it was sent with in the
+	// last share. A pull takes crit-web's placement for a comment only when
+	// the local comment is still on those lines; if the local carry moved
+	// it since, the local placement wins.
+	SharedLines map[string]SharedLine `json:"shared_lines,omitempty"`
 
 	// CWD is the directory the daemon ran in. The session key is a hash of it,
 	// so it cannot be recovered from the key alone — `crit resume` reads it to
@@ -623,6 +630,12 @@ type StoryCoverage struct {
 	Missing      []string `json:"missing,omitempty"` // human "(file, oldStart)" ids
 	Duplicated   []string `json:"duplicated,omitempty"`
 	AutoRepaired bool     `json:"auto_repaired,omitempty"` // back-fill into Support triggered
+}
+
+// SharedLine is a comment's line range as sent in the last share.
+type SharedLine struct {
+	StartLine int `json:"start_line"`
+	EndLine   int `json:"end_line"`
 }
 
 // CritJSONFile is the per-file section in review files.
@@ -1827,10 +1840,31 @@ func (s *Session) GetComments(filePath string) []Comment {
 	if f == nil {
 		return []Comment{}
 	}
-	result := make([]Comment, 0, len(f.Comments))
+	return visibleCommentsLocked(f.Comments, focusKeyFor(s.Focus), s.Focus)
+}
+
+// GetVisibleComments returns every file's comments that are visible in the
+// current focus, keyed by path. Files with no visible comments are left out.
+// The page uses it to show comments on files whose diffs have not loaded.
+func (s *Session) GetVisibleComments() map[string][]Comment {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	focusKey := focusKeyFor(s.Focus)
-	for _, c := range f.Comments {
-		if !visibleInFocusKey(c, focusKey, s.Focus) {
+	result := make(map[string][]Comment)
+	for _, f := range s.Files {
+		if cs := visibleCommentsLocked(f.Comments, focusKey, s.Focus); len(cs) > 0 {
+			result[f.Path] = cs
+		}
+	}
+	return result
+}
+
+// visibleCommentsLocked copies the comments visible under focusKey, with
+// their replies, so callers can read them after the lock is released.
+func visibleCommentsLocked(comments []Comment, focusKey string, focus Focus) []Comment {
+	result := make([]Comment, 0, len(comments))
+	for _, c := range comments {
+		if !visibleInFocusKey(c, focusKey, focus) {
 			continue
 		}
 		if len(c.Replies) > 0 {
@@ -1867,27 +1901,6 @@ func (s *Session) FindCommentByID(id string, filePath string) (Comment, string, 
 		}
 	}
 	return Comment{}, "", false
-}
-
-// GetAllComments returns all comments grouped by file path.
-func (s *Session) GetAllComments() map[string][]Comment {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make(map[string][]Comment)
-	for _, f := range s.Files {
-		if len(f.Comments) > 0 {
-			comments := make([]Comment, len(f.Comments))
-			copy(comments, f.Comments)
-			for i, c := range comments {
-				if len(c.Replies) > 0 {
-					comments[i].Replies = make([]Reply, len(c.Replies))
-					copy(comments[i].Replies, c.Replies)
-				}
-			}
-			result[f.Path] = comments
-		}
-	}
-	return result
 }
 
 // TotalCommentCount returns the total number of comments across all files and review comments.
@@ -2074,6 +2087,23 @@ func (s *Session) SetAwaitingFirstReview(v bool) {
 	s.awaitingFirstReview = v
 }
 
+// SetPlanHook records the kind of plan hook waiting on the review ("" when none).
+func (s *Session) SetPlanHook(v string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.planHook = v
+}
+
+// PlanHook returns the kind of plan hook waiting on the review, or "".
+func (s *Session) PlanHook() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.planHook
+}
+
 // setWaitingForAgent marks whether the session is in the "waiting for agent edits" phase.
 func (s *Session) setWaitingForAgent(v bool) {
 	s.mu.Lock()
@@ -2153,6 +2183,10 @@ func (s *Session) ClearAllComments() {
 	s.lastCritJSONMtime = time.Time{}
 	s.pendingWrite = false
 	s.waitingForAgent = false
+	// Cleanup also resets the watcher's round state. A detected fixture edit
+	// must not suppress the next markdown PreviousContent snapshot.
+	s.pendingEdits = 0
+	s.lastRoundEdits = 0
 	critPath := s.critJSONPath()
 	s.mu.Unlock()
 	// Full-folder cleanup; idempotent on missing folder.
@@ -2163,7 +2197,7 @@ func (s *Session) ClearAllComments() {
 
 // ChangeBaseBranch changes the diff base to the given branch, recomputes merge-base,
 // rebuilds the file list with new diffs, and notifies connected browsers via SSE.
-// Comments are preserved for files that still appear in the new diff.
+// Comments are preserved even when their files no longer appear in the new diff.
 func (s *Session) ChangeBaseBranch(branch string) error { //nolint:gocyclo // inherent complexity: rollback, recompute diffs, preserve comments
 	s.mu.RLock()
 	mode := s.Mode
@@ -2201,13 +2235,6 @@ func (s *Session) ChangeBaseBranch(branch string) error { //nolint:gocyclo // in
 	ignorePatterns := s.IgnorePatterns
 	generatedRules := s.generatedRules
 
-	// Preserve existing comments keyed by file path
-	commentsByPath := make(map[string][]Comment, len(s.Files))
-	for _, f := range s.Files {
-		if len(f.Comments) > 0 {
-			commentsByPath[f.Path] = f.Comments
-		}
-	}
 	s.mu.Unlock()
 
 	// Re-detect changed files with new base
@@ -2228,6 +2255,12 @@ func (s *Session) ChangeBaseBranch(branch string) error { //nolint:gocyclo // in
 	}
 	changes = config.FilterIgnored(changes, ignorePatterns)
 	changes = filterBinary(changes)
+	renamedPaths := make([]pathRename, 0)
+	for _, fc := range changes {
+		if fc.OldPath != "" && fc.OldPath != fc.Path {
+			renamedPaths = append(renamedPaths, pathRename{from: fc.OldPath, to: fc.Path})
+		}
+	}
 
 	// Build new file entries, preserving comments
 	var newFiles []*FileEntry
@@ -2235,14 +2268,12 @@ func (s *Session) ChangeBaseBranch(branch string) error { //nolint:gocyclo // in
 		absPath := filepath.Join(repoRoot, fc.Path)
 		fe := &FileEntry{
 			Path:      fc.Path,
+			OldPath:   fc.OldPath,
 			AbsPath:   absPath,
 			Status:    fc.Status,
 			FileType:  detectFileType(fc.Path),
-			Comments:  commentsByPath[fc.Path],
+			Comments:  []Comment{},
 			Generated: vcs.IsGenerated(fc.Path, generatedRules),
-		}
-		if fe.Comments == nil {
-			fe.Comments = []Comment{}
 		}
 		if fc.Status != "deleted" {
 			if data, readErr := os.ReadFile(absPath); readErr == nil {
@@ -2261,8 +2292,46 @@ func (s *Session) ChangeBaseBranch(branch string) error { //nolint:gocyclo // in
 	}
 
 	s.mu.Lock()
+	// Capture comments only when the replacement list is ready, so comment
+	// mutations made while the VCS work ran are included in the new entries.
+	commentsByPath := make(map[string][]Comment, len(s.Files))
+	for _, f := range s.Files {
+		if len(f.Comments) > 0 {
+			commentsByPath[f.Path] = f.Comments
+		}
+	}
+	// A persisted comment may still be keyed by the old path. Keep pending
+	// deletion tombstones valid after the review JSON key moves to the new path.
+	for _, rename := range renamedPaths {
+		ids := s.deletedCommentIDs[rename.from]
+		if len(ids) == 0 {
+			continue
+		}
+		if s.deletedCommentIDs[rename.to] == nil {
+			s.deletedCommentIDs[rename.to] = make(map[string]struct{}, len(ids))
+		}
+		for id := range ids {
+			s.deletedCommentIDs[rename.to][id] = struct{}{}
+		}
+	}
 	s.Files = newFiles
+	commentFiles := make(map[string]CritJSONFile, len(commentsByPath))
+	for path, comments := range commentsByPath {
+		commentFiles[path] = CritJSONFile{Comments: comments}
+	}
+	s.appendOrphanedFiles(commentFiles)
 	s.mu.Unlock()
+
+	if len(renamedPaths) > 0 {
+		s.writeMu.Lock()
+		rewriteReviewJSONRenames(s.critJSONPath(), renamedPaths)
+		s.writeMu.Unlock()
+	}
+
+	// Pick up comments that only exist on disk (for example, from a base change
+	// made before orphaned files were preserved). Existing paths are merged and
+	// missing paths become orphaned phantom entries.
+	s.restoreOrphanedComments()
 
 	s.notify(SSEEvent{Type: "base-changed"})
 	return nil
@@ -2445,11 +2514,17 @@ func (s *Session) loadSnapshotsFromSidecar(identity string) bool {
 	return true
 }
 
-// restoreOrphanedComments reads the review file and creates phantom FileEntry
-// objects for any paths that have comments but aren't in s.Files.
-// Safe to call multiple times — existing entries (including previous orphans) are skipped.
+// restoreOrphanedComments reads the review file, merges comments onto matching
+// FileEntry objects, and creates phantoms for commented paths absent from s.Files.
+// Safe to call multiple times — comments are merged by ID and phantoms are not duplicated.
 // Must be called with s.mu NOT held (acquires the lock internally).
 func (s *Session) restoreOrphanedComments() {
+	// Serialize the disk read and in-memory merge with review-file writes. If a
+	// delete write wins first, we read the updated file; if restore wins first,
+	// deletedCommentIDs remains available to filter the stale disk entry.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	data, err := os.ReadFile(ReviewPathsFor(s.critJSONPath()).Review)
 	if err != nil {
 		return
@@ -2464,45 +2539,72 @@ func (s *Session) restoreOrphanedComments() {
 	s.appendOrphanedFiles(cj.Files)
 }
 
-// appendOrphanedFiles creates phantom FileEntry objects for paths in critFiles
-// that have comments but no matching entry in s.Files. Must be called with
-// s.mu held or during init (before concurrent access).
+// appendOrphanedFiles merges comments onto matching FileEntry objects and creates
+// phantom entries for paths in critFiles that have comments but no match in s.Files.
+// Must be called with s.mu held or during init (before concurrent access).
 func (s *Session) appendOrphanedFiles(critFiles map[string]CritJSONFile) {
-	knownPaths := make(map[string]bool, len(s.Files))
+	byPath := make(map[string]*FileEntry, len(s.Files))
 	byOldPath := make(map[string]*FileEntry)
 	for _, f := range s.Files {
-		knownPaths[f.Path] = true
+		byPath[f.Path] = f
 		if f.OldPath != "" {
 			byOldPath[f.OldPath] = f
 		}
 	}
 	for path, cf := range critFiles {
-		if knownPaths[path] || len(cf.Comments) == 0 {
+		s.applyOrphanedCritFile(path, cf, byPath, byOldPath)
+	}
+}
+
+// applyOrphanedCritFile merges one review-JSON file's comments onto a live or
+// renamed FileEntry, or appends an orphaned phantom when no match exists.
+func (s *Session) applyOrphanedCritFile(path string, cf CritJSONFile, byPath, byOldPath map[string]*FileEntry) {
+	f := byPath[path]
+	if f == nil {
+		f = byOldPath[path]
+	}
+	comments := omitTombstonedComments(cf.Comments, s.deletedCommentIDs[path])
+	if f != nil && f.Path != path {
+		comments = omitTombstonedComments(comments, s.deletedCommentIDs[f.Path])
+	}
+	if len(comments) == 0 {
+		return
+	}
+	if f != nil {
+		f.Comments = mergeCommentSlices(f.Comments, comments)
+		defaultEmptyCommentScopes(f.Comments)
+		return
+	}
+	fe := &FileEntry{
+		Path:     path,
+		Status:   "removed",
+		FileType: detectFileType(path),
+		Comments: comments,
+		Orphaned: true,
+	}
+	defaultEmptyCommentScopes(fe.Comments)
+	s.Files = append(s.Files, fe)
+}
+
+func omitTombstonedComments(comments []Comment, deleted map[string]struct{}) []Comment {
+	if len(deleted) == 0 {
+		return comments
+	}
+	out := make([]Comment, 0, len(comments))
+	for _, c := range comments {
+		if _, ok := deleted[c.ID]; ok {
 			continue
 		}
-		// #917: comments keyed under a pre-rename path belong on the renamed entry.
-		if f, ok := byOldPath[path]; ok {
-			f.Comments = mergeCommentSlices(f.Comments, cf.Comments)
-			for i := range f.Comments {
-				if f.Comments[i].Scope == "" {
-					f.Comments[i].Scope = "line"
-				}
-			}
-			continue
+		out = append(out, c)
+	}
+	return out
+}
+
+func defaultEmptyCommentScopes(comments []Comment) {
+	for i := range comments {
+		if comments[i].Scope == "" {
+			comments[i].Scope = "line"
 		}
-		fe := &FileEntry{
-			Path:     path,
-			Status:   "removed",
-			FileType: detectFileType(path),
-			Comments: cf.Comments,
-			Orphaned: true,
-		}
-		for i := range fe.Comments {
-			if fe.Comments[i].Scope == "" {
-				fe.Comments[i].Scope = "line"
-			}
-		}
-		s.Files = append(s.Files, fe)
 	}
 }
 
@@ -2627,12 +2729,25 @@ func (s *Session) GetFileSnapshotFromDisk(path string) (map[string]any, bool) {
 // deleted files (where whitespace-ignore changes nothing) and the markdown
 // branch, it returns the cached hunks unchanged. On any recompute error it logs
 // a warning and falls back to the cached hunks — the request never fails.
-func whitespaceIgnoredHunks(cached []vcs.DiffHunk, status, oldPath string, ignoreWhitespace bool, path, baseRef, repoRoot string, vc vcs.VCS) []vcs.DiffHunk {
+// In range focus (--pr / --range) the recompute runs between the focus SHAs;
+// otherwise it diffs the working tree against baseRef.
+func whitespaceIgnoredHunks(cached []vcs.DiffHunk, status, oldPath string, ignoreWhitespace bool, path, baseRef, repoRoot string, vc vcs.VCS, focus Focus) []vcs.DiffHunk {
 	if !ignoreWhitespace {
 		return cached
 	}
 	if status == "added" || status == "untracked" || status == "deleted" {
 		return cached
+	}
+	if focus.Kind == FocusRange {
+		if vc == nil || focus.HeadSHA == "" || focus.DiffBaseSHA() == "" {
+			return cached
+		}
+		hunks, err := vc.FileDiffBetweenSHAs(path, oldPath, focus.DiffBaseSHA(), focus.HeadSHA, repoRoot, true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: whitespace-ignored range diff failed for %s: %v\n", path, err)
+			return cached
+		}
+		return hunks
 	}
 	if vc == nil && (status != "renamed" || oldPath == "") {
 		return cached
@@ -2645,6 +2760,39 @@ func whitespaceIgnoredHunks(cached []vcs.DiffHunk, status, oldPath string, ignor
 		return cached
 	}
 	return hunks
+}
+
+// gitBaseContentForMarkdown returns the base-side content for a markdown file
+// in git mode so the frontend can render a Previous-vs-Current split with the
+// same renderers as files-mode round diffs. Returns "" when there is no base
+// side (added/untracked) or when the base read fails (best-effort).
+func gitBaseContentForMarkdown(s *Session, focus Focus, path, oldPath, status, baseRef, repoRoot string, vc vcs.VCS) string {
+	if status == "added" || status == "untracked" {
+		return ""
+	}
+	lookupPath := path
+	if status == "renamed" && oldPath != "" {
+		lookupPath = oldPath
+	}
+	if focus.Kind == FocusRange {
+		baseSHA := focus.DiffBaseSHA()
+		if baseSHA == "" {
+			return ""
+		}
+		data, err := s.readFileAtSHAForFocus(focus, baseSHA, lookupPath)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
+	if vc == nil || baseRef == "" {
+		return ""
+	}
+	content, err := vc.FileContentAtRef(lookupPath, baseRef, repoRoot)
+	if err != nil {
+		return ""
+	}
+	return content
 }
 
 // GetFileDiffSnapshot returns diff data for the /api/file/diff endpoint.
@@ -2666,16 +2814,26 @@ func (s *Session) GetFileDiffSnapshot(path string, ignoreWhitespace bool) (map[s
 	}
 
 	s.mu.RLock()
+	// Code files, and markdown in git mode, use the VCS hunks. Markdown in
+	// git mode also returns the base content so the frontend can render a
+	// Previous-vs-Current split (same renderers as files-mode round diffs).
+	// I/O happens outside the lock.
 	if f.FileType == "code" || s.Mode == "git" {
 		hunks := f.DiffHunks
 		status := f.Status
 		oldPath := f.OldPath
+		focus := s.Focus
+		withPrevious := f.FileType != "code"
 		s.mu.RUnlock()
-		hunks = whitespaceIgnoredHunks(hunks, status, oldPath, ignoreWhitespace, path, baseRef, repoRoot, vc)
+		hunks = whitespaceIgnoredHunks(hunks, status, oldPath, ignoreWhitespace, path, baseRef, repoRoot, vc, focus)
 		if hunks == nil {
 			hunks = []vcs.DiffHunk{}
 		}
-		return map[string]any{"hunks": hunks}, true
+		if !withPrevious {
+			return map[string]any{"hunks": hunks}, true
+		}
+		prev := gitBaseContentForMarkdown(s, focus, path, oldPath, status, baseRef, repoRoot, vc)
+		return map[string]any{"hunks": hunks, "previous_content": prev}, true
 	}
 
 	// Markdown in files mode: snapshot content, then compute LCS diff outside the lock

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -25,6 +26,7 @@ type planConfig struct {
 	publicURL                   string
 	allowUnauthenticatedNetwork bool
 	noOpen                      bool
+	noWait                      bool
 	quiet                       bool
 }
 
@@ -37,12 +39,14 @@ func resolvePlanConfig(args []string) planConfig {
 	publicURL := fs.String("public-url", "", "Advertised base URL (overrides CRIT_PUBLIC_URL)")
 	allowUnauthNet := fs.Bool(config.AllowUnauthenticatedNetworkFlag, false, "Allow non-loopback listen or public_url without authentication")
 	noOpen := fs.Bool("no-open", false, "Don't auto-open browser")
+	noWait := fs.Bool("no-wait", false, "Save the plan version and exit without starting a review")
 	quiet := fs.Bool("quiet", false, "On success, suppress connect/start status, tips, and session summary")
 	fs.BoolVar(quiet, "q", false, "On success, suppress status (shorthand)")
 	// Keep in sync with the fs.Bool/fs.BoolVar registrations above.
 	args = clicmd.ReorderFlagsFirst(args, map[string]bool{
 		config.AllowUnauthenticatedNetworkFlag: true,
 		"no-open":                              true,
+		"no-wait":                              true,
 		"quiet":                                true,
 		"q":                                    true,
 	})
@@ -55,6 +59,7 @@ func resolvePlanConfig(args []string) planConfig {
 		publicURL:                   *publicURL,
 		allowUnauthenticatedNetwork: *allowUnauthNet,
 		noOpen:                      *noOpen,
+		noWait:                      *noWait,
 		quiet:                       *quiet,
 	}
 
@@ -114,13 +119,18 @@ func RunPlan(args []string) error {
 		return err
 	}
 
-	go backgroundCleanup()
-
 	slug := resolvePlanSlug(pc.name, content)
 	storageDir, err := PlanStorageDir(slug)
 	if err != nil {
 		return err
 	}
+
+	if pc.noWait {
+		cwd, _ := daemon.ResolvedCWD()
+		return savePlanWithoutReview(os.Stdout, os.Stderr, storageDir, slug, content, pc.quiet || config.LoadConfig(cwd).Quiet)
+	}
+
+	go backgroundCleanup()
 
 	ver, err := SavePlanVersion(storageDir, content)
 	if err != nil {
@@ -156,8 +166,33 @@ func RunPlan(args []string) error {
 	}
 
 	approved := daemon.RunReviewClient(entry, key, quiet)
-	killDaemonOnApproval(approved, entry.PID)
-	cleanupOnApproval(approved, entry.ReviewPath, config.LoadConfig(cwd).CleanupOnApproveEnabled())
+	stopDaemonOnApproval(approved, entry, key, config.LoadConfig(cwd).CleanupOnApproveEnabled())
+	return nil
+}
+
+// savePlanWithoutReview is `crit plan --no-wait`: it saves content as the
+// plan's next version and returns without starting a daemon, so a tool can
+// keep a document in crit and comment on it with `crit comment --plan`.
+// Content equal to current.md adds no version. The slug goes to stdout.
+func savePlanWithoutReview(stdout, stderr io.Writer, storageDir, slug string, content []byte, quiet bool) error {
+	current, err := os.ReadFile(filepath.Join(storageDir, "current.md"))
+	if err == nil && bytes.Equal(current, content) {
+		if !quiet {
+			fmt.Fprintf(stderr, "Plan '%s' unchanged (v%03d)\n", slug, latestPlanVersion(storageDir))
+		}
+		fmt.Fprintln(stdout, slug)
+		return nil
+	}
+
+	ver, err := SavePlanVersion(storageDir, content)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error saving plan: %v\n", err)
+		return clicmd.ExitError{Code: 1, Err: errors.New("exit")}
+	}
+	if !quiet {
+		fmt.Fprintf(stderr, "Plan '%s' saved as v%03d (%d bytes)\n", slug, ver, len(content))
+	}
+	fmt.Fprintln(stdout, slug)
 	return nil
 }
 
@@ -250,14 +285,14 @@ func emitCodexStopDecision(approved bool, prompt string) {
 }
 
 var runCodexPlanReviewHook = func(sessionID string, content []byte) {
-	runPlanReviewHook("crit plan-hook --mode codex", sessionID, content, emitCodexStopDecision)
+	runPlanReviewHook("crit plan-hook --mode codex", "codex", sessionID, content, emitCodexStopDecision)
 }
 
 var runClaudePlanReviewHook = func(sessionID string, content []byte, emitDecision func(bool, string)) {
-	runPlanReviewHook("crit plan-hook", sessionID, content, emitDecision)
+	runPlanReviewHook("crit plan-hook", "plan_mode", sessionID, content, emitDecision)
 }
 
-func runPlanReviewHook(logPrefix, sessionID string, content []byte, emitDecision func(bool, string)) {
+func runPlanReviewHook(logPrefix, planHook, sessionID string, content []byte, emitDecision func(bool, string)) {
 	slug := resolveHookSlug(sessionID, content)
 
 	storageDir, err := PlanStorageDir(slug)
@@ -307,9 +342,8 @@ func runPlanReviewHook(logPrefix, sessionID string, content []byte, emitDecision
 		installDaemonSignalHandler(entry.PID)
 	}
 
-	approved, prompt := daemon.RunReviewClientRaw(entry, key)
-	killDaemonOnApproval(approved, entry.PID)
-	cleanupOnApproval(approved, entry.ReviewPath, cfg.CleanupOnApproveEnabled())
+	approved, prompt := daemon.RunReviewClientRaw(entry, key, planHook)
+	stopDaemonOnApproval(approved, entry, key, cfg.CleanupOnApproveEnabled())
 	emitDecision(approved, prompt)
 }
 

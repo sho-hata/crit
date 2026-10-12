@@ -14,6 +14,7 @@ MULTI_PORT="${CRIT_TEST_MULTI_PORT:-3127}"
 RANGE_PORT="${CRIT_TEST_RANGE_PORT:-3128}"
 LIVE_PORT="${CRIT_TEST_LIVE_PORT:-3129}"
 PERF_PORT="${CRIT_TEST_PERF_PORT:-3134}"
+HUGE_PORT="${CRIT_TEST_HUGE_PORT:-3136}"
 
 # Build crit once (skip if CRIT_BIN already points to an existing binary, e.g. CI coverage builds)
 if [ -n "${CRIT_BIN:-}" ] && [ -f "$CRIT_BIN" ]; then
@@ -50,7 +51,7 @@ if [[ "$OSTYPE" == msys || "$OSTYPE" == cygwin ]]; then
 fi
 
 # Kill any stale processes on our test ports before starting fresh
-for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT" "$PERF_PORT"; do
+for port in "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$NOGIT_PORT" "$MULTI_PORT" "$RANGE_PORT" "$LIVE_PORT" "$PERF_PORT" "$HUGE_PORT"; do
   e2e_kill_port "$port"
 done
 
@@ -76,6 +77,7 @@ start_fixture setup-fixtures-multifile.sh "$MULTI_PORT"
 start_fixture setup-fixtures-range-mode.sh "$RANGE_PORT"
 start_fixture setup-fixtures-livemode.sh "$LIVE_PORT"
 start_fixture setup-fixtures-perf.sh "$PERF_PORT"
+start_fixture setup-fixtures-huge.sh "$HUGE_PORT"
 
 cleanup() {
   kill "${FIXTURE_PIDS[@]}" 2>/dev/null || true
@@ -141,6 +143,7 @@ if [ $# -eq 0 ]; then
     launch range  npx playwright test --project=range-mode
     launch live   npx playwright test --project=live-mode
     launch perf   npx playwright test --project=perf
+    launch huge   npx playwright test --project=huge
   fi
 
   # Mobile shares the git-mode fixture (port 3123) and both projects call

@@ -98,6 +98,12 @@ echo '[
 ]' | crit comment --json --author 'Codex'
 ```
 
+For long or multi-line bodies, write the JSON to a file and pass `--file`. Use `--file`, not a `<` redirect.
+
+```bash
+crit comment --json --file /tmp/replies.json --author 'Codex'
+```
+
 ## Step 5: Signal completion and start next round
 
 **CRITICAL — you MUST run this step. Do NOT skip it. Do NOT proceed without it.**
@@ -106,6 +112,6 @@ The finish prompt on stdout includes the command to run again — use it to star
 
 On subsequent calls, `crit` automatically signals round-complete first, then blocks until the next "Finish Review" click.
 
-Tell the user: **"Changes applied. Review the diff in your browser and click Finish Review when ready."**
+Tell the user only: **"Replied in Crit. Review the changes in your browser and click Finish Review when ready."** Do not repeat your replies or list the comments in chat. The reviewer reads them in Crit.
 
 **Do NOT proceed until the background `crit` task completes.** When it does, return to Step 3. If the user finishes with zero comments, the review is approved — stop the loop and proceed.

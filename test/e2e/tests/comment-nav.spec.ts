@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { clearAllComments, loadPage, addComment, switchToDocumentView, clearFocus, focusKbNavElement } from './helpers';
+import {
+  clearAllComments, loadPage, addComment, switchToDocumentView, clearFocus,
+  clickWhenHittable, focusKbNavElement, mdDocument,
+} from './helpers';
 
 // ============================================================
 // Comment Navigation — ] / [ shortcuts and prev/next buttons
@@ -152,7 +155,7 @@ test.describe('Comment Navigation — prev/next buttons', () => {
     await loadPage(page);
     await switchToDocumentView(page);
 
-    await page.locator('#commentNavNext').click();
+    await clickWhenHittable(page, page.locator('#commentNavNext'));
 
     await expect(page.locator('.comment-card').first()).toHaveClass(/comment-nav-highlight/);
   });
@@ -163,7 +166,7 @@ test.describe('Comment Navigation — prev/next buttons', () => {
     await loadPage(page);
     await switchToDocumentView(page);
 
-    await page.locator('#commentNavPrev').click();
+    await clickWhenHittable(page, page.locator('#commentNavPrev'));
 
     await expect(page.locator('.comment-card').last()).toHaveClass(/comment-nav-highlight/);
   });
@@ -177,11 +180,11 @@ test.describe('Comment Navigation — prev/next buttons', () => {
     const cards = page.locator('.comment-card');
 
     // Go to first via next
-    await page.locator('#commentNavNext').click();
+    await clickWhenHittable(page, page.locator('#commentNavNext'));
     await expect(cards.first()).toHaveClass(/comment-nav-highlight/);
 
     // Prev from first wraps to last
-    await page.locator('#commentNavPrev').click();
+    await clickWhenHittable(page, page.locator('#commentNavPrev'));
     await expect(cards.last()).toHaveClass(/comment-nav-highlight/);
   });
 });
@@ -198,7 +201,7 @@ test.describe('Comment Navigation — disabled in textarea', () => {
     await clearFocus(page);
 
     // Open a new comment form on a line block
-    const section = page.locator('.file-section').filter({ hasText: 'plan.md' });
+    const section = mdDocument(page);
     const lineBlock = section.locator('.line-block.kb-nav').first();
     await focusKbNavElement(page, lineBlock);
     await page.keyboard.press('c');
@@ -219,7 +222,7 @@ test.describe('Comment Navigation — disabled in textarea', () => {
     await clearFocus(page);
 
     // Open a new comment form on a line block
-    const section = page.locator('.file-section').filter({ hasText: 'plan.md' });
+    const section = mdDocument(page);
     const lineBlock = section.locator('.line-block.kb-nav').first();
     await focusKbNavElement(page, lineBlock);
     await page.keyboard.press('c');

@@ -16,7 +16,8 @@ crit/
 │   ├── crit-*.js        # Shared renderer, SSE, draft, comment UI modules
 │   ├── style.css / style-live.css / theme.css
 │   ├── __tests__/       # Node.js unit tests (node --test)
-│   └── *.min.js         # Vendored markdown-it, highlight.js, mermaid
+│   ├── pierre/          # Vendored @pierre/diffs + Shiki (split ESM, gzip; scripts/build-pierre.mjs)
+│   └── *.min.js         # Vendored markdown-it, DOMPurify, mermaid, diff-match-patch
 ├── integrations/        # Drop-in config files for AI coding tools (claude-code, cursor, aider, …)
 ├── test/                # Test harnesses, E2E, roundtrip docs, shared fixtures
 ├── Makefile
@@ -31,7 +32,7 @@ crit/
 3. **Two modes**: "git" mode (auto-detect from git) and "files" mode (explicit file arguments)
 4. **markdown-it for parsing** — chosen because it provides `token.map` (source line mappings per block)
 5. **Block-level splitting** — lists, code blocks, tables, blockquotes split into per-item/per-line/per-row blocks so each source line is independently commentable
-6. **Diff hunk rendering** — code files show git diffs with dual gutters (old/new line numbers)
+6. **Diff rendering is `@pierre/diffs`** — the review list (git and files mode) is one Pierre `CodeView`: virtualization, sticky headers, Shiki highlighting in a worker pool, word diffs, split/unified, context expansion. Crit supplies the file header, comments/forms as annotations, keyboard focus and jumps. Rendered markdown (Document view) is Crit's line-block document inside a Pierre item. Story chapters use Pierre `FileDiff`. See `docs/frontend-js.md`.
 7. **Comments reference source line numbers** — stored in `~/.crit/reviews/<key>.json` with per-file sections
 8. **Real-time output** — review file written on every comment change (200ms debounce)
 9. **File watching** — git mode polls `git status --porcelain`; files mode polls mtimes; reloads via SSE
@@ -85,6 +86,7 @@ crit pull [pr-number]         # Fetch GitHub PR comments into the review file
 crit push [--dry-run] [--event <type>] [-m <msg>] [pr]  # Post review comments as a GitHub PR review
 crit pr <num|url>             # Thin shim — forwards to `crit review --pr <n>`
 crit comment <path>:<line[-end]> <body>         # Add a comment (no server needed)
+crit comment --selector <css> [--route <path>] <body>  # Pin a DOM element (live or HTML preview)
 crit comment --reply-to <id> [--resolve] <body> # Reply to a comment
 crit comment --json [--file <path>] [--author <name>]  # Bulk add comments from JSON (stdin or --file; - = stdin)
 crit config [--generate]      # Print resolved config (or starter template)
@@ -155,7 +157,7 @@ make e2e-report                                       # View HTML report with sc
 
 ### Projects
 
-Eight Playwright projects. Test naming convention determines which project runs which file:
+Ten Playwright projects. Test naming convention determines which project runs which file:
 
 | Project | Port | Fixture | Test glob |
 | --- | --- | --- | --- |
@@ -167,6 +169,8 @@ Eight Playwright projects. Test naming convention determines which project runs 
 | `multi-file-mode` | 3127 | `setup-fixtures-multifile.sh` (code + markdown files) | `*.multifile.spec.ts` |
 | `range-mode` | 3128 | `setup-fixtures-range-mode.sh` (`--range A..B` stacked git) | `*.rangemode.spec.ts` |
 | `live-mode` | 3129 | `setup-fixtures-livemode.sh` (Go upstream + crit live) | `*.livemode.spec.ts` |
+| `perf` | 3134 | `setup-fixtures-perf.sh` (300 files + large markdown) | `*.perf.spec.ts` |
+| `huge` | 3136 | `setup-fixtures-huge.sh` (~2,500 files; document taller than 2^22px) | `*.huge.spec.ts` |
 
 The `mobile` project shares the git-mode fixture port. In `run.sh` it runs strictly after `git-mode` finishes so the two don't race on shared comment state (both projects `DELETE /api/comments` in `beforeEach`).
 
@@ -202,6 +206,7 @@ All routes wrapped with `s.withReady` return 503 until session init completes �
 Session-scoped:
 
 - `GET  /api/health` — liveness probe (no readiness gate; used for daemon health checks); `{status, browser_clients, api_version}` — bump `APIVersion` only for breaking HTTP API changes; missing `api_version` = 0
+- `POST /api/shutdown?pid=<daemon pid>` - graceful stop, same path as SIGTERM; CLI-only (403 on `Sec-Fetch-Site`/`Origin`), 409 when `pid` is another daemon's (checked before readiness, so also during init)
 - `GET  /api/session` — session metadata
 - `GET  /api/config` — `{version, latest_version, ...}`
 - `GET  /api/review-cycle` — review-cycle metadata (round number, edits-since-last)
@@ -216,6 +221,7 @@ Session-scoped:
 - `GET|POST /api/base-branch` — read/update active base branch
 - `GET  /api/commits` — list commits between base ref and HEAD (git mode only)
 - `GET  /api/files/list` — list session files (lighter than `/api/session`)
+- `GET  /api/files/comments` — every file's visible comments keyed by path (`?round=N` in files mode); one request instead of one per file
 - `GET|POST /api/comments` — list/add review-level comments
 - `PUT|DELETE /api/review-comment/{id}` (and `/replies[/{rid}]`, `/resolve`) — review-comment CRUD
 
@@ -258,13 +264,13 @@ Three top-level globals in `app.js`: `session` (mode, branch, base_ref, review_r
 1. Parse with `markdown-it` to get tokens with `token.map` (source line ranges)
 2. `buildLineBlocks()` dispatches to per-token-type handlers: `handleFenceToken`, `handleListToken`, `handleTableToken`, `handleBlockquoteToken`
 3. Container tokens (lists, tables, blockquotes) are drilled into — each item/row/child becomes its own block
-4. Code blocks (`fence` tokens) split into per-line blocks with syntax highlighting preserved via `splitHighlightedCode()`
+4. Code blocks (`fence` tokens) split into per-line blocks, highlighted by Shiki (`crit-code-highlight.js`; grammars tokenized in Pierre's worker pool while the file loads)
 5. Each block gets a gutter entry with its source line number(s)
 6. Comments are keyed by `end_line` and displayed after their referenced block
 
-### Diff hunk rendering (code files)
+### Diff rendering (code files)
 
-Hunk headers (`@@ -27,6 +31,23 @@`), dual gutters, colored backgrounds for additions/deletions, spacers between hunks, inline comment via gutter `+` buttons.
+`@pierre/diffs` renders every diff and code file (`web/crit-pierre-view.js` wraps CodeView, `web/crit-pierre-adapter.js` maps Crit's model). Pierre's DOM lives in open shadow roots: lines are `[data-line]`, gutters `[data-column-number]`, the hover `+` is `[data-utility-button]`. Crit content (header, comment cards, forms, rendered documents) is light-DOM annotations. Don't reach into the shadow DOM except through the existing helpers (selection, quote highlights, line tints).
 
 ### Known complexities
 
@@ -273,7 +279,8 @@ Hunk headers (`@@ -27,6 +31,23 @@`), dual gutters, colored backgrounds for addit
 - Table rows remain separate source blocks for comments. Document view groups
   them into one native auto-layout `<table>`; rendered diff paths retain
   standalone row HTML as a compatibility fallback.
-- `splitHighlightedCode()` tracks open `<span>` tags across lines to properly close/reopen them.
+- CodeView virtualizes the file list: an off-screen file has no DOM. Navigate through `pierreView.scrollToFile/scrollToLine` (or the tree) rather than assuming a file's elements exist. Only a mounted rendered document keeps the classic `#file-section-<path>` wrapper.
+- E2E: act on Pierre lines through the helpers (`hoverLine`, `openLineComment`, `revealFile`); they scroll the line into view and settle first.
 </important>
 
 <important if="you are changing any agent-*.js, crit-agent.js, or agent-marker.css in web/">
@@ -318,8 +325,9 @@ When the agent runs `crit` again (or calls `POST /api/round-complete`):
 2. **Subsequent `crit`**: connects to existing daemon (same cwd + args), signals round-complete, blocks
 3. **`crit plan.md`**: looks up daemon by hash(cwd + "plan.md") — reuses if alive, starts new if dead
 4. **Ctrl+C**: kills the daemon the client started
-5. **`crit stop`**: kills daemon for current cwd; `crit stop --all` kills every daemon
-6. **Lifetime**: daemon runs until killed (Ctrl+C, `crit stop`, or SIGINT/SIGTERM/SIGHUP). No idle timeout — walking away from a review session is fine.
+5. **`crit stop`**: stops daemon for current cwd; `crit stop --all` stops every daemon. Both ask for a graceful stop via `POST /api/shutdown` first and fall back to signals
+6. **Approve**: the approving client asks for `POST /api/shutdown`, waits for the daemon to exit, and only then applies `cleanup_on_approve`, under the session lock and only if no other daemon took the key over. A stopping daemon can still write the review, so never remove it earlier
+7. **Lifetime**: daemon runs until approved or killed (Ctrl+C, `crit stop`, or SIGINT/SIGTERM/SIGHUP). No idle timeout — walking away from a review session is fine.
 
 ### Deferred initialization & readiness
 

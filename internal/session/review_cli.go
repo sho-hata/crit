@@ -107,7 +107,6 @@ func RunReview(args []string) error {
 	}
 
 	approved := runReviewClientForReview(entry, key, sc.Quiet)
-	killDaemonOnApproval(approved, entry.PID)
-	cleanupOnApproval(approved, entry.ReviewPath, config.LoadConfig(cwd).CleanupOnApproveEnabled())
+	stopDaemonOnApproval(approved, entry, key, config.LoadConfig(cwd).CleanupOnApproveEnabled())
 	return nil
 }

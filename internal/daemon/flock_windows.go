@@ -33,6 +33,15 @@ func flockExclusiveNB(f *os.File) error {
 	return windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, lockLenLow, lockLenHigh, ol)
 }
 
+// unlockAndRemove releases the lock file and then deletes it. Windows cannot
+// delete an open file, so the delete fails harmlessly when another process
+// has opened the file in the meantime.
+func unlockAndRemove(f *os.File) {
+	_ = Funlock(f)
+	f.Close()
+	os.Remove(f.Name())
+}
+
 func Funlock(f *os.File) error {
 	ol := new(windows.Overlapped)
 	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, lockLenLow, lockLenHigh, ol)

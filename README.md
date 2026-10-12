@@ -10,7 +10,7 @@
 > **This is a private fork of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit).** Differences from upstream:
 > - The share feature (`crit share`/`crit fetch`/`crit unpublish`/`crit auth` and the crit-web hosted-service integration) has been removed for private use.
 
-Review and comment on plans, code diffs, frontend elements and send feedback directly to your agent.
+Review your coding agent's plans, diffs and running apps in the browser. Click a line, leave a comment, and the agent gets it.
 
 > [!NOTE]
 > **This is a fork** of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) with features not (yet) in upstream. Fork-specific additions are marked **(fork-only)** below. Currently:
@@ -20,16 +20,16 @@ Review and comment on plans, code diffs, frontend elements and send feedback dir
 
 ## Adaptive UI for each type of output
 
-For agents, plans and code are all the same - it's just text, but for us, humans, reviewing generated plans and reviewing web application are two very different activities.
+To an agent, plans and code are both just text. To you, reviewing a plan and reviewing a web app are different jobs.
 
-Crit adds a proper interface for each type of output and lets you point at the exact thing that is wrong and leave a comment for the agent to fix:
+Crit gives each type of output its own review UI. Point at the exact thing that's wrong and leave a comment for the agent:
 
-- `crit plan.md` renders a markdown file with proper formatting and review UI
-- `crit` auto-detects git changes and shows syntax-highlighted diffs for local review.
-- `crit http://localhost:3000` proxies your running app and adds a review interface to it
-- `crit landing.html` renders a static HTML artifact to review
+- `crit plan.md` renders a markdown file with review comments.
+- `crit` finds your git changes and shows them as syntax-highlighted diffs.
+- `crit http://localhost:3000` proxies your running app and adds a review layer on top.
+- `crit landing.html` renders a static HTML file you can click and comment on.
 
-Everything runs locally via one single binary.
+Everything runs locally from a single binary.
 
 ## Quickstart
 
@@ -41,7 +41,7 @@ brew install sho-hata/tap/fcrit
 > The formula is `fcrit` (this fork), not `crit` (upstream, in homebrew-core) — but it still installs a binary named `crit`. The two conflict, so uninstall or `brew unlink crit` first if you have upstream installed. Upgrades: `brew update && brew upgrade fcrit`.
 
 <details>
-<summary>Also available via Go, Nix, Windows</summary>
+<summary>Also available via Go, Nix and Windows</summary>
 
 Go:
 ```bash
@@ -70,20 +70,20 @@ claude plugin marketplace add sho-hata/crit
 claude plugin install crit@crit
 ```
 
-Crit also works with Cursor, GitHub Copilot, OpenCode, Codex, Gemini, Qwen, Hermes, Windsurf, Cline, Grok, Aider, and Pi — any agent that can read a file and run a command. See [`integrations/`](integrations/) for all install methods and details.
+Crit also works with Cursor, GitHub Copilot, OpenCode, OMO, omp, Codex, Gemini, Qwen, Hermes, Windsurf, Cline, Grok, Aider, and Pi — any agent that can read a file and run a command. See [`integrations/`](integrations/) for all install methods and details.
 
 ### 3. Tell your agent to use `crit`
 
 Most integrations include a `/crit` slash command that automates the full review loop.
-Agent launches Crit, waits for your review and acts on the feedback.
-Repeat the process until you approve the changes.
+The agent launches Crit, waits for your review, then acts on the feedback.
+Repeat until you approve.
 
 Here's a 2-minute demo walkthrough of plan review and branch review:
 [![Crit demo](docs/images/video-thumbnail.png)](https://www.youtube.com/watch?v=LHwfdvePf5A)
 
 ## Usage
 
-The recommended way is to use `/crit` command with your agent after any piece of work - whether it wrote a plan or made some code changes. You can however, launch it in your terminal by yourself and paste the prompt when you finish to your agent.
+The recommended way is to run the `/crit` command in your agent after any piece of work, whether it wrote a plan or changed code. You can also launch Crit yourself in a terminal and paste the prompt back to your agent when you finish.
 
 ```bash
 crit                              # auto-detect changed files in your repo
@@ -93,7 +93,7 @@ crit http://localhost:3000        # review a running dev server
 crit landing.html                 # review a static HTML file
 ```
 
-If talking to an agent, you can invoke the `/crit` command and optionally provide arguments like the above examples or the agent will try to launch the right thing based on the context of the conversation.
+In your agent chat, run `/crit` with any of the arguments above. Run it bare and the agent picks what to launch from the conversation.
 
 ### Story mode
 
@@ -254,6 +254,8 @@ AI agents can use `crit comment` to add inline review comments without opening t
 ```bash
 crit comment src/auth.go:42 'Missing null check'
 crit comment src/handler.go:15-28 'Error handling issue'
+crit comment --selector 'h1' 'Heading is vague'                 # live app or HTML preview
+crit comment --selector '#save' --route /settings 'Save stays disabled'
 crit comment --session 839f3b4cd5d6 src/auth.go:42 'Target this review'
 echo '[{"body":"Overall feedback"}]' | crit comment --session 839f3b4cd5d6 --json
 crit comment --output ~/.crit src/auth.go:42 'comment'  # same as default (~/.crit/reviews/<key>/)
@@ -347,7 +349,7 @@ After the first agent interaction, the comment becomes a **live thread**:
 - **Concurrent reviews.** Each instance runs on its own port - review multiple plans at once.
 - **Syntax highlighting.** Code blocks are highlighted and split per-line, so you can comment on individual lines inside a fence.
 - **Live file watching.** The browser reloads automatically when the source file changes.
-- **Dark/light/system theme.** Three-button pill in the header, persisted to localStorage.
+- **Paired UI and code themes.** Choose light and dark Shiki-based palettes in Settings; code, rendered markdown and review UI share their colours. System/Light/Dark selects the active palette. Preferences persist in a cookie across ports.
 - **Configurable code font.** Code-review Settings → Display → Code font lists coding/monospace fonts detected by the local Crit daemon, plus Default, System monospace, and a custom `font-family` fallback. Applies to code and diffs, and persists across sessions.
 - **Local by default.** Server binds to `127.0.0.1`. Your files stay on your machine unless you explicitly share. Non-loopback listen hosts and `public_url` require `--allow-unauthenticated-network` (or `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1`) because Crit has no network authentication — prefer SSH forwarding, Tailscale Serve to loopback, or Docker `-p 127.0.0.1:…`.
 - **Collapsing generated files.** Honors `linguist-generated` in `.gitattributes` — matching files appear collapsed by default.
@@ -536,5 +538,6 @@ For running crit alongside an AI agent inside a container, with the review UI re
 Crit embeds the following open-source libraries:
 
 - [markdown-it](https://github.com/markdown-it/markdown-it): Markdown parser
-- [highlight.js](https://github.com/highlightjs/highlight.js): Syntax highlighting
+- [@pierre/diffs](https://github.com/pierrecomputer/pierre): Diff and code rendering
+- [Shiki](https://github.com/shikijs/shiki): Syntax highlighting and code themes
 - [Mermaid](https://github.com/mermaid-js/mermaid): Diagram rendering
