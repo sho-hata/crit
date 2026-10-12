@@ -80,5 +80,5 @@ For mid-round re-entry, use `crit comments --json`.
 Run the next-round command printed on stdout with the same monitor pattern.
 Tell the user only that you replied in Crit and the changes are ready for
 review. Do not repeat your replies or list the comments in chat. Await
-command completion, and repeat this step until approved. Do not call `crit push` or `crit share`
+command completion, and repeat this step until approved. Do not call `crit push`
 unless the user asks.

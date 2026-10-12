@@ -1,6 +1,6 @@
 ---
 name: crit-cli
-description: Use when an agent needs to author or reply to crit inline comments programmatically (including multi-agent workflows commenting on shared code/plans/docs/proposals), publish or unpublish a crit review with crit share, sync a crit review to or from a GitHub PR or GitLab MR, or read/interpret a crit review JSON file. Covers crit comment, crit share, crit unpublish, crit pull, crit push, review file format, and resolution workflow. Not for invoking an interactive review loop — that's the `crit` skill.
+description: Use when an agent needs to author or reply to crit inline comments programmatically (including multi-agent workflows commenting on shared code/plans/docs/proposals), sync a crit review to or from a GitHub PR, or read/interpret a crit review JSON file. Covers crit comment, crit pull, crit push, review file format, and resolution workflow. Not for invoking an interactive review loop — that's the `crit` skill.
 user-invocable: false
 ---
 
@@ -29,7 +29,7 @@ after edits, and `drifted: true` means line numbers may be approximate.
 
 When multiple sessions match, headless commands refuse to guess. Use the
 `sessions` from `crit status --json` to select `--session <id>` for
-`comment`, `comments`, `share`, `pull`, or `push`.
+`comment`, `comments`, `pull`, or `push`.
 
 ## Review JSON
 
@@ -121,7 +121,7 @@ Optional `quote` and `quote_offset` describe a selected substring.
 Scope is inferred: `reply_to` means reply; no file/path or line means review;
 path without a line means file; file/path plus line means line.
 
-## Forge sync
+## GitHub sync
 
 ```bash
 crit pull [number-or-url]
@@ -129,23 +129,7 @@ crit push --dry-run [number-or-url]
 crit push --event comment [-m '<body>'] [number-or-url]
 crit push --event approve [number-or-url]
 crit push --event request-changes [number-or-url]
-crit pull --forge gitlab <iid>
 ```
 
-Use authenticated `gh` for GitHub or `glab` for GitLab. The current branch
-can supply the PR/MR number. Only post reviews when the user asks.
-
-## Sharing
-
-```bash
-crit share <file> [file...]
-crit share --share-url <url> <file>
-crit share --org <slug> --visibility unlisted <file>
-crit unpublish [file...]
-```
-
-Only share or unpublish when requested. Relay the complete printed URL.
-Use `--qr` only in real monospace terminals. Organization visibility defaults
-to `organization`; other values are `unlisted` and `public`.
-`--share-url` chooses the deployment; it is required if multiple configured
-targets have no default. Unpublish uses the persisted delete token.
+Use authenticated `gh` for GitHub. The current branch can supply the PR
+number. Only post reviews when the user asks.

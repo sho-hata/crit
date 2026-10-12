@@ -83,4 +83,4 @@ Run the next-round command printed on stdout with the same asynchronous
 and the changes are ready for review. Do not repeat your replies or list the
 comments in chat. Await command completion, and repeat this step until
 approved.
-Do not call `crit push` or `crit share` unless the user asks.
+Do not call `crit push` unless the user asks.

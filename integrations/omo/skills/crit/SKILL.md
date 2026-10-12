@@ -17,7 +17,6 @@ live URLs, and local HTML previews; do not ask which mode to use.
 ```bash
 crit <arguments>
 crit --pr <number-or-url>
-crit --mr <number-or-url>
 crit --range <base>..<head>
 crit
 ```
@@ -97,16 +96,8 @@ click Finish Review when ready." Do not repeat your replies or list the
 comments in chat. The reviewer reads them in Crit. Await command completion, then return to Step 3.
 Continue until the reviewer approves.
 
-## Sharing
+## Remote access
 
-Only share or unpublish when the user asks:
-
-```bash
-crit share <file> [file...]
-crit unpublish [file...]
-```
-
-Relay the full printed URL. Use `--qr` only in real monospace terminals.
 For another device, keep Crit on loopback and use an SSH tunnel or reverse
 proxy. `--public-url` requires `--allow-unauthenticated-network` and changes
 the printed URL, not the listener.
