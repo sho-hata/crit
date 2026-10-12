@@ -66,6 +66,6 @@ STATE_FILE="$(e2e_state_file "$PORT")"
   echo "FAKE_HOME=$FAKE_HOME"
 } > "$STATE_FILE"
 
-echo '{"agent_cmd": "echo"}' > "$FAKE_HOME/.crit.config.json"
+echo '{"agent_cmd": "echo", "lsp": false}' > "$FAKE_HOME/.crit.config.json"
 
 exec "$CRIT_BIN" _serve --no-open --port "$PORT"

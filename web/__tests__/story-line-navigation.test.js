@@ -26,6 +26,7 @@ const source = [
   extractFunction('storyRawHunks'),
   extractFunction('storyRawHunksWithTrailingContext'),
   extractFunction('buildContextLines'),
+  extractFunction('mergeHunkGap'),
   extractFunction('expandHunksForComments'),
   'function buildHunkHeader() { return "@@"; }',
   extractFunction('autoExpandSmallGaps'),

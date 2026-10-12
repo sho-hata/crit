@@ -113,6 +113,14 @@ and a "Loading diff…" annotation shows. Stubs hydrate when rendered
   holds within 2px while neighbours hydrate, then scrolls freely.
 - Comment jumps center the line (`pierreJumpToComment`); in a rendered
   document the card itself is scrolled into view.
+- LSP definition jumps (`lspJumpToLocation`, from `crit-lsp.js`) load the
+  file, merge the two hunks around a target in a collapsed gap
+  (`mergeHunkGap`), take keyboard focus (Pierre's line selection), center the
+  line and flash it through a transient rule in the comment-range stylesheet.
+  The references widget is a line annotation (`kind: 'lsp-widget'`), so it
+  survives virtualization like a thread. Hover and click find their line on
+  the event's `composedPath()`; the column comes from
+  `caretPositionFromPoint(x, y, { shadowRoots })`.
 - New forms are revealed only if off screen: a mounted form scrolls itself
   into view; an unmounted one asks Pierre to bring its line (or file) in.
 - Pierre's default pause of pointer events for ~120ms after a scroll is off

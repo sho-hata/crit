@@ -43,6 +43,10 @@
     ':host([data-crit-document]) [data-content] { grid-column: 1 / -1; }' +
     ':host([data-crit-document]) [data-content] > * { grid-column: 1 / -1; }' +
     ':host([data-crit-document]) [data-content] > [data-line] { display: none; }' +
+    // The flash on the row an LSP jump landed on (app.js flashPierreLine
+    // adds the rule to the range stylesheet). Keyframes are scoped to the
+    // tree they are declared in, so they live here rather than in style.css.
+    '@keyframes lsp-jump-flash { 0%, 40% { background: var(--crit-comment-ref-flash-bg); } 100% { background: transparent; } }' +
     // Match Crit's quoted-text cue without wrapping renderer-owned tokens.
     // Highlight pseudos support text-decoration rather than border-bottom.
     '::highlight(' + PIERRE_QUOTE_HIGHLIGHT + ') { background-color: var(--crit-quote-highlight-bg);' +
