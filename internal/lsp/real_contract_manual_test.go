@@ -100,6 +100,20 @@ var realCases = map[string]realCase{
 		refsMin:   1,
 		blank:     realPos{tfBlankLine, tfBlankChar},
 	},
+	"php": {
+		files: map[string]string{
+			"src/Greeter.php": phpGreeterSource,
+			"app.php":         phpAppSource,
+		},
+		file:      "app.php",
+		use:       realPos{phpGreetUseLine, phpGreetUseChar},
+		hoverWant: "friendly greeting",
+		defFile:   "src/Greeter.php",
+		defLine:   phpGreetDefLine,
+		refsAt:    realPos{phpGreetUseLine, phpGreetUseChar},
+		refsMin:   2,
+		blank:     realPos{1, 0},
+	},
 }
 
 // TestRealCasesCoverRegistry is ungated: it fails in the ordinary unit run

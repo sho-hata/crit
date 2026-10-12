@@ -77,9 +77,10 @@ type Language struct {
 	ExtraRoots func(root string) []PeekRoot
 }
 
-// node_modules, .venv and .terraform are untracked, so a range-focus sparse
-// worktree has none of them. Manager.depRoot borrows the working tree's for the
-// handshake (the tsserver to pin, the site-packages for pyright); TypeScript
+// node_modules, .venv, .terraform and vendor are untracked, so a range-focus
+// sparse worktree has none of them. Manager.depRoot borrows the working tree's
+// for the handshake (the tsserver to pin, the site-packages for pyright, the
+// Composer vendor dir for intelephense); TypeScript
 // cross-package hover/definition and Terraform registry/git module references
 // still degrade there, intra-repo symbols keep working.
 var languages = []*Language{
@@ -133,6 +134,17 @@ var languages = []*Language{
 		InitOptions:    tfInitOptions,
 		NoResult:       tfNoResult,
 		SkipReadyWait:  true,
+	},
+	{
+		Name:    "php",
+		Command: []string{"intelephense", "--stdio"},
+		IDByExt: map[string]string{"php": "php", "phtml": "php"},
+		SparsePatterns: []string{
+			"*.php", "*.phtml", "composer.json", "composer.lock",
+		},
+		ConfigSettings: phpConfigSettings,
+		LocalEnv:       true,
+		ExtraRoots:     phpExtraRoots,
 	},
 }
 
