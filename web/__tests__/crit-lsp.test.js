@@ -145,19 +145,63 @@ test('makeExtensionMatcher: empty list matches nothing, unsafe entries dropped',
   assert.strictEqual(re.test('a.tXs'), false);
 });
 
-test('hljsLanguageForPath: grammar follows the peeked file, not Go', function () {
-  assert.strictEqual(lsp.hljsLanguageForPath('internal/server/main.go'), 'go');
-  assert.strictEqual(lsp.hljsLanguageForPath('src/App.tsx'), 'typescript');
-  assert.strictEqual(lsp.hljsLanguageForPath('lib/util.MTS'), 'typescript');
-  assert.strictEqual(lsp.hljsLanguageForPath('web/app.js'), 'javascript');
-  assert.strictEqual(lsp.hljsLanguageForPath('web/mod.cjs'), 'javascript');
-  assert.strictEqual(lsp.hljsLanguageForPath('app/main.py'), 'python');
-  assert.strictEqual(lsp.hljsLanguageForPath('typeshed/stdlib/json/__init__.pyi'), 'python');
-  // No grammar → null → escaped plain text, never the wrong grammar.
-  assert.strictEqual(lsp.hljsLanguageForPath('runtime/asm_arm64.s'), null);
-  assert.strictEqual(lsp.hljsLanguageForPath('README.md'), null);
-  assert.strictEqual(lsp.hljsLanguageForPath(''), null);
-  assert.strictEqual(lsp.hljsLanguageForPath(null), null);
+// ===== Pierre line lookup (composedPath, innermost first) =====
+
+function pierrePath(opts) {
+  const line = { tagName: 'DIV', dataset: Object.assign({ line: String(opts.line) }, opts.lineType ? { lineType: opts.lineType } : {}) };
+  const span = { tagName: 'SPAN', dataset: {} };
+  const content = { tagName: 'DIV', dataset: { content: '' } };
+  const code = { tagName: 'CODE', dataset: Object.assign({ code: '' }, opts.column ? { [opts.column]: '' } : {}) };
+  const pre = { tagName: 'PRE', dataset: { diff: '' } };
+  const root = { nodeType: 11 }; // ShadowRoot: no dataset
+  const host = { tagName: 'DIFFS-CONTAINER', dataset: { critPath: opts.path } };
+  const body = { tagName: 'BODY', dataset: {} };
+  return { path: [span, line, content, code, pre, root, host, body, { nodeType: 9 }, {}], line };
+}
+
+test('lineHitFromPath: split additions column → new-side line of the host file', function () {
+  const p = pierrePath({ line: 6, lineType: 'change-addition', column: 'additions', path: 'main.go' });
+  const hit = lsp.lineHitFromPath(p.path);
+  assert.strictEqual(hit.path, 'main.go');
+  assert.strictEqual(hit.line, 6);
+  assert.strictEqual(hit.lineEl, p.line);
+});
+
+test('lineHitFromPath: deletions column never maps to the file', function () {
+  const p = pierrePath({ line: 6, lineType: 'change-deletion', column: 'deletions', path: 'main.go' });
+  assert.strictEqual(lsp.lineHitFromPath(p.path), null);
+  // Context rows of the old column carry the old numbering too.
+  const ctx = pierrePath({ line: 4, lineType: 'context', column: 'deletions', path: 'main.go' });
+  assert.strictEqual(lsp.lineHitFromPath(ctx.path), null);
+});
+
+test('lineHitFromPath: unified column keeps context and additions, drops deletions', function () {
+  const add = pierrePath({ line: 6, lineType: 'change-addition', column: 'unified', path: 'a.ts' });
+  assert.strictEqual(lsp.lineHitFromPath(add.path).line, 6);
+  const ctx = pierrePath({ line: 4, lineType: 'context', column: 'unified', path: 'a.ts' });
+  assert.strictEqual(lsp.lineHitFromPath(ctx.path).line, 4);
+  const del = pierrePath({ line: 6, lineType: 'change-deletion', column: 'unified', path: 'a.ts' });
+  assert.strictEqual(lsp.lineHitFromPath(del.path), null);
+});
+
+test('lineHitFromPath: files-mode whole-file column (no side)', function () {
+  const p = pierrePath({ line: 22, lineType: 'context', column: null, path: 'app.py' });
+  assert.deepStrictEqual(lsp.lineHitFromPath(p.path), { lineEl: p.line, path: 'app.py', line: 22 });
+});
+
+test('lineHitFromPath: gutter cells, light-DOM elements and empty paths miss', function () {
+  // The gutter uses data-column-number, not data-line.
+  const gutter = { tagName: 'DIV', dataset: { columnNumber: '6', lineType: 'context' } };
+  const code = { tagName: 'CODE', dataset: { additions: '' } };
+  const host = { tagName: 'DIFFS-CONTAINER', dataset: { critPath: 'main.go' } };
+  assert.strictEqual(lsp.lineHitFromPath([gutter, code, host]), null);
+  // The peek popup's own rows carry data-line but sit in no Pierre column.
+  const peekLine = { tagName: 'DIV', dataset: { line: '12' } };
+  assert.strictEqual(lsp.lineHitFromPath([peekLine, { tagName: 'DIV', dataset: {} }, { tagName: 'BODY', dataset: {} }]), null);
+  // A line without a host (detached render) is not attributable to a file.
+  assert.strictEqual(lsp.lineHitFromPath([peekLine, code]), null);
+  assert.strictEqual(lsp.lineHitFromPath([]), null);
+  assert.strictEqual(lsp.lineHitFromPath(null), null);
 });
 
 test('serverErrorText: keeps the server reason, one line, bounded', function () {

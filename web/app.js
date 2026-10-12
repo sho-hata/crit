@@ -958,6 +958,9 @@
       window.crit.lsp.init({
         renderMarkdown: function (text) { return commentMd.render(text); },
         jumpToLocation: lspJumpToLocation,
+        mountLineWidget: mountPierreLineWidget,
+        unmountLineWidget: unmountPierreLineWidget,
+        languageForPath: pierreLanguageForPath,
         toast: function (message) { showMiniToast(message); },
         extensions: configRes.lsp_extensions,
       });
@@ -1772,6 +1775,7 @@
       for (let i = 0; i < fileForms.length; i++) {
         if (!fileForms[i].editingId) out.push(A.annotationForForm(fileForms[i]));
       }
+      pushPierreLineWidget(file, out, lineCount);
       return out;
     }
     const lineKeys = renderedDiffLineKeys(pierrePreparedHunks(file));
@@ -1795,7 +1799,66 @@
     for (let i = 0; i < forms.length; i++) {
       if (!forms[i].editingId) out.push(A.annotationForForm(forms[i], fileSide));
     }
+    pushPierreLineWidget(file, out, lineKeys);
     return out;
+  }
+
+  // ----- Line widget (crit-lsp's references panel) -----
+  //
+  // One Crit element shown under a new-side code line, as a Pierre annotation
+  // like a thread: it survives virtualization and re-renders, and Pierre lays
+  // the rows out around it. Only one exists at a time.
+  let pierreLineWidget = null; // { path, line, el }
+
+  // `shown` is the file's rendered-line test: a line count (files mode) or
+  // the diff's rendered line keys. A widget on a line the file no longer
+  // renders is simply left out.
+  function pushPierreLineWidget(file, out, shown) {
+    const w = pierreLineWidget;
+    if (!w || w.path !== file.path) return;
+    const rendered = typeof shown === 'number' ? w.line <= shown : shown.has(w.line + ':');
+    if (rendered) out.push({ side: 'additions', lineNumber: w.line, metadata: { kind: 'lsp-widget', id: file.path } });
+  }
+
+  // Resolves true once `el` is mounted under path:line, false when that line
+  // is not rendered (the caller floats the element instead).
+  function mountPierreLineWidget(path, line, el) {
+    const file = getFileByPath(path);
+    if (!pierreView || !pierreViewActive() || !file || pierreIsDocumentView(file) || pierrePlaceholderText(file)) return Promise.resolve(false);
+    if (!pierreAnchorTest(file)({ scope: 'line', end_line: line, side: '' })) return Promise.resolve(false);
+    unmountPierreLineWidget();
+    pierreLineWidget = { path: path, line: line, el: el };
+    pierreView.refreshFile(file, ['lsp-widget:' + path]);
+    return new Promise(function(resolve) {
+      let frames = 0;
+      (function poll() {
+        if (el.isConnected) { resolve(true); return; }
+        if (++frames >= 60 || !pierreLineWidget || pierreLineWidget.el !== el) {
+          unmountPierreLineWidget(el);
+          resolve(false);
+          return;
+        }
+        requestAnimationFrame(poll);
+      })();
+    });
+  }
+
+  // Drops the widget (any widget when `el` is omitted) and re-publishes its
+  // file so Pierre removes the annotation.
+  function unmountPierreLineWidget(el) {
+    const w = pierreLineWidget;
+    if (!w || (el && w.el !== el)) return;
+    pierreLineWidget = null;
+    const file = getFileByPath(w.path);
+    if (file && pierreView) pierreView.refreshFile(file, ['lsp-widget:' + w.path]);
+  }
+
+  // Grammar Pierre picks for a file name, for highlighting LSP peeks the same
+  // way as the diffs ('text' for unknown extensions).
+  function pierreLanguageForPath(path) {
+    const P = window.PierreDiffs;
+    return window.crit.pierreAdapter.languageOverride(path) ||
+      (P && typeof P.getFiletypeFromFileName === 'function' ? P.getFiletypeFromFileName(path) : null);
   }
 
   // Markdown Document view: Crit's rendered document (line blocks, inline
@@ -2072,6 +2135,7 @@
         if (kind === 'document') return buildPierreDocument(filePath);
         if (kind === 'placeholder') return buildPierrePlaceholder(filePath);
         if (kind === 'loading') return buildPierreLoading();
+        if (kind === 'lsp-widget') return pierreLineWidget && pierreLineWidget.path === filePath ? pierreLineWidget.el : null;
         return buildPierreThread(filePath, id);
       },
       buildListHeader: function() { return document.getElementById('reviewConversation'); },
@@ -2426,6 +2490,12 @@
     let css = '';
     if (commented.length) css += Array.from(new Set(commented)).join(',\n') + ' { background-color: var(--crit-comment-range-bg); }';
     if (forming.length) css += Array.from(new Set(forming)).join(',\n') + ' { background-color: var(--crit-brand-subtle); }';
+    const flash = pierreJumpFlash && getFileByPath(pierreJumpFlash.path);
+    if (flash) {
+      const rows = window.crit.pierreDOM.pierreLineSelectors(flash, [{ start: pierreJumpFlash.line, end: pierreJumpFlash.line, old: false }],
+        unified, pierreIsFileView(flash), pierrePreparedHunks(flash));
+      if (rows.length) css += rows.join(',\n') + ' { animation: lsp-jump-flash ' + JUMP_FLASH_MS + 'ms ease-out; }';
+    }
     return css;
   }
 
@@ -3736,22 +3806,31 @@
         // New-side comment: check new line number range
         return c.end_line >= prevNewEnd && c.end_line < nextHunk.NewStart;
       });
-      if (!hasComment) continue;
-
-      // Merge: same logic as the spacer click handler
-      const contextLines = buildContextLines(file, prevNewEnd, prevOldEnd, gap);
-      const merged = {
-        OldStart: prevHunk.OldStart,
-        NewStart: prevHunk.NewStart,
-        Header: prevHunk.Header,
-        Lines: prevHunk.Lines.concat(contextLines, nextHunk.Lines),
-        _StoryRawHunks: storyRawHunksWithTrailingContext(prevHunk, contextLines)
-          .concat(storyRawHunks(nextHunk))
-      };
-      merged.OldCount = (nextHunk.OldStart + nextHunk.OldCount) - merged.OldStart;
-      merged.NewCount = (nextHunk.NewStart + nextHunk.NewCount) - merged.NewStart;
-      hunks.splice(i - 1, 2, merged);
+      if (hasComment) mergeHunkGap(file, i - 1);
     }
+  }
+
+  // Merge hunks[i] and hunks[i + 1] into one, bridging the gap between them
+  // with context lines from the file content (same shape as the spacer
+  // click handler). Mutates file.diffHunks.
+  function mergeHunkGap(file, i) {
+    const hunks = file.diffHunks;
+    const prevHunk = hunks[i];
+    const nextHunk = hunks[i + 1];
+    const prevNewEnd = prevHunk.NewStart + prevHunk.NewCount;
+    const prevOldEnd = prevHunk.OldStart + prevHunk.OldCount;
+    const contextLines = buildContextLines(file, prevNewEnd, prevOldEnd, nextHunk.NewStart - prevNewEnd);
+    const merged = {
+      OldStart: prevHunk.OldStart,
+      NewStart: prevHunk.NewStart,
+      Header: prevHunk.Header,
+      Lines: prevHunk.Lines.concat(contextLines, nextHunk.Lines),
+      _StoryRawHunks: storyRawHunksWithTrailingContext(prevHunk, contextLines)
+        .concat(storyRawHunks(nextHunk))
+    };
+    merged.OldCount = (nextHunk.OldStart + nextHunk.OldCount) - merged.OldStart;
+    merged.NewCount = (nextHunk.NewStart + nextHunk.NewCount) - merged.NewStart;
+    hunks.splice(i, 2, merged);
   }
 
   // Helper: build context lines from file content for a range of line numbers
@@ -3780,12 +3859,54 @@
 
   // ===== LSP definition jump =====
 
-  // lspJumpToLocation would reveal a definition target inside the review UI.
-  // Fork note: the legacy diff renderer it scrolled within was replaced
-  // upstream by Pierre, so it resolves false and crit-lsp falls back to its
-  // peek popup until the jump is ported to the Pierre view.
-  function lspJumpToLocation(_loc) {
-    return Promise.resolve(false);
+  // lspJumpToLocation reveals a definition target inside the review list.
+  // Resolves true when handled; false tells crit-lsp to fall back to its
+  // peek popup (story view, a file the list does not show, a line before the
+  // first or after the last hunk). A line in a gap between two hunks is
+  // revealed by merging them, like a gap that holds a comment.
+  function lspJumpToLocation(loc) {
+    if (!loc.in_session || !pierreView || !pierreViewActive() || !getFileByPath(loc.path)) return Promise.resolve(false);
+    return pierreView.ensureLoaded(loc.path).then(function() {
+      const file = getFileByPath(loc.path);
+      if (!file || pierreIsDocumentView(file) || pierrePlaceholderText(file)) return false;
+      if (pierreIsFileView(file)) {
+        if (loc.line > pierreLineCount(file)) return false;
+      } else if (!window.crit.pierreAdapter.displayOptions(getSetting).expandUnchanged) {
+        const hunks = pierrePreparedHunks(file);
+        if (window.crit.lsp.findHunkForLine(hunks, loc.line) === -1) {
+          const gap = window.crit.lsp.findGapForLine(hunks, loc.line);
+          if (!gap || !file.content) return false;
+          mergeHunkGap(file, gap.prevIdx);
+          pierreView.refreshFile(file);
+        }
+      }
+      if (file.collapsed) pierreView.setCollapsed(file, false);
+      pierreFocus = { path: loc.path, line: loc.line, side: '' };
+      pierreVisualAnchor = null;
+      showPierreFocus();
+      pierreView.scrollToLine(loc.path, loc.line, '', 'center');
+      flashPierreLine(loc.path, loc.line);
+      return true;
+    });
+  }
+
+  // Flash the line an LSP jump landed on: a transient rule in the
+  // comment-range stylesheet (keyframes in PIERRE_UNSAFE_CSS), not a class on
+  // the row — Pierre re-mounts rows while the list settles after a jump, and
+  // a class on the old element would vanish with it.
+  const JUMP_FLASH_MS = 1600;
+  let pierreJumpFlash = null; // { path, line, timer }
+  function flashPierreLine(path, line) {
+    if (pierreJumpFlash) clearTimeout(pierreJumpFlash.timer);
+    pierreJumpFlash = {
+      path: path,
+      line: line,
+      timer: setTimeout(function() {
+        pierreJumpFlash = null;
+        syncPierreCommentRanges();
+      }, JUMP_FLASH_MS),
+    };
+    syncPierreCommentRanges();
   }
 
   // ===== Unified diff (interleaved lines, single pane) =====

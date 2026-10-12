@@ -3,29 +3,41 @@
 //
 // Talks to the server's /api/lsp/* endpoints (which proxy a language server);
 // eligible file extensions come from /api/config's lsp_extensions.
-// Hover: documentation tooltip, in both the diff view and file mode's
-// document view.
+// Hover: documentation tooltip over any code line Pierre renders — a diff
+// (split or unified) or a whole file (files mode).
 // Definition: Cmd/Ctrl+Click → jump within the review, or a peek popup when
 // the target lives outside the visible diff / session / repo.
 // References: Cmd/Ctrl+Shift+Click → inline widget under the clicked line
 // (preview + list grouped by file); double-click / Enter jumps in-review.
 //
+// Code lines live in @pierre/diffs' shadow roots: a line is `[data-line]`
+// inside the column's <code> (data-additions / data-deletions / data-unified
+// / data-code), the host <diffs-container> names the file (data-crit-path).
+// Events reach the document retargeted to the host, so lines are found on
+// composedPath(); see lineHitFromPath and caretCharOffset.
+//
 // Dependencies (window.crit.* namespaces read):
 //   - crit.shared (escapeHTML)
-//   - crit.lineBlocks (splitHighlightedCode — peek syntax highlighting)
+//   - crit.codeHighlight (Shiki via Pierre's worker pool — peek highlighting)
 // UI adapters are injected via init(opts) so pure logic stays testable:
 //   - opts.renderMarkdown(text) -> safe HTML for hover markdown
 //   - opts.jumpToLocation(loc)  -> Promise<boolean>; true when the app
 //     revealed the location inside the review UI
+//   - opts.mountLineWidget(path, line, el) -> Promise<boolean>; attaches el
+//     under that line (a Pierre annotation); false when the line is not shown
+//   - opts.unmountLineWidget(el) -> detaches it again
+//   - opts.languageForPath(path) -> Shiki grammar id for a file, or null
 //   - opts.toast(message)       -> transient error/info notice
 (function () {
   'use strict';
 
   // ===== Pure helpers (exported for Node tests) =====
 
-  // Duck-typed (nodeType/childNodes/textContent) so tests can pass fake nodes.
-  // offsetInNode is a character offset for a text node but a child index for
-  // an element — caretPositionFromPoint can return either.
+  // UTF-16 offset of (target, offsetInNode) within root's text — the column
+  // the language server expects. Duck-typed (nodeType/childNodes/textContent)
+  // so tests can pass fake nodes. offsetInNode is a character offset for a
+  // text node but a child index for an element — caretPositionFromPoint can
+  // return either.
   function textOffsetIn(root, target, offsetInNode) {
     let total = 0;
     let found = false;
@@ -56,6 +68,36 @@
     }
     walk(root);
     return found ? total : -1;
+  }
+
+  // The code line under an event, from its composedPath() (innermost first):
+  // the `[data-line]` row, then the <code> column it sits in, then the
+  // <diffs-container> host whose data-crit-path names the file. Gutter cells
+  // carry data-column-number instead of data-line, so they never match.
+  // Only the new side maps to the file the language server reads: the
+  // deletions column, and change-deletion rows of a unified diff, give null.
+  // Duck-typed (tagName/dataset) so tests can pass plain objects.
+  function lineHitFromPath(path) {
+    let lineEl = null;
+    let codeEl = null;
+    let host = null;
+    for (let i = 0; i < (path || []).length; i++) {
+      const node = path[i];
+      const ds = node && node.dataset;
+      if (!ds) continue;
+      if (!lineEl) {
+        if (ds.line !== undefined) lineEl = node;
+      } else if (!codeEl) {
+        if (node.tagName === 'CODE') codeEl = node;
+      } else if (ds.critPath !== undefined) {
+        host = node;
+        break;
+      }
+    }
+    if (!lineEl || !codeEl || !host) return null;
+    if (codeEl.dataset.deletions !== undefined) return null;
+    if (codeEl.dataset.unified !== undefined && lineEl.dataset.lineType === 'change-deletion') return null;
+    return { lineEl: lineEl, path: host.dataset.critPath, line: parseInt(lineEl.dataset.line, 10) || 0 };
   }
 
   function findHunkForLine(hunks, line) {
@@ -106,19 +148,6 @@
     });
     if (!list.length) return /(?!)/;
     return new RegExp('\\.(' + list.join('|') + ')$', 'i');
-  }
-
-  // null (assembly, embed assets, …) means escaped plain text.
-  var HLJS_LANG_BY_EXT = {
-    go: 'go',
-    ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'typescript',
-    js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
-    py: 'python', pyi: 'python',
-  };
-  function hljsLanguageForPath(path) {
-    var m = /\.([a-z0-9]+)$/i.exec(path || '');
-    if (!m) return null;
-    return HLJS_LANG_BY_EXT[m[1].toLowerCase()] || null;
   }
 
   // The note is a quiet footnote (same muted size as the hint), not part of
@@ -183,65 +212,78 @@
     return window.crit.shared.escapeHTML(s);
   }
 
-  // Both renderings of a code file have to be recognized, or the feature
-  // silently does nothing in whichever one is missing: the diff view, and the
-  // document view (file mode: `crit some.ts`), which has no diff markup.
-  function eligibleLineEl(target) {
-    if (!target || !target.closest) return null;
-    return diffLineHit(target) || documentLineHit(target);
+  // Every rendering of a code file is Pierre's: split and unified diffs and
+  // the whole-file item of files mode all use the same line markup, so one
+  // lookup covers them. Markdown documents never carry a covered extension.
+  function eligibleLineHit(e) {
+    const hit = lineHitFromPath(typeof e.composedPath === 'function' ? e.composedPath() : []);
+    if (!hit || !hit.line || !st.extRe.test(hit.path)) return null;
+    return hit;
   }
 
-  // Unified rows (.diff-line) and split sides (.diff-split-side) carry the
-  // same data-diff-* attributes via tagDiffLine. Only the new side maps to the
-  // file the language server reads.
-  function diffLineHit(target) {
-    const contentEl = target.closest('.diff-content');
-    if (!contentEl) return null;
-    const lineEl = contentEl.closest('.diff-line, .diff-split-side');
-    if (!lineEl) return null;
-    if (lineEl.dataset.diffSide === 'old') return null;
-    return lineHit(contentEl, lineEl.dataset.diffFilePath, lineEl.dataset.diffLineNum);
+  // The composed path of whatever is under (x, y) right now, innermost
+  // first, descending through open shadow roots the way an event's
+  // composedPath() would: Pierre re-mounts rows while the pointer rests
+  // (virtualization, hydration), so a hit captured on mousemove can be stale
+  // by the time the hover timer fires.
+  function composedPathAt(x, y) {
+    let el = document.elementFromPoint(x, y);
+    while (el && el.shadowRoot) {
+      const inner = el.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === el) break;
+      el = inner;
+    }
+    const path = [];
+    for (let n = el; n; n = n.parentNode || n.host) path.push(n);
+    return path;
   }
 
-  // buildCodeLineBlocks emits one .line-block per source line, so the block's
-  // start line is the position's line and .line-content holds exactly that
-  // line's text — the same contract caretCharOffset needs from .diff-content.
-  // The .code-document scope keeps markdown document/rendered-diff blocks
-  // (same markup, multi-line ranges, rendered prose) out.
-  function documentLineHit(target) {
-    const contentEl = target.closest('.code-document .line-content');
-    if (!contentEl) return null;
-    const lineEl = contentEl.closest('.line-block');
-    if (!lineEl) return null;
-    if (lineEl.dataset.startLine !== lineEl.dataset.endLine) return null;
-    return lineHit(contentEl, lineEl.dataset.filePath, lineEl.dataset.startLine);
-  }
-
-  function lineHit(contentEl, path, lineNum) {
-    if (!path || !st.extRe.test(path)) return null;
-    const line = parseInt(lineNum, 10);
-    if (!line) return null;
-    return { contentEl: contentEl, path: path, line: line };
-  }
-
-  function caretCharOffset(contentEl, x, y) {
-    let node = null;
-    let offset = 0;
-    if (document.caretPositionFromPoint) {
-      const pos = document.caretPositionFromPoint(x, y);
-      if (pos) {
-        node = pos.offsetNode;
-        offset = pos.offset;
+  // UTF-16 column under (x, y) within lineEl, or -1.
+  //
+  // The line is inside Pierre's shadow root. Without the shadowRoots option
+  // caretPositionFromPoint retargets its answer to the <diffs-container>
+  // host, and caretRangeFromPoint always does (measured in Chrome 155 and
+  // Safari 26.4; both honour the option), so the text node under the cursor
+  // is only reachable by naming the root. Light-DOM callers (the peek popup)
+  // pass no option. Browsers without the API fall back to measuring.
+  function caretCharOffset(lineEl, x, y) {
+    const root = lineEl.getRootNode();
+    const shadow = root && root.host ? root : null;
+    if (typeof document.caretPositionFromPoint === 'function') {
+      let pos = null;
+      try {
+        pos = document.caretPositionFromPoint(x, y, shadow ? { shadowRoots: [shadow] } : undefined);
+      } catch (err) {
+        pos = null;
       }
-    } else if (document.caretRangeFromPoint) {
-      const range = document.caretRangeFromPoint(x, y);
-      if (range) {
-        node = range.startContainer;
-        offset = range.startOffset;
+      if (pos && pos.offsetNode) {
+        const offset = textOffsetIn(lineEl, pos.offsetNode, pos.offset);
+        if (offset >= 0) return offset;
       }
     }
-    if (!node) return -1;
-    return textOffsetIn(contentEl, node, offset);
+    return measuredCharOffset(lineEl, shadow || document, x, y);
+  }
+
+  // Geometric fallback: hit-test the token span through the shadow root
+  // (elementFromPoint works on a ShadowRoot everywhere), then measure that
+  // span's characters one Range at a time until one reaches x. Returns the
+  // nearer boundary, like a caret would; -1 past the end of the text.
+  function measuredCharOffset(lineEl, scope, x, y) {
+    let el = typeof scope.elementFromPoint === 'function' ? scope.elementFromPoint(x, y) : null;
+    if (!el || !lineEl.contains(el)) el = lineEl;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let node;
+    while ((node = walker.nextNode())) {
+      for (let i = 0; i < node.nodeValue.length; i++) {
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        const r = range.getBoundingClientRect();
+        if (r.width === 0 || x > r.right) continue;
+        return textOffsetIn(lineEl, node, x < (r.left + r.right) / 2 ? i : i + 1);
+      }
+    }
+    return -1;
   }
 
   // Returns whether this call opened the breaker. The breaker stops hover
@@ -317,7 +359,10 @@
 
   function onMouseMove(e) {
     if (isDisabled()) return;
-    const hit = eligibleLineEl(e.target);
+    // A pressed button is a drag (gutter range, text selection): never pop a
+    // tooltip into its path.
+    if (e.buttons) return;
+    const hit = eligibleLineHit(e);
     if (!hit) {
       // Moving onto the tooltip itself keeps it open (lets users select
       // text) — but drop any pending hover request from the last on-line
@@ -353,8 +398,14 @@
     });
   }
 
-  function requestHover(hit, x, y) {
-    const char = caretCharOffset(hit.contentEl, x, y);
+  function requestHover(armed, x, y) {
+    // The row can have been unmounted by virtualization during the delay;
+    // ask again what is under the pointer now.
+    const hit = armed.lineEl.isConnected ? armed : eligibleLineHit({
+      composedPath: function () { return composedPathAt(x, y); },
+    });
+    if (!hit) return;
+    const char = caretCharOffset(hit.lineEl, x, y);
     if (char < 0) return;
     const key = hit.path + ':' + hit.line + ':' + char;
     if (st.hoverKey === key && st.tooltip && !st.tooltip.hidden) return;
@@ -446,9 +497,9 @@
   function onClick(e) {
     if (isDisabled()) return;
     if (!e.metaKey && !e.ctrlKey) return;
-    const hit = eligibleLineEl(e.target);
+    const hit = eligibleLineHit(e);
     if (!hit) return;
-    const char = caretCharOffset(hit.contentEl, e.clientX, e.clientY);
+    const char = caretCharOffset(hit.lineEl, e.clientX, e.clientY);
     if (char < 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -513,21 +564,47 @@
     }
   }
 
-  // One hljs pass over all lines, split per line by splitHighlightedCode
-  // (span state carries across lines): multi-line constructs — block
-  // comments, raw/template strings — keep correct colors, and a 2000-line
-  // peek costs one highlight call, not 2000.
-  function highlightPeek(lines, path) {
-    const lineBlocks = window.crit.lineBlocks;
-    const language = hljsLanguageForPath(path);
-    if (language && window.hljs && lineBlocks && lineBlocks.splitHighlightedCode) {
-      try {
-        const html = window.hljs.highlight(lines.join('\n'), { language: language }).value;
-        const split = lineBlocks.splitHighlightedCode(html);
-        if (split.length === lines.length) return split;
-      } catch (err) { /* fall through to escaped text */ }
+  // Peek and reference snippets are highlighted by the Shiki worker pool the
+  // diffs use (crit-code-highlight), one tokenization per location: span
+  // state carries across lines, so block comments and raw strings keep
+  // their colours, and a 2000-line peek costs one request, not 2000. The
+  // grammar is Pierre's own choice for the file name (opts.languageForPath).
+  // Tokenization is asynchronous: `html` is ready to render now (cached
+  // tokens, or escaped text), and `ready` resolves with the highlighted lines
+  // once they exist — null when the first render was already final.
+  function highlightLines(lines, path) {
+    const ch = window.crit.codeHighlight;
+    const lang = st.languageForPath ? st.languageForPath(path) : null;
+    const plain = lines.map(esc);
+    if (!ch || !lang || lang === 'text') return { html: plain, ready: null };
+    const code = lines.join('\n');
+    const cached = ch.lines(code, lang);
+    if (cached && cached.length === lines.length) return { html: cached, ready: null };
+    const ready = ch.prime([{ code: code, lang: lang }]).then(function (results) {
+      const out = results && results[0];
+      return out && out.length === lines.length ? out : null;
+    }, function () {
+      return null;
+    });
+    return { html: plain, ready: ready };
+  }
+
+  // loc.hl caches a location's highlighted peek lines: tab switches and
+  // history steps re-render, but the peek content never changes. The first
+  // call renders plain text and re-runs `rerender` when the tokens arrive,
+  // provided that location is still the one on screen.
+  function peekLines(loc, isCurrent, rerender) {
+    if (loc.hl) return loc.hl;
+    const hl = highlightLines(loc.peek, loc.path);
+    loc.hl = hl.html;
+    if (hl.ready) {
+      hl.ready.then(function (out) {
+        if (!out) return;
+        loc.hl = out;
+        if (isCurrent()) rerender();
+      });
     }
-    return lines.map(esc);
+    return loc.hl;
   }
 
   const PEEK_HISTORY_MAX = 20;
@@ -577,10 +654,11 @@
     if (loc.peek_truncated) {
       html += '<div class="lsp-peek-truncated">' + esc(st.truncatedText) + '</div>';
     }
-    // Highlight once per location and cache: tab switches and history steps
-    // re-render, but the peek content never changes.
-    loc.hl = loc.hl || highlightPeek(loc.peek, loc.path);
-    const codeLines = loc.hl;
+    const codeLines = peekLines(loc, function () {
+      return st.peek === panel && st.peekLocs[st.peekActive] === loc;
+    }, function () {
+      renderPeekView(panel);
+    });
     for (let i = 0; i < loc.peek.length; i++) {
       const lineNo = loc.peek_start + i;
       const cls = 'lsp-peek-line' + (lineNo === loc.line ? ' lsp-peek-target' : '');
@@ -685,29 +763,19 @@
   function requestReferences(hit, char) {
     const url = '/api/lsp/references?path=' + encodeURIComponent(hit.path) +
       '&line=' + hit.line + '&char=' + char;
-    const word = wordAt(hit.contentEl.textContent, char);
+    const word = wordAt(hit.lineEl.textContent, char);
     fetchLocations(url, function (locs, data) {
       showRefs(locs, !!data.truncated, { path: hit.path, line: hit.line }, word);
     }, st.refsNotFoundText);
   }
 
-  // Split view anchors after the whole row; null when the line is not
-  // rendered.
-  function refsAnchorEl(at) {
-    const path = CSS.escape(at.path);
-    const side = document.querySelector(
-      '.diff-line[data-diff-file-path="' + path + '"][data-diff-line-num="' + at.line + '"]:not([data-diff-side="old"]), ' +
-      '.diff-split-side[data-diff-file-path="' + path + '"][data-diff-line-num="' + at.line + '"]:not([data-diff-side="old"])');
-    if (side) return side.closest('.diff-split-row') || side;
-    return document.querySelector('.code-document .line-block[data-file-path="' + path + '"]' +
-      '[data-start-line="' + at.line + '"][data-end-line="' + at.line + '"]');
-  }
-
   function hideRefs() {
     if (st.refs) {
-      st.refs.remove();
+      const panel = st.refs;
       st.refs = null;
       st.refsLocs = null;
+      if (panel.classList.contains('lsp-refs-floating') || !st.unmountLineWidget) panel.remove();
+      else st.unmountLineWidget(panel);
       document.removeEventListener('keydown', onRefsKeydown, true);
     }
   }
@@ -782,13 +850,17 @@
       body.innerHTML = '<div class="lsp-peek-empty">' + esc(st.noPreviewText) + '</div>';
       return;
     }
-    loc.hl = loc.hl || highlightPeek(loc.peek, loc.path);
+    const codeLines = peekLines(loc, function () {
+      return st.refs === panel && st.refsLocs[st.refsActive] === loc;
+    }, function () {
+      renderRefPreview(panel, loc);
+    });
     let html = peekNoteHTML(loc, st.localEnvPeekText, esc);
     for (let i = 0; i < loc.peek.length; i++) {
       const lineNo = loc.peek_start + i;
       const cls = 'lsp-peek-line' + (lineNo === loc.line ? ' lsp-peek-target' : '');
       html += '<div class="' + cls + '"><span class="lsp-peek-num">' + lineNo +
-        '</span><span class="lsp-peek-code">' + loc.hl[i] + '</span></div>';
+        '</span><span class="lsp-peek-code">' + codeLines[i] + '</span></div>';
     }
     body.innerHTML = html;
     const target = body.querySelector('.lsp-peek-target');
@@ -819,10 +891,39 @@
     Promise.resolve(st.jumpToLocation(loc)).then(function (handled) {
       if (!handled) return;
       hideRefs();
-      // Removing the widget shifts the target when it sat above it.
-      const flashed = document.querySelector('.lsp-jump-flash');
-      if (flashed) flashed.scrollIntoView({ block: 'center', behavior: 'instant' });
+      // Removing the widget shifts the target when it sat above it; the
+      // second jump only re-centres (the hunk is expanded, the line loaded).
+      return st.jumpToLocation(loc);
     });
+  }
+
+  // Each row is an isolated line, so it is highlighted on its own (batching
+  // unrelated lines would leak parser state between rows), and re-filled
+  // when its tokens arrive. Rows are trimmed; the symbol column shifts by
+  // the dropped indent.
+  function fillRefRows(panel, locs, word) {
+    const rows = panel.querySelectorAll('.lsp-refs-item');
+    for (let i = 0; i < rows.length; i++) {
+      const idx = parseInt(rows[i].dataset.idx, 10);
+      const loc = locs[idx];
+      const snippet = refSnippet(loc);
+      if (!snippet) continue;
+      const trimmed = snippet.trim();
+      const range = symbolRange(trimmed, loc.character - (snippet.length - snippet.replace(/^\s+/, '').length), word);
+      const fill = function (html) {
+        const code = panel.querySelector('.lsp-refs-item[data-idx="' + idx + '"] .lsp-peek-code');
+        if (!code) return;
+        code.innerHTML = html;
+        markSymbol(code, range);
+      };
+      const hl = highlightLines([trimmed], loc.path);
+      fill(hl.html[0]);
+      if (hl.ready) {
+        hl.ready.then(function (out) {
+          if (out && st.refs === panel) fill(out[0]);
+        });
+      }
+    }
   }
 
   function showRefs(locs, truncated, at, word) {
@@ -850,11 +951,8 @@
         '<span class="lsp-refs-count">' + group.items.length + '</span></div>';
       for (let i = 0; i < group.items.length; i++) {
         const item = group.items[i];
-        const snippet = refSnippet(item.loc);
-        // Each row is an isolated line, so highlight it on its own —
-        // batching unrelated lines would leak parser state between rows.
-        const code = snippet
-          ? '<span class="lsp-peek-code">' + highlightPeek([snippet.trim()], item.loc.path)[0] + '</span>'
+        const code = refSnippet(item.loc)
+          ? '<span class="lsp-peek-code"></span>'
           : '<span class="lsp-peek-code lsp-refs-nopreview">' + esc(st.noPreviewText) + '</span>';
         html += '<div class="lsp-refs-item" role="option" data-idx="' + item.idx + '">' +
           '<span class="lsp-peek-num">' + item.loc.line + '</span>' + code + '</div>';
@@ -862,30 +960,24 @@
     }
     html += '</div></div><div class="lsp-peek-hint">' + esc(st.refsHintText) + '</div>';
     panel.innerHTML = html;
+    fillRefRows(panel, locs, word);
 
-    // Rows are trimmed; shift the column by the dropped indent.
-    const rows = panel.querySelectorAll('.lsp-refs-item');
-    for (let i = 0; i < rows.length; i++) {
-      const loc = locs[parseInt(rows[i].dataset.idx, 10)];
-      const snippet = refSnippet(loc);
-      const indent = snippet.length - snippet.replace(/^\s+/, '').length;
-      markSymbol(rows[i].querySelector('.lsp-peek-code'),
-        symbolRange(snippet.trim(), loc.character - indent, word));
-    }
-
-    const anchor = refsAnchorEl(at);
-    if (anchor) {
-      anchor.after(panel);
-    } else {
-      panel.classList.add('lsp-refs-floating');
-      document.body.appendChild(panel);
-    }
     st.refs = panel;
     st.refsLocs = locs;
     st.refsWord = word;
     selectRef(panel, 0);
-    panel.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-    panel.querySelector('.lsp-refs-list').focus({ preventScroll: true });
+    // The widget sits under the clicked line as a Pierre annotation, which
+    // mounts on the next render; float it when that line is not rendered.
+    Promise.resolve(st.mountLineWidget ? st.mountLineWidget(at.path, at.line, panel) : false)
+      .then(function (mounted) {
+        if (st.refs !== panel) return;
+        if (!mounted) {
+          panel.classList.add('lsp-refs-floating');
+          document.body.appendChild(panel);
+        }
+        panel.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+        panel.querySelector('.lsp-refs-list').focus({ preventScroll: true });
+      });
 
     panel.querySelector('.lsp-peek-close').addEventListener('click', hideRefs);
     panel.addEventListener('click', function (e) {
@@ -907,7 +999,7 @@
     if (e.button !== 0 || !e.shiftKey) return;
     if (!e.metaKey && !e.ctrlKey) return;
     if (isDisabled()) return;
-    if (!eligibleLineEl(e.target)) return;
+    if (!eligibleLineHit(e)) return;
     e.preventDefault();
   }
 
@@ -931,6 +1023,9 @@
     st = {
       renderMarkdown: opts.renderMarkdown,
       jumpToLocation: opts.jumpToLocation,
+      mountLineWidget: opts.mountLineWidget || null,
+      unmountLineWidget: opts.unmountLineWidget || null,
+      languageForPath: opts.languageForPath || null,
       toast: opts.toast || function () {},
       defHintText: opts.defHintText || '⌘/Ctrl+Click: go to definition · +Shift: find references',
       notFoundText: opts.notFoundText || 'No definition found',
@@ -980,6 +1075,7 @@
     init: init,
     serverErrorText: serverErrorText,
     textOffsetIn: textOffsetIn,
+    lineHitFromPath: lineHitFromPath,
     findHunkForLine: findHunkForLine,
     findGapForLine: findGapForLine,
     groupLocationsByFile: groupLocationsByFile,
@@ -987,7 +1083,6 @@
     wordAt: wordAt,
     symbolRange: symbolRange,
     makeExtensionMatcher: makeExtensionMatcher,
-    hljsLanguageForPath: hljsLanguageForPath,
     composeTooltip: composeTooltip,
     peekNoteHTML: peekNoteHTML,
   };

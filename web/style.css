@@ -6663,15 +6663,8 @@ button.file-header-chevron:focus-visible { outline: 2px solid var(--crit-brand);
   color: var(--crit-fg-muted);
 }
 
-.diff-line.lsp-jump-flash,
-.diff-split-side.lsp-jump-flash,
-.code-document .line-block.lsp-jump-flash {
-  animation: lsp-jump-flash 1.6s ease-out;
-}
-@keyframes lsp-jump-flash {
-  0%, 40% { background: var(--crit-comment-ref-flash-bg); }
-  100% { background: transparent; }
-}
+/* The jump flash itself is on Pierre's rows, inside its shadow roots: see
+   PIERRE_UNSAFE_CSS in crit-pierre-dom.js. */
 
 .lsp-peek {
   position: fixed;
@@ -6774,7 +6767,8 @@ button.file-header-chevron:focus-visible { outline: 2px solid var(--crit-brand);
   color: var(--crit-red);
   font-size: 12px;
 }
-html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
+/* Inherited into Pierre's shadow roots (its rows set no cursor of their own). */
+html.lsp-busy { cursor: progress; }
 
 .lsp-peek-truncated {
   padding: 4px 12px;
@@ -6815,6 +6809,10 @@ html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
   margin: 4px 0 6px;
   display: flex;
   flex-direction: column;
+  /* As a Pierre annotation the widget takes its column's width: half the
+     list in a split diff. Stack preview and list on the widget's own width,
+     not the viewport's. */
+  container-type: inline-size;
   background: var(--crit-bg-elevated);
   border-top: 2px solid var(--crit-brand);
   border-bottom: 2px solid var(--crit-brand);
@@ -6916,7 +6914,7 @@ html.lsp-busy, html.lsp-busy .diff-content { cursor: progress; }
   color: var(--crit-fg-muted);
   font-style: italic;
 }
-@media (max-width: 700px) {
+@container (max-width: 700px) {
   .lsp-refs-main { flex-direction: column; height: 420px; }
   .lsp-refs-list { border-left: none; border-top: 1px solid var(--crit-border); }
 }
