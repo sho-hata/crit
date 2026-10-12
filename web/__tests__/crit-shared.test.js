@@ -417,7 +417,12 @@ function makeFinishSandbox(fetchImpl, clipboardImpl) {
     if (sel === '.copy-label') return copyLabel;
     return null;
   };
+  const finishBtn = makeEl();
+  finishBtn.textContent = 'Approve';
+  finishBtn.disabled = false;
+  finishBtn.classList.add('btn-primary');
   const els = {
+    finishBtn,
     waitingDialog: makeEl(),
     waitingHeading: makeEl(),
     waitingMessage: makeEl(),
@@ -427,7 +432,7 @@ function makeFinishSandbox(fetchImpl, clipboardImpl) {
     _copyLabel: copyLabel,
   };
   const win = {};
-  const doc = { cookie: '', getElementById: (id) => els[id] || null };
+  const doc = { cookie: '', getElementById: (id) => els[id] || null, querySelector: () => null };
   const fn = new Function('window', 'document', src + '\nreturn window;');
   fn(win, doc);
   // Wire fetch/navigator into the sandbox window AND globalThis (helper uses bare fetch).
@@ -1210,4 +1215,72 @@ test('CODE_FONT_PRESETS only includes always-available entries', () => {
   shared.CODE_FONT_PRESETS.slice(1).forEach((p) => {
     assert.equal(shared.sanitizeCodeFont(p.stack), p.stack, p.id + ' must survive sanitization');
   });
+});
+
+test('applyDisplayAttributes mirrors line numbers and long lines for rendered markdown', () => {
+  const attrs = {};
+  const root = { setAttribute: (k, v) => { attrs[k] = v; } };
+  sandbox.document.cookie = '';
+  shared.applyDisplayAttributes(root);
+  assert.deepEqual(attrs, { 'data-line-numbers': 'on', 'data-code-overflow': 'scroll' });
+  sandbox.document.cookie = 'crit-settings=' + encodeURIComponent(JSON.stringify({ lineNumbers: 'off', codeOverflow: 'wrap' }));
+  shared.applyDisplayAttributes(root);
+  assert.deepEqual(attrs, { 'data-line-numbers': 'off', 'data-code-overflow': 'wrap' });
+  sandbox.document.cookie = 'crit-settings=' + encodeURIComponent(JSON.stringify({ codeOverflow: 'sideways' }));
+  shared.applyDisplayAttributes(root);
+  assert.equal(attrs['data-code-overflow'], 'scroll');
+});
+
+// ----- server stopped: read-only finish button -----
+// makeFinishSandbox loads a fresh crit-shared.js per test, so the stopped flag
+// (module state) does not leak into the other tests in this file.
+const unusedFetch = async () => { throw new Error('unused'); };
+
+test('lockFinishBtnIfStopped leaves the button alone while the server runs', () => {
+  const { shared: s, els } = makeFinishSandbox(unusedFetch, {});
+  assert.equal(s.lockFinishBtnIfStopped(els.finishBtn), false);
+  assert.equal(els.finishBtn.textContent, 'Approve');
+  assert.equal(els.finishBtn.disabled, false);
+  assert.equal(els.finishBtn.classList.contains('btn-primary'), true);
+});
+
+test('showDisconnected locks the finish button as Session complete', () => {
+  const { shared: s, els } = makeFinishSandbox(unusedFetch, {});
+  s.showDisconnected();
+  assert.equal(els.finishBtn.textContent, 'Session complete');
+  assert.equal(els.finishBtn.disabled, true);
+  assert.equal(els.finishBtn.classList.contains('btn-primary'), false);
+
+  els.finishBtn.textContent = 'Approve';
+  els.finishBtn.disabled = false;
+  assert.equal(s.lockFinishBtnIfStopped(els.finishBtn), true);
+  assert.equal(els.finishBtn.textContent, 'Session complete');
+  assert.equal(els.finishBtn.disabled, true);
+});
+
+test('applyProjectPromptTrustUI does not re-enable the finish button after the server stopped', () => {
+  const { shared: s, els } = makeFinishSandbox(unusedFetch, {});
+  s.showDisconnected();
+  s.applyProjectPromptTrustUI({ project_prompts_untrusted: false }, els.finishBtn);
+  assert.equal(els.finishBtn.disabled, true);
+  assert.equal(els.finishBtn.textContent, 'Session complete');
+});
+
+test('runFinishReview does not POST /api/finish after the server stopped', async () => {
+  let fetched = false;
+  const { shared: s } = makeFinishSandbox(async () => { fetched = true; return { ok: true, json: async () => ({}) }; }, {});
+  s.showDisconnected();
+  const result = await s.runFinishReview({});
+  assert.equal(result, null);
+  assert.equal(fetched, false);
+});
+
+test('runFinishReview does not POST /api/finish when the server stops during the consent check', async () => {
+  let fetched = false;
+  const { shared: s } = makeFinishSandbox(async () => { fetched = true; return { ok: true, json: async () => ({}) }; }, {});
+  const result = await s.runFinishReview({
+    checkConsent: async () => { s.showDisconnected(); return true; },
+  });
+  assert.equal(result, null);
+  assert.equal(fetched, false);
 });

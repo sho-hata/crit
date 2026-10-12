@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -3345,6 +3346,27 @@ func TestHandleEvents_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestHandleEvents_ReturnsAfterServerShutdown(t *testing.T) {
+	srv, session := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	w := newNotifyingResponseRecorder()
+	done := make(chan struct{})
+	go func() {
+		srv.ServeHTTP(w, req)
+		close(done)
+	}()
+
+	waitForSubscriberCount(t, session, 1)
+	session.Notify(SSEEvent{Type: "server-shutdown"})
+	w.waitForWrite(t, "event: server-shutdown")
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("SSE handler kept the stream open after server-shutdown")
+	}
+}
+
 func TestHandleEvents_SSEHeaders(t *testing.T) {
 	srv, session := newTestServer(t)
 
@@ -3941,6 +3963,104 @@ func TestHandleHealth_MethodNotAllowed(t *testing.T) {
 	srv.ServeHTTP(w, req)
 	if w.Code != 405 {
 		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestHandleShutdown(t *testing.T) {
+	pid := strconv.Itoa(os.Getpid())
+	tests := []struct {
+		name        string
+		method      string
+		query       string
+		headers     map[string]string
+		notReady    bool
+		withStop    bool
+		wantCode    int
+		wantStopped bool
+	}{
+		{name: "CLI request stops the daemon", method: "POST", query: "pid=" + pid, withStop: true, wantCode: http.StatusOK, wantStopped: true},
+		{name: "GET is not allowed", method: "GET", query: "pid=" + pid, withStop: true, wantCode: http.StatusMethodNotAllowed},
+		{name: "no stop func wired", method: "POST", query: "pid=" + pid, wantCode: http.StatusServiceUnavailable},
+		{name: "missing pid", method: "POST", withStop: true, wantCode: http.StatusConflict},
+		{name: "pid of another daemon", method: "POST", query: "pid=1", withStop: true, wantCode: http.StatusConflict},
+		{name: "still initialising", method: "POST", query: "pid=" + pid, notReady: true, withStop: true, wantCode: http.StatusServiceUnavailable},
+		{name: "pid of another daemon while initialising", method: "POST", query: "pid=1", notReady: true, withStop: true, wantCode: http.StatusConflict},
+		{name: "cross-site browser request", method: "POST", query: "pid=" + pid, headers: map[string]string{"Sec-Fetch-Site": "cross-site"}, withStop: true, wantCode: http.StatusForbidden},
+		{name: "same-origin page script", method: "POST", query: "pid=" + pid, headers: map[string]string{"Sec-Fetch-Site": "same-origin"}, withStop: true, wantCode: http.StatusForbidden},
+		{name: "request with Origin", method: "POST", query: "pid=" + pid, headers: map[string]string{"Origin": "http://localhost"}, withStop: true, wantCode: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var srv *Server
+			if tt.notReady {
+				var err error
+				if srv, err = NewServer(nil, frontendFS, "", "test", 0, ""); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				srv, _ = newTestServer(t)
+			}
+			stopped := false
+			if tt.withStop {
+				srv.SetStopFunc(func() { stopped = true })
+			}
+			req := httptest.NewRequest(tt.method, "/api/shutdown?"+tt.query, nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			w := httptest.NewRecorder()
+			srv.ServeHTTP(w, req)
+			if w.Code != tt.wantCode {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantCode)
+			}
+			if stopped != tt.wantStopped {
+				t.Errorf("stopped = %v, want %v", stopped, tt.wantStopped)
+			}
+			if tt.wantStopped && !strings.Contains(w.Body.String(), `"stopping"`) {
+				t.Errorf("body = %q, want status stopping", w.Body.String())
+			}
+		})
+	}
+}
+
+// flushOrderRecorder records whether the response was flushed before any
+// event reached the subscribed channel.
+type flushOrderRecorder struct {
+	*httptest.ResponseRecorder
+	events             chan SSEEvent
+	flushedBeforeEvent bool
+}
+
+func (r *flushOrderRecorder) Flush() {
+	if len(r.events) == 0 {
+		r.flushedBeforeEvent = true
+	}
+	r.ResponseRecorder.Flush()
+}
+
+func TestHandleFinish_ResponseCompleteBeforeFinishEvent(t *testing.T) {
+	srv, sess := newTestServer(t)
+	ch := sess.Subscribe()
+	defer sess.Unsubscribe(ch)
+
+	w := &flushOrderRecorder{ResponseRecorder: httptest.NewRecorder(), events: ch}
+	srv.ServeHTTP(w, httptest.NewRequest("POST", "/api/finish", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !w.flushedBeforeEvent {
+		t.Error("the finish response must be flushed before the finish event, which may stop the daemon")
+	}
+	if got, want := w.Header().Get("Content-Length"), strconv.Itoa(w.Body.Len()); got != want {
+		t.Errorf("Content-Length = %q, want %q so the response is complete on its own", got, want)
+	}
+	select {
+	case ev := <-ch:
+		if ev.Type != "finish" {
+			t.Errorf("event = %q, want finish", ev.Type)
+		}
+	default:
+		t.Error("no finish event was sent")
 	}
 }
 
@@ -5069,5 +5189,114 @@ func TestHandleFileCommentsGitHubID(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, `"github_id":12345`) {
 		t.Errorf("response missing github_id field:\n%s", body)
+	}
+}
+
+func TestThemesPage_ServedWithoutSession(t *testing.T) {
+	s, err := NewServer(nil, frontendFS, "", "test", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/themes", nil)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /themes = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "crit-theme-preview.js") {
+		t.Errorf("GET /themes did not serve the theme preview page")
+	}
+}
+
+// Plan reviews started by the plan hook continue when the agent submits the
+// plan again, not by running `crit plan --name`, which blocks in plan mode.
+func TestReviewCycle_PlanHookNextRound(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantNext string
+		want     string
+		notWant  string
+	}{
+		{"manual crit plan", "", "crit plan --name my-feature", "crit plan --name my-feature", "exit plan mode"},
+		{"plan mode hook", "?plan_hook=plan_mode", "", "exit plan mode again", "crit plan --name"},
+		{"codex hook", "?plan_hook=codex", "", "end your turn with the revised plan", "crit plan --name"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, session := newTestServer(t)
+			session.Mode = "plan"
+			session.PlanDir = "/tmp/plans/my-feature"
+			session.SetAwaitingFirstReview(true)
+			session.AddComment("test.md", 1, 1, "", "expand step 2", "", "", "")
+
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				req := httptest.NewRequest("POST", "/api/review-cycle"+tc.query, nil)
+				w := httptest.NewRecorder()
+				s.ServeHTTP(w, req)
+				done <- w
+			}()
+
+			waitForSubscriberCount(t, session, 1)
+			finish := httptest.NewRecorder()
+			s.ServeHTTP(finish, httptest.NewRequest("POST", "/api/finish", nil))
+
+			check := func(who string, body []byte) {
+				t.Helper()
+				var resp map[string]any
+				if err := json.Unmarshal(body, &resp); err != nil {
+					t.Fatal(err)
+				}
+				if got, _ := resp["next_command"].(string); got != tc.wantNext {
+					t.Errorf("%s next_command = %q, want %q", who, got, tc.wantNext)
+				}
+				prompt, _ := resp["prompt"].(string)
+				if !strings.Contains(prompt, tc.want) {
+					t.Errorf("%s prompt missing %q:\n%s", who, tc.want, prompt)
+				}
+				if strings.Contains(prompt, tc.notWant) {
+					t.Errorf("%s prompt should not contain %q:\n%s", who, tc.notWant, prompt)
+				}
+				if !strings.Contains(prompt, "crit comment --plan my-feature --reply-to") {
+					t.Errorf("%s prompt should keep the reply instruction:\n%s", who, prompt)
+				}
+			}
+			// The browser shows the same prompt the waiting agent gets.
+			check("finish", finish.Body.Bytes())
+
+			select {
+			case w := <-done:
+				check("review-cycle", w.Body.Bytes())
+			case <-time.After(2 * time.Second):
+				t.Fatal("review-cycle did not return in time")
+			}
+			if got := session.PlanHook(); got != "" {
+				t.Errorf("PlanHook() = %q after review-cycle returned, want empty", got)
+			}
+		})
+	}
+}
+
+func TestPlanHookParam(t *testing.T) {
+	tests := []struct {
+		name  string
+		mode  string
+		query string
+		want  string
+	}{
+		{"plan mode hook", "plan", "?plan_hook=plan_mode", "plan_mode"},
+		{"codex hook", "plan", "?plan_hook=codex", "codex"},
+		{"no param", "plan", "", ""},
+		{"unknown value", "plan", "?plan_hook=gemini", ""},
+		{"not a plan session", "files", "?plan_hook=plan_mode", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/api/review-cycle"+tc.query, nil)
+			if got := planHookParam(r, &Session{Mode: tc.mode}); got != tc.want {
+				t.Errorf("planHookParam = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

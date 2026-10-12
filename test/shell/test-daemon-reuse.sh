@@ -255,7 +255,7 @@ api -X DELETE "http://127.0.0.1:$PORT/api/comments" > /dev/null
 
 # Start a crit client that blocks on review-cycle — this simulates the real
 # agent workflow where a client is connected when finish is triggered.
-# The client detects the approve (empty prompt) and kills the daemon.
+# The client detects the approve (empty prompt) and stops the daemon.
 APPROVE_LOG="$WORKDIR/approve.log"
 (cd "$WORKDIR" && "$BINARY" --no-open --port "$PORT" "$PLAN_FILE" > "$APPROVE_LOG" 2>&1) &
 APPROVE_PID=$!
@@ -265,7 +265,7 @@ sleep 1  # let it connect via review-cycle
 api -X POST "http://127.0.0.1:$PORT/api/finish" > /dev/null
 
 # Wait for daemon to shut down (issue #184 fix)
-# The client detects approve and sends SIGTERM to the daemon.
+# The client detects approve and asks the daemon to shut down.
 wait_for_port_free "$PORT"
 
 check "Daemon shut down after approve" \

@@ -12,8 +12,9 @@ import { createRequire } from "node:module"
 import type { Plugin } from "@opencode-ai/plugin"
 
 const require = createRequire(import.meta.url)
-const { isCritWaitCommand, roundReadyToast } = require("./lib/crit-wait-notify.js") as {
+const { isCritWaitCommand, critWaitTimeout, roundReadyToast } = require("./lib/crit-wait-notify.js") as {
   isCritWaitCommand: (command: string) => boolean
+  critWaitTimeout: (timeout: number) => number
   roundReadyToast: (url?: string) => { title: string; message: string }
 }
 
@@ -57,6 +58,9 @@ export const CritNotifyPlugin: Plugin = async ({ client }) => {
       if (tool !== "bash" && tool !== "shell") return
       const command = bashCommandFromToolInput(input, output)
       if (!isCritWaitCommand(command)) return
+      if (output?.args && typeof output.args === "object") {
+        output.args.timeout = critWaitTimeout(output.args.timeout)
+      }
       const toast = roundReadyToast()
       showToast(client, toast.title, toast.message)
     },

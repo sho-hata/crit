@@ -144,6 +144,9 @@ type integration struct {
 	source string // path inside integrations/ embed
 	dest   string // destination relative to cwd
 	hint   string // usage hint printed after install
+	// opencodeVersion selects files for a specific OpenCode major release.
+	// Zero means the integration file is shared by all supported versions.
+	opencodeVersion int
 	// globalDest, when set together with a non-zero globalDestKind, overrides
 	// dest in global mode (cwd == $HOME). The kind determines how it's
 	// resolved (see globalDestKind).
@@ -172,14 +175,15 @@ var integrationMap = map[string][]integration{
 		{source: "integrations/opencode/skills/crit-cli/SKILL.md", dest: ".opencode/skills/crit-cli/SKILL.md", globalDest: ".agents/skills/crit-cli/SKILL.md", globalDestKind: globalDestRelHome, hint: "The crit-cli skill is available to OpenCode agents when needed"},
 		{source: "integrations/opencode/crit-story.md", dest: ".opencode/commands/crit-story.md", globalDest: ".config/opencode/commands/crit-story.md", globalDestKind: globalDestRelHome, hint: "Run /crit-story in OpenCode to author a story and continue the review loop"},
 		{source: "integrations/opencode/skills/crit-story/SKILL.md", dest: ".opencode/skills/crit-story/SKILL.md", globalDest: ".agents/skills/crit-story/SKILL.md", globalDestKind: globalDestRelHome, hint: "The crit-story skill is available to OpenCode agents when needed"},
-		// Plugin files auto-loaded from project `.opencode/plugins/` or global
-		// `~/.config/opencode/plugins/`. Injects sharing instructions by default
-		// (share_url defaults to https://crit.md); docs cover how to disable.
-		// Also toasts when the agent starts a blocking crit wait.
-		{source: "integrations/opencode/plugin/crit.ts", dest: ".opencode/plugins/crit.ts", globalDest: ".config/opencode/plugins/crit.ts", globalDestKind: globalDestRelHome},
-		// Helper (not a plugin entrypoint) — kept under plugins/lib so OpenCode
-		// does not auto-load it as a separate plugin module.
-		{source: "integrations/opencode/plugin/lib/crit-wait-notify.js", dest: ".opencode/plugins/lib/crit-wait-notify.js", globalDest: ".config/opencode/plugins/lib/crit-wait-notify.js", globalDestKind: globalDestRelHome},
+		// OpenCode V1 plugin and helper. V2 uses a package-shaped directory so
+		// its server and TUI entrypoints can be discovered together.
+		{source: "integrations/opencode/plugin/crit.ts", dest: ".opencode/plugins/crit.ts", globalDest: ".config/opencode/plugins/crit.ts", globalDestKind: globalDestRelHome, opencodeVersion: 1},
+		// Helper (not a plugin entrypoint) for the V1 plugin.
+		{source: "integrations/opencode/plugin/lib/crit-wait-notify.js", dest: ".opencode/plugins/lib/crit-wait-notify.js", globalDest: ".config/opencode/plugins/lib/crit-wait-notify.js", globalDestKind: globalDestRelHome, opencodeVersion: 1},
+		{source: "integrations/opencode/v2/crit/index.ts", dest: ".opencode/plugins/crit/index.ts", globalDest: ".config/opencode/plugins/crit/index.ts", globalDestKind: globalDestRelHome, opencodeVersion: 2},
+		{source: "integrations/opencode/v2/crit/tui.ts", dest: ".opencode/plugins/crit/tui.ts", globalDest: ".config/opencode/plugins/crit/tui.ts", globalDestKind: globalDestRelHome, opencodeVersion: 2},
+		{source: "integrations/opencode/v2/crit/lib/crit-rpc.ts", dest: ".opencode/plugins/crit/lib/crit-rpc.ts", globalDest: ".config/opencode/plugins/crit/lib/crit-rpc.ts", globalDestKind: globalDestRelHome, opencodeVersion: 2},
+		{source: "integrations/opencode/v2/crit/lib/crit-wait-notify.js", dest: ".opencode/plugins/crit/lib/crit-wait-notify.js", globalDest: ".config/opencode/plugins/crit/lib/crit-wait-notify.js", globalDestKind: globalDestRelHome, opencodeVersion: 2},
 	},
 	"windsurf": {
 		{source: "integrations/windsurf/crit.md", dest: ".windsurf/workflows/crit.md", globalDest: ".codeium/windsurf/global_workflows/crit.md", globalDestKind: globalDestRelHome, hint: "Run /crit in Windsurf to start a review loop"},
@@ -217,6 +221,20 @@ var integrationMap = map[string][]integration{
 		{source: "integrations/qwen/skills/crit/SKILL.md", dest: ".qwen/skills/crit/SKILL.md", hint: "Run /crit in Qwen Code to start a review loop"},
 		{source: "integrations/qwen/skills/crit-cli/SKILL.md", dest: ".qwen/skills/crit-cli/SKILL.md", hint: "The crit-cli skill is available to Qwen Code agents when needed"},
 		{source: "integrations/qwen/skills/crit-story/SKILL.md", dest: ".qwen/skills/crit-story/SKILL.md", hint: "Run /crit-story in Qwen Code to author a story and continue the review loop"},
+	},
+	"omo": {
+		// OMO discovers project skills in .omo/skills/ and global skills in
+		// ~/.omo/agent/skills/.
+		{source: "integrations/omo/skills/crit/SKILL.md", dest: ".omo/skills/crit/SKILL.md", globalDest: ".omo/agent/skills/crit/SKILL.md", globalDestKind: globalDestRelHome, hint: "Run /skill:crit in OMO to start a review loop"},
+		{source: "integrations/omo/skills/crit-cli/SKILL.md", dest: ".omo/skills/crit-cli/SKILL.md", globalDest: ".omo/agent/skills/crit-cli/SKILL.md", globalDestKind: globalDestRelHome, hint: "The crit-cli skill is available to OMO agents when needed"},
+		{source: "integrations/omo/skills/crit-story/SKILL.md", dest: ".omo/skills/crit-story/SKILL.md", globalDest: ".omo/agent/skills/crit-story/SKILL.md", globalDestKind: globalDestRelHome, hint: "Run /skill:crit-story in OMO to author a story and continue the review loop"},
+	},
+	"omp": {
+		// omp discovers project skills in .omp/skills/ and global skills in
+		// ~/.omp/agent/skills/.
+		{source: "integrations/omp/skills/crit/SKILL.md", dest: ".omp/skills/crit/SKILL.md", globalDest: ".omp/agent/skills/crit/SKILL.md", globalDestKind: globalDestRelHome, hint: "Run /skill:crit in omp to start a review loop"},
+		{source: "integrations/omp/skills/crit-cli/SKILL.md", dest: ".omp/skills/crit-cli/SKILL.md", globalDest: ".omp/agent/skills/crit-cli/SKILL.md", globalDestKind: globalDestRelHome, hint: "The crit-cli skill is available to omp agents when needed"},
+		{source: "integrations/omp/skills/crit-story/SKILL.md", dest: ".omp/skills/crit-story/SKILL.md", globalDest: ".omp/agent/skills/crit-story/SKILL.md", globalDestKind: globalDestRelHome, hint: "Run /skill:crit-story in omp to author a story and continue the review loop"},
 	},
 	"pi": {
 		// Pi auto-discovers skills in both .pi/skills/ (project-local) and
@@ -418,10 +436,35 @@ func installIntegration(name string, force bool) error {
 		}
 		return errors.New(strings.TrimRight(b.String(), "\n"))
 	}
-
 	cwd := mustGetwd()
 	home, _ := os.UserHomeDir()
 	global := isGlobalInstall(cwd, home)
+	opencodeMajor := 1
+	opencodeVersion := ""
+	if name == "opencode" {
+		opencodeMajor, opencodeVersion = opencodeVersionInfo()
+		files = opencodeIntegrationFiles(opencodeMajor)
+		// Check the other major version's files first (read-only), so a
+		// modified file refuses the install before any package.json write or
+		// package-manager run. Then install V2's SDK before removing an
+		// existing V1 plugin: a package-manager failure must not leave the
+		// user with no working plugin.
+		stale, err := findStaleOpencodePluginFiles(global, home, opencodeMajor, force)
+		if err != nil {
+			return err
+		}
+		if opencodeMajor == 2 && opencodeVersion != "" {
+			if err := installOpencodePluginDependency(opencodePluginPackagePath(global, home), opencodeVersion, force); err != nil {
+				return err
+			}
+		}
+		if err := removeStaleOpencodePluginFiles(stale); err != nil {
+			return err
+		}
+		if opencodeMajor == 2 {
+			removeOpencodePluginEntry(opencodeConfigPath(global, home), opencodePluginEntry(global))
+		}
+	}
 
 	var hints []string
 	codexMarketplaceName := ""
@@ -455,8 +498,10 @@ func installIntegration(name string, force bool) error {
 		installGeminiSettings(settingsPath, force)
 	}
 	if name == "opencode" {
-		if err := installOpencodePluginEntry(opencodeConfigPath(global, home), opencodePluginEntry(global), force); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not register plugin in opencode config: %v\n", err)
+		if opencodeMajor == 1 {
+			if err := installOpencodePluginEntry(opencodeConfigPath(global, home), opencodePluginEntry(global), force); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not register plugin in opencode config: %v\n", err)
+			}
 		}
 	}
 	if name == "codex-plugin" {
@@ -546,6 +591,90 @@ func installOneFile(f integration, dest string, force bool) {
 		os.Exit(1)
 	}
 	fmt.Printf("  Installed: %s\n", dest)
+}
+
+// previousOpencodePluginHashes lists SHA-256 hashes of OpenCode plugin files
+// shipped by earlier crit releases. A file that matches one of them was
+// written by crit and not edited, so migration may remove it without --force.
+// Add the old hash here whenever a release changes one of these sources.
+var previousOpencodePluginHashes = map[string][]string{
+	"integrations/opencode/plugin/crit.ts": {
+		"e95e8b813b4ca0f87d3bb385faad519d13cd826d2f1cedd0ae58080df8820466", // v0.13.0 - v0.15.3
+		"139a1798dcda408520696f02981569f3188688d8995c77421f66506416fc0115", // v0.15.4 - v0.18.1
+		"bbb6b53ead31f811b46c51055e4c225536f91f52a4eca1667b7e14d600e30958", // v0.18.2 - v0.21.0
+	},
+	"integrations/opencode/plugin/lib/crit-wait-notify.js": {
+		"95f4b82ebfc9ee60b2595bda3a260069aa6f34edea6c5b9eb9b503b7c6a58edb", // v0.18.2 - v0.21.0
+	},
+}
+
+// isUnmodifiedOpencodePlugin reports whether data matches the embedded source
+// or a version of it shipped by an earlier release.
+func isUnmodifiedOpencodePlugin(source string, data []byte) (bool, error) {
+	embedded, err := integrationsFS.ReadFile(source)
+	if err != nil {
+		return false, fmt.Errorf("reading embedded OpenCode plugin %s: %w", source, err)
+	}
+	if string(data) == string(embedded) {
+		return true, nil
+	}
+	hash := computeFileHash(data)
+	for _, h := range previousOpencodePluginHashes[source] {
+		if hash == h {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+type staleOpencodePlugin struct {
+	path    string
+	version int
+}
+
+// findStaleOpencodePluginFiles returns the other major version's Crit plugin
+// files that exist on disk. It does not change anything. Modified files
+// return an error unless force is set, so migration does not discard user
+// changes. Leaving both versions in an auto-load directory can make OpenCode
+// load incompatible implementations together.
+func findStaleOpencodePluginFiles(global bool, home string, major int, force bool) ([]staleOpencodePlugin, error) {
+	var stale []staleOpencodePlugin
+	for _, f := range integrationMap["opencode"] {
+		if f.opencodeVersion == 0 || f.opencodeVersion == major {
+			continue
+		}
+		dest := destFor(f, global, home, "opencode")
+		data, err := os.ReadFile(dest)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("checking old OpenCode v%d plugin %s: %w", f.opencodeVersion, dest, err)
+		}
+		if !force {
+			unmodified, err := isUnmodifiedOpencodePlugin(f.source, data)
+			if err != nil {
+				return nil, err
+			}
+			if !unmodified {
+				return nil, fmt.Errorf("%s contains a modified OpenCode v%d Crit plugin; remove it or rerun with --force before installing v%d", dest, f.opencodeVersion, major)
+			}
+		}
+		stale = append(stale, staleOpencodePlugin{path: dest, version: f.opencodeVersion})
+	}
+	return stale, nil
+}
+
+// removeStaleOpencodePluginFiles deletes files found by
+// findStaleOpencodePluginFiles.
+func removeStaleOpencodePluginFiles(stale []staleOpencodePlugin) error {
+	for _, f := range stale {
+		if err := os.Remove(f.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("removing old OpenCode v%d plugin %s: %w", f.version, f.path, err)
+		}
+		fmt.Printf("  Removed:   %s (OpenCode v%d plugin)\n", f.path, f.version)
+	}
+	return nil
 }
 
 func codexPluginMarketplacePath(global bool, home string) string {

@@ -60,6 +60,8 @@ Bash tool call:
 
 Always pass `timeout: 86400000` to every blocking `crit` invocation. Do not rely on the shell tool's default timeout. Wait for the command to exit before continuing.
 
+OpenCode v2's Crit plugin extends the shell timeout to 24 hours for recognized foreground Crit review commands. If a shell tool still kills the wait because of its own hard limit, rerun the exact same `crit` command and arguments: the Crit daemon remains alive and the command reconnects to the existing review session. Do not start a duplicate review with different arguments.
+
 If a crit server is already running from earlier in this conversation, `crit` automatically connects to it. Starting from scratch, it spawns the daemon, opens the browser, and waits until the user clicks "Finish Review".
 
 In foreground mode, `crit` prints the review URL on startup (e.g. `Started crit daemon at http://localhost:<port>`). Relay it verbatim:
@@ -132,6 +134,6 @@ Use the same shell strategy selected in Step 2:
 - Background-capable shell: invoke the next `crit` round with `background: true` and no `timeout`, then end the response and wait for the automatic completion notification.
 - Foreground-only shell: invoke the next `crit` round with `timeout: 86400000` and block until it completes.
 
-Tell the user: **"Changes applied. Review the diff in your browser and click Finish Review when ready."**
+Tell the user only: **"Replied in Crit. Review the changes in your browser and click Finish Review when ready."** Do not repeat your replies or list the comments in chat. The reviewer reads them in Crit.
 
 **Do NOT proceed until `crit` completes.** When it does, return to Step 3. If the user finishes with zero comments, the review is approved — stop the loop and proceed.

@@ -202,8 +202,13 @@ func runServe(args []string) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals()...)
 	defer stop()
+	// A separate cancel keeps the signal handlers registered when
+	// /api/shutdown starts the shutdown; calling stop would unregister them.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	srv.SetShutdownCtx(ctx)
+	srv.SetStopFunc(cancel)
 
 	go func() {
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {

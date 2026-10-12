@@ -321,7 +321,7 @@ func installDaemonSignalHandler(pid int) {
 		<-sigCh
 		proc, err := os.FindProcess(pid)
 		if err == nil {
-			_ = proc.Signal(syscall.SIGTERM)
+			_ = daemon.TerminateProcess(proc)
 		}
 		os.Exit(0)
 	}()

@@ -93,6 +93,8 @@ type Server struct {
 	// SIGINT/SIGTERM cancels them instead of leaking. Set via
 	// SetShutdownCtx; nil in tests, in which case a background context is used.
 	shutdownCtx context.Context
+	// stopDaemon cancels shutdownCtx. Set via SetStopFunc; nil in tests.
+	stopDaemon func()
 	// bgWG tracks long-running background goroutines (e.g. agent subprocess
 	// runners) that must complete before the daemon writes the review file
 	// during shutdown. The shutdown path Wait()s on this with a timeout.
@@ -134,6 +136,9 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/preview-content/", s.handlePreviewContent)
 	mux.HandleFunc("/preview-content", s.handlePreviewContent)
 
+	// Theme preview page — static samples, no session needed.
+	mux.HandleFunc("/themes", s.serveHTML("themes.html"))
+
 	// Live-mode routes — NOT wrapped in withReady.
 	mux.HandleFunc("/live", s.serveIndexHTML())
 	for _, f := range AgentScriptFiles {
@@ -164,6 +169,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/session", s.withReady(s.handleSession))
 	mux.HandleFunc("/api/project-prompts/trust", s.withReady(s.handleProjectPromptTrust))
 	mux.HandleFunc("/api/finish", s.withReady(s.handleFinish))
+	mux.HandleFunc("/api/shutdown", s.handleShutdown)
 	mux.HandleFunc("/api/events", s.withReady(s.handleEvents))
 	mux.HandleFunc("/api/wait-for-event", s.withReady(s.handleWaitForEvent))
 	mux.HandleFunc("/api/round-complete", s.withReady(s.handleRoundComplete))
@@ -178,6 +184,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/comments", s.withReady(s.handleReviewComments))
 	mux.HandleFunc("/api/review-comment/", s.withReady(s.handleReviewCommentByID))
 	mux.HandleFunc("/api/files/list", s.withReady(s.handleFilesList))
+	mux.HandleFunc("/api/files/comments", s.withReady(s.handleAllFileComments))
 	mux.HandleFunc("/api/story", s.withReady(s.handleStory))
 
 	// File-scoped endpoints (use ?path= query param)
@@ -203,6 +210,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 
 	// Static file serving (repo files need session; embedded assets do not)
 	mux.HandleFunc("/files/", s.withReady(s.handleFiles))
+	mux.Handle(precompressedPrefix, servePrecompressed(frontendFS))
 	mux.Handle("/", http.FileServer(http.FS(frontendFS)))
 
 	s.mux = mux
@@ -355,6 +363,12 @@ func (s *Server) withReady(next http.HandlerFunc) http.HandlerFunc {
 // leave it unset; effectiveCtx then falls back to context.Background().
 func (s *Server) SetShutdownCtx(ctx context.Context) {
 	s.shutdownCtx = ctx
+}
+
+// SetStopFunc wires the cancel func of the daemon's shutdown context, which
+// POST /api/shutdown calls.
+func (s *Server) SetStopFunc(stop func()) {
+	s.stopDaemon = stop
 }
 
 // effectiveCtx returns the daemon shutdown ctx if set, otherwise a background
@@ -669,12 +683,17 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 // serveIndexHTML returns a handler that serves the embedded index.html shell.
 // Used for routes (such as /live and /preview) that all render the same shell.
 func (s *Server) serveIndexHTML() http.HandlerFunc {
+	return s.serveHTML("index.html")
+}
+
+// serveHTML serves an embedded HTML page at a clean path (e.g. /themes).
+func (s *Server) serveHTML(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		f, err := s.assets.Open("index.html")
+		f, err := s.assets.Open(name)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -682,7 +701,7 @@ func (s *Server) serveIndexHTML() http.HandlerFunc {
 		defer f.Close()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if _, err := io.Copy(w, f); err != nil {
-			log.Printf("serveIndexHTML: %v", err)
+			log.Printf("serveHTML %s: %v", name, err)
 		}
 	}
 }
@@ -1052,6 +1071,33 @@ func serveFileDiffAtRound(w http.ResponseWriter, r *http.Request, session *Sessi
 	}
 	writeJSON(w, resp)
 	return true
+}
+
+// handleAllFileComments returns every file's visible comments in one
+// response, keyed by path. The page loads diffs lazily on large reviews, and
+// fetching comments per file costs one request each, so it reads them all
+// here instead.
+func (s *Server) handleAllFileComments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	round, hasRound, valid := parseRoundParam(w, r)
+	if !valid {
+		return
+	}
+	sess := s.session.Load()
+	byPath := sess.GetVisibleComments()
+	if hasRound && sess.Mode == "files" {
+		for path, comments := range byPath {
+			if atRound := commentsAtOrBeforeRound(comments, round); len(atRound) > 0 {
+				byPath[path] = atRound
+			} else {
+				delete(byPath, path)
+			}
+		}
+	}
+	writeJSON(w, byPath)
 }
 
 // handleFileComments handles GET (list) and POST (create) for file-scoped comments.
@@ -1716,7 +1762,7 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-close-after-approve delay travels with the finish payload so the
 	// browser does not need a second /api/config round-trip after approval.
-	// That round-trip races with killDaemonOnApproval, which stops the daemon
+	// That round-trip races with stopDaemonOnApproval, which stops the daemon
 	// as soon as the approved finish response has been processed.
 	finishResp := map[string]any{
 		"status":       "finished",
@@ -1730,7 +1776,9 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 	if ms, enabled := s.cfg.CloseOnApproveAfterMsEnabled(); enabled {
 		finishResp["close_on_approve_after_ms"] = ms
 	}
-	writeJSON(w, finishResp)
+	// The finish event below lets a waiting client stop the daemon at once, so
+	// the browser's response must be complete on the wire before it is sent.
+	writeJSONComplete(w, finishResp)
 
 	// Encode approved status into SSE event content as JSON so review-cycle
 	// clients can extract it without string matching on the prompt.
@@ -1810,6 +1858,38 @@ func buildCommentsListCommand(sess *Session) string {
 // changes do not require a bump. Clients treat a missing field as version 0.
 const APIVersion = 1
 
+// handleShutdown stops the daemon the way SIGTERM does: in-flight responses
+// complete and browsers receive server-shutdown. It is readiness-gated because
+// an initialising daemon cannot act on the stop until init ends.
+func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Any page script, even a same-origin preview, sends Sec-Fetch-Site or
+	// Origin; only the CLI may stop the daemon.
+	if r.Header.Get("Sec-Fetch-Site") != "" || r.Header.Get("Origin") != "" {
+		http.Error(w, "Forbidden: shutdown is CLI-only", http.StatusForbidden)
+		return
+	}
+	// The caller names the daemon it means, so a stale session entry whose
+	// port now belongs to another daemon cannot stop that one, even while it
+	// is still initialising.
+	if pid, err := strconv.Atoi(r.URL.Query().Get("pid")); err != nil || pid != os.Getpid() {
+		http.Error(w, "pid does not match this daemon", http.StatusConflict)
+		return
+	}
+	if !s.requireReady(w) {
+		return
+	}
+	if s.stopDaemon == nil {
+		http.Error(w, "shutdown not available", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "stopping"})
+	s.stopDaemon()
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1850,6 +1930,13 @@ func (s *Server) handleReviewCycle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := s.session.Load()
+	// A plan hook starts the next round when the agent submits the plan
+	// again. While it waits, the finish prompt says that instead of
+	// `crit plan --name`.
+	if planHook := planHookParam(r, sess); planHook != "" {
+		sess.SetPlanHook(planHook)
+		defer sess.SetPlanHook("")
+	}
 
 	// Subscribe BEFORE round-complete to avoid missing the finish event
 	// if the user clicks "Finish Review" in the brief window between
@@ -1913,6 +2000,20 @@ func (s *Server) handleReviewCycle(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
+	}
+}
+
+// planHookParam returns the plan hook kind a review-cycle client declared
+// (plan_mode or codex), or "" for any other client or session mode.
+func planHookParam(r *http.Request, sess *Session) string {
+	if sess.Mode != "plan" {
+		return ""
+	}
+	switch v := r.URL.Query().Get("plan_hook"); v {
+	case "plan_mode", "codex":
+		return v
+	default:
+		return ""
 	}
 }
 
@@ -1985,6 +2086,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			data, _ := json.Marshal(event)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, data)
 			flusher.Flush()
+			// server-shutdown is the last event; returning lets the HTTP
+			// server finish shutting down instead of waiting for the client.
+			if event.Type == "server-shutdown" {
+				return
+			}
 		}
 	}
 }
@@ -2447,6 +2553,22 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("writeJSON: encode error: %v", err)
+	}
+}
+
+// writeJSONComplete writes v with a Content-Length and flushes it, so the
+// response is fully delivered even if the process ends right afterwards.
+func writeJSONComplete(w http.ResponseWriter, v any) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(v); err != nil {
+		log.Printf("writeJSONComplete: encode error: %v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(body.Len()))
+	_, _ = w.Write(body.Bytes())
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"time"
 
 	"github.com/sho-hata/crit/internal/browser"
 	"github.com/sho-hata/crit/internal/config"
@@ -86,12 +88,57 @@ func installDaemonSignalHandler(pid int) {
 	}()
 }
 
-func killDaemonOnApproval(approved bool, pid int) {
-	if approved {
-		if proc, err := os.FindProcess(pid); err == nil {
-			_ = daemon.TerminateProcess(proc)
+// terminateDaemonProcess, waitForDaemonExit and approvalSignalGrace are seams
+// for tests.
+var (
+	terminateDaemonProcess = daemon.TerminateProcess
+	waitForDaemonExit      = daemon.WaitForExit
+	approvalSignalGrace    = 500 * time.Millisecond
+)
+
+// stopDaemonOnApproval stops the daemon once the review is approved and runs
+// cleanup_on_approve.
+func stopDaemonOnApproval(approved bool, entry daemon.SessionEntry, key string, cleanup bool) {
+	if !approved {
+		return
+	}
+	switch daemon.RequestShutdown(entry) {
+	case daemon.ShutdownWrongDaemon:
+		return
+	case daemon.ShutdownUnavailable:
+		file, err := daemon.ReadSessionFile(key)
+		switch {
+		case err != nil:
+			// The daemon removed its session file, so it is already shutting
+			// down for another client.
+		case file.PID != entry.PID:
+			// A newer daemon has the key; this one is not ours to signal or
+			// clean up after.
+			return
+		default:
+			// An older daemon without /api/shutdown gets the signal it always
+			// got. On Windows that can be a hard kill, so its approved
+			// /api/finish response gets a moment to reach the browser first.
+			if runtime.GOOS == "windows" {
+				time.Sleep(approvalSignalGrace)
+			}
+			if proc, err := os.FindProcess(entry.PID); err == nil {
+				_ = terminateDaemonProcess(proc)
+			}
 		}
 	}
+	if !cleanup {
+		return
+	}
+	// A stopping daemon can still write the review, and a daemon started
+	// meanwhile under the same key has loaded it, so the review goes only once
+	// the daemon has exited and nobody took the key over.
+	if !waitForDaemonExit(entry.PID) {
+		return
+	}
+	daemon.UnlessSessionTakenOver(key, entry.PID, func() {
+		cleanupOnApproval(approved, entry.ReviewPath, cleanup)
+	})
 }
 
 func backgroundCleanup() {

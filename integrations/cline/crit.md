@@ -75,6 +75,8 @@ crit comment --json --file /tmp/replies.json --author 'Cline'
 
 The finish prompt on stdout includes the command to run again — use it to start a new round.
 
+Then tell the user only that you replied in Crit and that they can click Finish Review when ready. Do not repeat your replies or list the comments in chat. The reviewer reads them in Crit.
+
 `crit` automatically signals round-complete, then blocks until the next "Finish Review" click. Only proceed after the user approves (a round finishes with zero comments).
 
 ## CLI Reference
@@ -86,6 +88,7 @@ crit comment --author 'Cline' '<body>'                       # Review-level
 crit comment --author 'Cline' <path> '<body>'                # File-level
 crit comment --author 'Cline' <path>:<line> '<body>'         # Line
 crit comment --author 'Cline' <path>:<start>-<end> '<body>'  # Line range
+crit comment --author 'Cline' --selector '<css>' [--route <path>] '<body>'  # Live or HTML preview pin
 crit comment --reply-to <id> --author 'Cline' '<body>'       # Reply (c_… or r_…)
 ```
 

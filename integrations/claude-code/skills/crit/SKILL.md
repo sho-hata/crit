@@ -52,6 +52,8 @@ crit <plan-file>   # specific file
 crit               # git mode
 ```
 
+Pass `timeout: 86400000` (24 hours) with `run_in_background: true` on every blocking `crit` call. Without it, Claude Code stops background commands after 30 minutes. Claude Code may lower the value to its own limit (2 hours unless the user sets `BASH_MAX_TIMEOUT_MS`).
+
 If a crit server is already running from earlier in this conversation, `crit` automatically connects to it. Starting from scratch, it spawns the daemon, opens the browser, and blocks until the user clicks "Finish Review".
 
 `crit` prints the review URL on startup (e.g. `Started crit daemon at http://localhost:<port>`). Relay it verbatim:
@@ -59,6 +61,18 @@ If a crit server is already running from earlier in this conversation, `crit` au
 > **"Crit is open at http://localhost:<port>. Leave inline comments, then click Finish Review."**
 
 **Do NOT proceed until `crit` completes.** Do NOT ask the user to type anything. Do NOT read the review file early. Wait for the background task to finish — that is how you know the human is done reviewing.
+
+<important if="Claude Code stopped `crit` because it reached its background time limit">
+Tell the user that Claude Code stopped waiting after its background time limit (2 hours by default), and that the review is still open in the browser with their comments.
+
+Offer to raise the limit to 24 hours by adding this to `~/.claude/settings.json` (it takes effect after Claude Code restarts):
+
+```json
+"env": { "BASH_MAX_TIMEOUT_MS": "86400000" }
+```
+
+If the user agrees, merge it into the existing file; do not overwrite other settings. Then, if the user wants you to keep waiting, run the same `crit` command again as in Step 2.
+</important>
 
 ## Step 3: Read the review output
 
@@ -93,6 +107,12 @@ echo '[
   {"reply_to": "c_d4e5f6", "body": "Refactored as suggested"}
 ]' | crit comment --json --author 'Claude Code'
 ```
+
+For long or multi-line bodies, write the JSON to a file and pass `--file`. Use `--file`, not a `<` redirect.
+
+```bash
+crit comment --json --file /tmp/replies.json --author 'Claude Code'
+```
 </important>
 
 ## Step 5: Signal completion and start next round
@@ -103,6 +123,8 @@ The finish prompt on stdout includes the command to run again — use it to star
 
 On subsequent calls, `crit` automatically signals round-complete first, then blocks until the next "Finish Review" click.
 
-Tell the user: **"Changes applied. Review the diff in your browser and click Finish Review when ready."**
+Run it in the background with `timeout: 86400000`, as in Step 2.
+
+Tell the user only: **"Replied in Crit. Review the changes in your browser and click Finish Review when ready."** Do not repeat your replies or list the comments in chat. The reviewer reads them in Crit.
 
 **Do NOT proceed until `crit` completes.** When it does, return to Step 3. If the user finishes with zero comments, the review is approved — stop the loop and proceed.

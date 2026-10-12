@@ -1,4 +1,4 @@
-# Crit — Gemini CLI Integration
+# Crit - Gemini CLI Integration
 
 Drop-in configuration files that teach Gemini CLI to use Crit for reviewing plans and code changes.
 
@@ -27,21 +27,21 @@ cd ~ && crit install gemini
 
 If you prefer to install manually:
 
-1. **Skill** — copy to your project or home directory:
+1. **Skill** - copy to your project or home directory:
    ```
    skills/crit-cli/SKILL.md  → .gemini/skills/crit-cli/SKILL.md
    ```
    Global: `~/.gemini/skills/crit-cli/SKILL.md`
 
-2. **Command** — copy to your project or home directory:
+2. **Command** - copy to your project or home directory:
    ```
    commands/crit.toml → .gemini/commands/crit.toml
    ```
    Global: `~/.gemini/commands/crit.toml`
 
-3. **Hook** — merge `hooks/settings-snippet.json` into `.gemini/settings.json` (or `~/.gemini/settings.json`). Add the `hooks` key if it doesn't exist, or merge the `BeforeTool` array into the existing `hooks` object.
+3. **Hook** - merge `hooks/settings-snippet.json` into `.gemini/settings.json` (or `~/.gemini/settings.json`). Add the `hooks` key if it doesn't exist, or merge the `BeforeTool` array into the existing `hooks` object.
 
-4. **Policy** — copy to your project or home directory:
+4. **Policy** - copy to your project or home directory:
    ```
    hooks/policy.toml → .gemini/policies/crit.toml
    ```
