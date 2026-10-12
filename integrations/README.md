@@ -218,5 +218,4 @@ Each integration also teaches the agent about:
 ## Next steps
 
 - Run a first review end to end: [crit.md/getting-started](https://crit.md/getting-started).
-- Share a review with someone who doesn't have Crit installed: [crit.md/features/share-reviews](https://crit.md/features/share-reviews).
 - Something here out of date or wrong for your tool? [Open an issue](https://github.com/tomasz-tomczyk/crit/issues). Include the tool, its version and the command you ran.
