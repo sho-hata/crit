@@ -63,21 +63,25 @@ start_fixture() { # script port
   FIXTURE_PIDS+=($!)
   FIXTURE_PORTS+=("$2")
 }
-# Start every fixture regardless of group: playwright.config.ts lists them
-# all as webServers, and parallel Playwright processes would otherwise race
-# to start a missing one on the same port.
+# The git group starts only its own fixture and runs Playwright with
+# E2E_ONLY_SERVER=git, so its shards skip the heavy perf/huge fixtures. Every
+# other group starts every fixture: playwright.config.ts lists them all as
+# webServers, and parallel Playwright processes would otherwise race to start
+# a missing one on the same port.
 start_fixture setup-fixtures.sh "$GIT_PORT"
 if [ "$E2E_GROUP" = all ]; then
   start_fixture setup-fixtures.sh "$GIT2_PORT"
 fi
-start_fixture setup-fixtures-filemode.sh "$FILE_PORT"
-start_fixture setup-fixtures-singlefile.sh "$SINGLE_PORT"
-start_fixture setup-fixtures-nogit.sh "$NOGIT_PORT"
-start_fixture setup-fixtures-multifile.sh "$MULTI_PORT"
-start_fixture setup-fixtures-range-mode.sh "$RANGE_PORT"
-start_fixture setup-fixtures-livemode.sh "$LIVE_PORT"
-start_fixture setup-fixtures-perf.sh "$PERF_PORT"
-start_fixture setup-fixtures-huge.sh "$HUGE_PORT"
+if [ "$E2E_GROUP" != git ]; then
+  start_fixture setup-fixtures-filemode.sh "$FILE_PORT"
+  start_fixture setup-fixtures-singlefile.sh "$SINGLE_PORT"
+  start_fixture setup-fixtures-nogit.sh "$NOGIT_PORT"
+  start_fixture setup-fixtures-multifile.sh "$MULTI_PORT"
+  start_fixture setup-fixtures-range-mode.sh "$RANGE_PORT"
+  start_fixture setup-fixtures-livemode.sh "$LIVE_PORT"
+  start_fixture setup-fixtures-perf.sh "$PERF_PORT"
+  start_fixture setup-fixtures-huge.sh "$HUGE_PORT"
+fi
 
 cleanup() {
   kill "${FIXTURE_PIDS[@]}" 2>/dev/null || true
@@ -130,7 +134,7 @@ if [ $# -eq 0 ]; then
   }
 
   if [ "$E2E_GROUP" = git ]; then
-    launch git npx playwright test --project=git-mode --shard="$E2E_SHARD"
+    launch git env E2E_ONLY_SERVER=git npx playwright test --project=git-mode --shard="$E2E_SHARD"
   elif [ "$E2E_GROUP" = all ]; then
     launch git-1 npx playwright test --project=git-mode --shard=1/2
     launch git-2 env CRIT_TEST_PORT="$GIT2_PORT" npx playwright test --project=git-mode --shard=2/2

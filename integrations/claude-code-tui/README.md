@@ -11,7 +11,7 @@ Claude in one go. Claude answers each comment in its thread through a tool.
 Needs Claude Code 2.1.287 or later (mods) and the `crit` CLI on your PATH.
 
 ```
-/plugin marketplace add tomasz-tomczyk/crit
+/plugin marketplace add sho-hata/crit
 /plugin install crit-tui@crit
 ```
 
