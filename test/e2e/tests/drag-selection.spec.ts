@@ -1,7 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import {
   clearAllComments, loadPage, goSection, switchToDocumentView, dragBetween,
-  dragLineRange, openLineComment, diffLine, waitUntilHittable, setDiffStyle, selectedRows,
+  dragLineRange, openLineComment, diffLine, waitUntilHittable, setDiffStyle, selectedRows, showLine,
 } from './helpers';
 
 // Switching to Document view scrolls: wait until the start gutter takes
@@ -247,8 +247,9 @@ test.describe('Diff Drag Selection — Unified Mode', () => {
     // between them.
     const item = await goSection(page);
     await expect(diffLine(item, 21, 'old')).toHaveAttribute('data-line-type', 'change-deletion');
-    // Pierre virtualizes rows within a file; bring the span on screen.
-    await diffLine(item, 21, 'old').scrollIntoViewIfNeeded();
+    // Pierre virtualizes rows within a file; bring the span on screen. The
+    // row can re-mount while the list settles, so go through showLine.
+    await showLine(page, diffLine(item, 21, 'old'));
     await expect(diffLine(item, 23, 'old')).toHaveAttribute('data-line-type', 'change-deletion');
 
     const form = await dragLineRange(page, item, 21, 23, 'old');
