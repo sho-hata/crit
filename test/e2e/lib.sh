@@ -105,6 +105,11 @@ e2e_export_fake_home() {
   if [ "$E2E_IS_WINDOWS" -eq 1 ]; then
     export USERPROFILE="$fake_home"
   fi
+  # Language servers on a developer's PATH would otherwise answer real hover
+  # and definition requests while unrelated specs move the mouse over code
+  # (CI installs none). The LSP specs mock /api/config and /api/lsp/*.
+  # Fixtures that write their own config afterwards overwrite this.
+  printf '{"lsp": false}\n' > "$fake_home/.crit.config.json"
 }
 
 # Kill all stray crit processes — used by run.sh cleanup on Windows where

@@ -639,7 +639,7 @@ STATE_FILE="$(e2e_state_file "$PORT")"
 } > "$STATE_FILE"
 
 # Configure agent_cmd for E2E testing (echo just prints stdin and exits)
-echo '{"agent_cmd": "echo"}' > "$FAKE_HOME/.crit.config.json"
+echo '{"agent_cmd": "echo", "lsp": false}' > "$FAKE_HOME/.crit.config.json"
 
 # Run crit in the fixture repo
 exec "$CRIT_BIN" _serve --no-open --port "$PORT"
