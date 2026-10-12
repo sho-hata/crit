@@ -594,4 +594,12 @@ func TestReadLivePageHTMLDefault(t *testing.T) {
 	if _, err := livePageURL("http://example.com", "%zz"); err == nil {
 		t.Fatal("expected bad route")
 	}
+	for _, route := range []string{"//evil.example/x", "https://evil.example/x", "javascript:alert(1)"} {
+		if _, err := livePageURL("http://example.com", route); err == nil {
+			t.Fatalf("route %q: expected rejection of a non-path route", route)
+		}
+	}
+	if got, err := livePageURL("http://example.com/app/", "settings?tab=1"); err != nil || got != "http://example.com/app/settings?tab=1" {
+		t.Fatalf("relative route = %q, %v", got, err)
+	}
 }

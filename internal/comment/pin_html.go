@@ -174,6 +174,11 @@ func livePageURL(origin, route string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A route is a page path on the live app. "//host/x" or a full URL would
+	// resolve to another host and send this fetch there.
+	if ref.Scheme != "" || ref.Host != "" {
+		return "", fmt.Errorf("route %q is not a path", route)
+	}
 	return base.ResolveReference(ref).String(), nil
 }
 
