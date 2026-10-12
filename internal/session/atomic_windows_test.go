@@ -5,7 +5,9 @@ package session
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -33,5 +35,22 @@ func TestIsWindowsTransientIOErr(t *testing.T) {
 				t.Fatalf("isWindowsTransientIOErr(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// A review that was never saved is the common case, not a rename race: it
+// must come back as not-exist after a few ms, not the full ~320ms backoff.
+func TestReadFileSharedMissingFileReturnsQuickly(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now()
+	_, err := ReadFileShared(filepath.Join(t.TempDir(), "review.json"))
+	elapsed := time.Since(start)
+	if !os.IsNotExist(err) {
+		t.Fatalf("err = %v, want not-exist", err)
+	}
+	// 1+2+4ms of sleeps; the bound leaves room for Windows timer granularity.
+	if elapsed > 150*time.Millisecond {
+		t.Errorf("took %s, want the short not-exist budget", elapsed)
 	}
 }
