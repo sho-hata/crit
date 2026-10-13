@@ -3,6 +3,7 @@ package lsp
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -90,19 +91,23 @@ func TestPubCacheDir(t *testing.T) {
 		})
 	}
 
-	t.Run("default under HOME", func(t *testing.T) {
+	t.Run("default location", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("PUB_CACHE", "")
 		t.Setenv("HOME", home)
 		t.Setenv("USERPROFILE", home)
+		want := filepath.Join(home, ".pub-cache")
+		if runtime.GOOS == "windows" {
+			t.Setenv("LOCALAPPDATA", home)
+			want = filepath.Join(home, "Pub", "Cache")
+		}
 		if got := pubCacheDir(); got != "" {
 			t.Errorf("pubCacheDir() = %q before the cache exists, want empty", got)
 		}
-		want := filepath.Join(home, ".pub-cache")
 		if err := os.MkdirAll(want, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if got := pubCacheDir(); got != want && !strings.HasSuffix(got, filepath.Join("Pub", "Cache")) {
+		if got := pubCacheDir(); got != want {
 			t.Errorf("pubCacheDir() = %q, want %q", got, want)
 		}
 	})
@@ -119,8 +124,11 @@ func TestServerEnvAppendsLanguageEnv(t *testing.T) {
 		t.Errorf("serverEnv = %v, want it to carry the language's entry", env)
 	}
 	// The daemon's own environment (PATH, HOME, …) must still be there: the
-	// server needs it to find its toolchain.
-	if !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "PATH=") }) {
+	// server needs it to find its toolchain. Windows spells the key Path.
+	if !slices.ContainsFunc(env, func(kv string) bool {
+		key, _, _ := strings.Cut(kv, "=")
+		return strings.EqualFold(key, "PATH")
+	}) {
 		t.Errorf("serverEnv = %v, want it to inherit PATH", env)
 	}
 }
