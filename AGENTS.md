@@ -48,6 +48,10 @@ crit/
 Do not commit plan files to the repo — keep them as untracked local files (or in `/tmp`). This includes `*-plan.md`, `*-proposal.md`, and other AI-generated design docs. Repo history should contain implementation, not planning artifacts. Exception: test fixtures under `test/` that a test explicitly reads.
 </important>
 
+<important if="you are writing a commit message or a pull request description">
+Write commit messages and PR descriptions in English, even when the conversation is in another language. Follow Conventional Commits for the subject line.
+</important>
+
 <important if="you need to build, test, lint, or run crit">
 
 ```bash
