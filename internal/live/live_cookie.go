@@ -81,7 +81,7 @@ func readLiveCookieFile(path string) (string, error) {
 		return "", fmt.Errorf("reading cookie file %q: %w", path, err)
 	}
 	var parts []string
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

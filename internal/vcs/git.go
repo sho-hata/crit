@@ -202,7 +202,7 @@ func RemoteBranches(dir string) ([]string, error) {
 		return nil, fmt.Errorf("for-each-ref failed: %w", err)
 	}
 	var branches []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		name := strings.TrimPrefix(line, "origin/")
 		if name == "" || name == "HEAD" {
 			continue
@@ -438,11 +438,11 @@ func isCommitish(s string) bool {
 // Returns ok=false for a single-SHA (no "..") param, which keeps single-commit
 // behavior. Both parts must be valid commit-ish tokens; otherwise ok=false.
 func SplitCommitRange(commit string) (base, head string, ok bool) {
-	i := strings.Index(commit, "..")
-	if i < 0 {
+	before, after, ok := strings.Cut(commit, "..")
+	if !ok {
 		return "", "", false
 	}
-	base, head = commit[:i], commit[i+2:]
+	base, head = before, after
 	if !isCommitish(base) || !isCommitish(head) {
 		return "", "", false
 	}
@@ -1158,7 +1158,7 @@ func untrackedFilesInDir(dir string) ([]FileChange, error) {
 
 func parseNormalUntrackedStatus(out []byte) ([]FileChange, bool) {
 	var changes []FileChange
-	for _, record := range bytes.Split(out, []byte{0}) {
+	for record := range bytes.SplitSeq(out, []byte{0}) {
 		if !bytes.HasPrefix(record, []byte("? ")) {
 			continue
 		}
@@ -1181,7 +1181,7 @@ func untrackedFilesFullScanInDir(dir string) ([]FileChange, error) {
 		return nil, fmt.Errorf("ls-files failed: %w", err)
 	}
 	var changes []FileChange
-	for _, path := range bytes.Split(out, []byte{0}) {
+	for path := range bytes.SplitSeq(out, []byte{0}) {
 		if len(path) > 0 {
 			changes = append(changes, FileChange{Path: string(path), Status: "untracked"})
 		}
@@ -1200,7 +1200,7 @@ func AllTrackedFiles(dir string) ([]string, error) {
 
 	seen := make(map[string]bool)
 	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
 			continue
 		}
@@ -1215,7 +1215,7 @@ func AllTrackedFiles(dir string) ([]string, error) {
 	if err != nil {
 		return files, nil //nolint:nilerr // non-fatal: return tracked files only
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out2)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out2)), "\n") {
 		if line == "" {
 			continue
 		}
@@ -1274,7 +1274,7 @@ func WalkFiles(root string) ([]string, error) {
 
 func parseNameStatus(output string) []FileChange {
 	var changes []FileChange
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
 		if line == "" {
 			continue
 		}
@@ -1484,7 +1484,7 @@ func runDiffNumstat(dir string, refs ...string) (map[string]NumstatEntry, error)
 
 func parseNumstatOutput(out []byte) map[string]NumstatEntry {
 	stats := make(map[string]NumstatEntry)
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
 			continue
 		}
@@ -1501,8 +1501,8 @@ func parseNumstatOutput(out []byte) map[string]NumstatEntry {
 		entry := NumstatEntry{Additions: adds, Deletions: dels}
 		stats[path] = entry
 		// Rename lines look like "old.go => new.go" — index by new path too.
-		if i := strings.Index(path, " => "); i >= 0 {
-			stats[path[i+4:]] = entry
+		if _, after, ok := strings.Cut(path, " => "); ok {
+			stats[after] = entry
 		}
 	}
 	return stats

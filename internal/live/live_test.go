@@ -699,7 +699,7 @@ func TestConnectToLiveDaemon_RespectsNoOpen(t *testing.T) {
 }
 
 func containsArgPair(args []string, key, want string) bool {
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		if args[i] != key {
 			continue
 		}

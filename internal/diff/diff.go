@@ -262,10 +262,7 @@ func entryToDiffLine(e DiffEntry) (DiffLine, int, int) {
 }
 
 func buildHunkFromGroup(entries []DiffEntry, gStart, gEnd, contextLines int) DiffHunk {
-	start := gStart - contextLines
-	if start < 0 {
-		start = 0
-	}
+	start := max(gStart-contextLines, 0)
 	end := gEnd + contextLines
 	if end >= len(entries) {
 		end = len(entries) - 1

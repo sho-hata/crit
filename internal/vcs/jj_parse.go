@@ -21,7 +21,7 @@ func parseJJDiffSummary(output string) []FileChange {
 	}
 
 	var changes []FileChange
-	for _, line := range strings.Split(trimmed, "\n") {
+	for line := range strings.SplitSeq(trimmed, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if len(line) < 3 || line[1] != ' ' {
 			continue

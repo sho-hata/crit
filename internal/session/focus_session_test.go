@@ -252,7 +252,7 @@ func TestSetFocus_Range_AppliesLazyThreshold(t *testing.T) {
 	base := gitT(t, dir, "rev-parse", "HEAD")
 
 	total := lazyFileThreshold + 5
-	for i := 0; i < total; i++ {
+	for i := range total {
 		name := fmt.Sprintf("doc%03d.md", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# doc %d\n\nbody line\n", i))
 	}
@@ -303,7 +303,7 @@ func TestGetFileSnapshot_RangeLazy_UsesHeadSHANotWorkingTree(t *testing.T) {
 
 	total := lazyFileThreshold + 1
 	var lazyPath string
-	for i := 0; i < total; i++ {
+	for i := range total {
 		name := fmt.Sprintf("doc%03d.md", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# committed %d\n", i))
 		if i == lazyFileThreshold {
@@ -362,7 +362,7 @@ func TestGetFileSnapshot_RangeLazy_SubmoduleGitlink(t *testing.T) {
 	base := gitT(t, dir, "rev-parse", "HEAD")
 
 	// Create threshold eager files, then a submodule gitlink as the first lazy file.
-	for i := 0; i < lazyFileThreshold; i++ {
+	for i := range lazyFileThreshold {
 		name := fmt.Sprintf("doc%02d.md", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# committed %d\n", i))
 	}
@@ -415,7 +415,7 @@ func TestGetFileDiffSnapshot_RangeLazy_UsesBetweenSHADiff(t *testing.T) {
 
 	total := lazyFileThreshold + 1
 	var lazyPath string
-	for i := 0; i < total; i++ {
+	for i := range total {
 		name := fmt.Sprintf("doc%03d.md", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# base %d\nline two\n", i))
 		if i == lazyFileThreshold {
@@ -426,7 +426,7 @@ func TestGetFileDiffSnapshot_RangeLazy_UsesBetweenSHADiff(t *testing.T) {
 	gitT(t, dir, "commit", "-m", "base docs")
 	base := gitT(t, dir, "rev-parse", "HEAD")
 
-	for i := 0; i < total; i++ {
+	for i := range total {
 		name := fmt.Sprintf("doc%03d.md", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# head %d\nline two\n", i))
 	}
@@ -498,7 +498,7 @@ func TestGetFileSnapshot_RangeLazy_Deleted(t *testing.T) {
 
 	total := lazyFileThreshold + 1
 	var lazyPath string
-	for i := 0; i < total; i++ {
+	for i := range total {
 		name := fmt.Sprintf("doc%03d.md", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# doc %d\n", i))
 		if i == lazyFileThreshold {
@@ -616,7 +616,7 @@ func TestEnsureFileLoaded_ConcurrentWithWriteFiles(t *testing.T) {
 	dir := initTestRepo(t)
 
 	var entries []*FileEntry
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		name := fmt.Sprintf("lazy%03d.md", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("# lazy %d\n", i))
 		entries = append(entries, &FileEntry{
@@ -642,21 +642,17 @@ func TestEnsureFileLoaded_ConcurrentWithWriteFiles(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 50; i++ {
+	wg.Go(func() {
+		for range 50 {
 			s.WriteFiles()
 		}
-	}()
+	})
 	for _, fe := range entries {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := s.ensureFileLoaded(fe); err != nil {
 				t.Errorf("ensureFileLoaded(%s): %v", fe.Path, err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

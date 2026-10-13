@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -278,13 +279,7 @@ func TestBuildPlanDaemonArgs_PublicURL(t *testing.T) {
 	})
 	want := []string{"--public-url", "https://mymac.ts.net"}
 	for _, w := range want {
-		found := false
-		for _, a := range args {
-			if a == w {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(args, w)
 		if !found {
 			t.Errorf("expected %q in daemon args: %v", w, args)
 		}
@@ -446,19 +441,19 @@ func TestSavePlanSlug_ConcurrentWrites(t *testing.T) {
 	// Run multiple concurrent saves; none should lose data
 	const n = 10
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			errs <- savePlanSlug(fmt.Sprintf("session-%d", i), fmt.Sprintf("plan-%d", i))
 		}(i)
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		if err := <-errs; err != nil {
 			t.Fatalf("concurrent savePlanSlug: %v", err)
 		}
 	}
 
 	// All entries should be present
-	for i := 0; i < n; i++ {
+	for i := range n {
 		slug, ok := lookupPlanSlug(fmt.Sprintf("session-%d", i))
 		if !ok {
 			t.Errorf("session-%d not found after concurrent writes", i)

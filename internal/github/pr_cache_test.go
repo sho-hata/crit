@@ -25,9 +25,9 @@ func numID(n int) ChangeID { return ChangeID{Number: n} }
 func TestPRMetadataCache_FirstGetIsMiss(t *testing.T) {
 	t.Parallel()
 
-	var calls int32
+	var calls atomic.Int32
 	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return &PRInfo{Number: id.Number, Title: "first"}, nil
 	})
 
@@ -38,7 +38,7 @@ func TestPRMetadataCache_FirstGetIsMiss(t *testing.T) {
 	if info.Number != 42 || info.Title != "first" {
 		t.Errorf("got %+v want Number=42 Title=first", info)
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
+	if got := calls.Load(); got != 1 {
 		t.Errorf("fetchFn calls=%d want 1", got)
 	}
 }
@@ -46,9 +46,9 @@ func TestPRMetadataCache_FirstGetIsMiss(t *testing.T) {
 func TestPRMetadataCache_SecondGetIsHit(t *testing.T) {
 	t.Parallel()
 
-	var calls int32
+	var calls atomic.Int32
 	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return &PRInfo{Number: id.Number}, nil
 	})
 
@@ -58,7 +58,7 @@ func TestPRMetadataCache_SecondGetIsHit(t *testing.T) {
 	if _, err := c.get(numID(42)); err != nil {
 		t.Fatal(err)
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
+	if got := calls.Load(); got != 1 {
 		t.Errorf("fetchFn calls=%d want 1 (second get must be a hit)", got)
 	}
 }
@@ -66,9 +66,9 @@ func TestPRMetadataCache_SecondGetIsHit(t *testing.T) {
 func TestPRMetadataCache_DistinctPRsAreIndependent(t *testing.T) {
 	t.Parallel()
 
-	var calls int32
+	var calls atomic.Int32
 	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return &PRInfo{Number: id.Number}, nil
 	})
 
@@ -78,7 +78,7 @@ func TestPRMetadataCache_DistinctPRsAreIndependent(t *testing.T) {
 	if _, err := c.get(numID(2)); err != nil {
 		t.Fatal(err)
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
+	if got := calls.Load(); got != 2 {
 		t.Errorf("fetchFn calls=%d want 2 (distinct PRs each miss)", got)
 	}
 }
@@ -86,9 +86,9 @@ func TestPRMetadataCache_DistinctPRsAreIndependent(t *testing.T) {
 func TestPRMetadataCache_SameNumberDifferentProjectsAreIndependent(t *testing.T) {
 	t.Parallel()
 
-	var calls int32
+	var calls atomic.Int32
 	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return &PRInfo{Number: id.Number, URL: "https://github.com/" + id.Project + "/pull/" + strconv.Itoa(id.Number)}, nil
 	})
 
@@ -105,7 +105,7 @@ func TestPRMetadataCache_SameNumberDifferentProjectsAreIndependent(t *testing.T)
 	if infoA.URL == infoB.URL {
 		t.Fatalf("same-number PRs in different repos collided: %q", infoA.URL)
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
+	if got := calls.Load(); got != 2 {
 		t.Errorf("fetchFn calls=%d want 2", got)
 	}
 }
@@ -113,9 +113,9 @@ func TestPRMetadataCache_SameNumberDifferentProjectsAreIndependent(t *testing.T)
 func TestPRMetadataCache_InvalidateRemovesEntry(t *testing.T) {
 	t.Parallel()
 
-	var calls int32
+	var calls atomic.Int32
 	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return &PRInfo{Number: id.Number}, nil
 	})
 
@@ -126,7 +126,7 @@ func TestPRMetadataCache_InvalidateRemovesEntry(t *testing.T) {
 	if _, err := c.get(numID(42)); err != nil {
 		t.Fatal(err)
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
+	if got := calls.Load(); got != 2 {
 		t.Errorf("fetchFn calls=%d want 2 (invalidate must force re-fetch)", got)
 	}
 }
@@ -141,11 +141,11 @@ func TestPRMetadataCache_InvalidateMissingNumberIsNoOp(t *testing.T) {
 func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
 	t.Parallel()
 
-	var calls int32
+	var calls atomic.Int32
 	wantErr := errors.New("boom")
 	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
-		if atomic.LoadInt32(&calls) == 1 {
+		calls.Add(1)
+		if calls.Load() == 1 {
 			return nil, wantErr
 		}
 		return &PRInfo{Number: id.Number}, nil
@@ -161,7 +161,7 @@ func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
 	if info.Number != 7 {
 		t.Errorf("got Number=%d want 7", info.Number)
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
+	if got := calls.Load(); got != 2 {
 		t.Errorf("fetchFn calls=%d want 2 (errors must not be cached)", got)
 	}
 }
@@ -169,9 +169,9 @@ func TestPRMetadataCache_FetchErrorNotCached(t *testing.T) {
 func TestPRMetadataCache_ConcurrentGetSinglePopulation(t *testing.T) {
 	t.Parallel()
 
-	var calls int32
+	var calls atomic.Int32
 	c := newTestCache(func(id ChangeID) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return &PRInfo{Number: id.Number, Title: "v"}, nil
 	})
 
@@ -179,7 +179,7 @@ func TestPRMetadataCache_ConcurrentGetSinglePopulation(t *testing.T) {
 	results := make([]*PRInfo, goroutines)
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
 			info, err := c.get(numID(99))
@@ -269,13 +269,13 @@ func TestInvalidatePRCache_IgnoresNonPositive(t *testing.T) {
 }
 
 func TestFetchPRByNumber_RoutesThroughCache(t *testing.T) {
-	var calls int32
+	var calls atomic.Int32
 	withFetchPRByNumber(t, func(num int) (*PRInfo, error) {
-		atomic.AddInt32(&calls, 1)
+		calls.Add(1)
 		return &PRInfo{Number: num, Title: "cached"}, nil
 	})
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		info, err := FetchPRByNumber(100)
 		if err != nil {
 			t.Fatalf("iter %d: %v", i, err)
@@ -284,7 +284,7 @@ func TestFetchPRByNumber_RoutesThroughCache(t *testing.T) {
 			t.Errorf("iter %d: title=%q want cached", i, info.Title)
 		}
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
+	if got := calls.Load(); got != 1 {
 		t.Errorf("fetchPRFn calls=%d want 1 across 5 FetchPRByNumber calls", got)
 	}
 
@@ -292,7 +292,7 @@ func TestFetchPRByNumber_RoutesThroughCache(t *testing.T) {
 	if _, err := FetchPRByNumber(100); err != nil {
 		t.Fatal(err)
 	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
+	if got := calls.Load(); got != 2 {
 		t.Errorf("after invalidate, calls=%d want 2", got)
 	}
 }

@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -393,9 +394,7 @@ func (s *Session) snapshotForWrite(critPath string) writeFilesSnapshot {
 		var deleted map[string]struct{}
 		if ids := s.deletedCommentIDs[f.Path]; len(ids) > 0 {
 			deleted = make(map[string]struct{}, len(ids))
-			for k, v := range ids {
-				deleted[k] = v
-			}
+			maps.Copy(deleted, ids)
 		}
 		snap.files[i] = writeFileSnapshot{
 			path:       f.Path,

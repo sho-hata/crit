@@ -1001,7 +1001,7 @@ func TestBindProxyServer_PortIsAPIPlusOne(t *testing.T) {
 	t.Parallel()
 
 	const maxAttempts = 20
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := range maxAttempts {
 		apiLn, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)

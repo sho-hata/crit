@@ -56,8 +56,8 @@ func RenderData(tmplText string, data map[string]any) (string, error) {
 
 // TemplateSource describes where a template value came from.
 func TemplateSource(layer, value string) string {
-	if strings.HasPrefix(value, prefixFile) {
-		return layer + ":" + strings.TrimPrefix(value, prefixFile)
+	if after, ok := strings.CutPrefix(value, prefixFile); ok {
+		return layer + ":" + after
 	}
 	return layer + ":inline"
 }

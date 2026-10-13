@@ -54,7 +54,7 @@ func opencodeConfigPath(global bool, home string) string {
 // exact line the user needs to add and leave the file alone. Same policy for
 // JSONC files with comments, which encoding/json can't round-trip safely.
 func installOpencodePluginEntry(path, entry string, force bool) error {
-	root := map[string]interface{}{}
+	root := map[string]any{}
 	data, readErr := os.ReadFile(path)
 	switch {
 	case readErr == nil:
@@ -73,7 +73,7 @@ func installOpencodePluginEntry(path, entry string, force bool) error {
 		// If `plugin` exists but isn't an array (string shorthand, null, object),
 		// we don't know how to safely append — bail rather than clobber.
 		if raw, ok := root["plugin"]; ok && raw != nil {
-			if _, ok := raw.([]interface{}); !ok {
+			if _, ok := raw.([]any); !ok {
 				printManualPluginInstruction(path, "\"plugin\" key is not an array", entry)
 				return nil
 			}
@@ -84,7 +84,7 @@ func installOpencodePluginEntry(path, entry string, force bool) error {
 		return readErr
 	}
 
-	plugins, _ := root["plugin"].([]interface{})
+	plugins, _ := root["plugin"].([]any)
 	if pluginEntryPresent(plugins, entry) {
 		if !force {
 			fmt.Printf("  Skipped:   %s (plugin already registered)\n", path)
@@ -110,7 +110,7 @@ func installOpencodePluginEntry(path, entry string, force bool) error {
 // than the `plugin` key. Re-marshaling a map[string]interface{} reorders keys
 // and strips formatting, so we treat any extra content as a signal to leave
 // the file alone and ask the user to register the plugin manually.
-func hasUnrelatedKeys(root map[string]interface{}) bool {
+func hasUnrelatedKeys(root map[string]any) bool {
 	for k := range root {
 		if k != "plugin" {
 			return true
@@ -130,14 +130,14 @@ func printManualPluginInstruction(path, reason, entry string) {
 
 // pluginEntryPresent reports whether `entry` (or its `[name, options]` tuple
 // form) already exists in the opencode plugin array.
-func pluginEntryPresent(plugins []interface{}, entry string) bool {
+func pluginEntryPresent(plugins []any, entry string) bool {
 	for _, p := range plugins {
 		switch v := p.(type) {
 		case string:
 			if v == entry {
 				return true
 			}
-		case []interface{}:
+		case []any:
 			if len(v) > 0 {
 				if name, ok := v[0].(string); ok && name == entry {
 					return true

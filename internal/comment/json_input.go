@@ -90,10 +90,7 @@ func jsonSnippet(data []byte, offset int64) string {
 	if int(offset) > len(data) {
 		offset = int64(len(data))
 	}
-	start := offset - before
-	if start < 0 {
-		start = 0
-	}
+	start := max(offset-before, 0)
 	end := offset + after
 	if int(end) > len(data) {
 		end = int64(len(data))

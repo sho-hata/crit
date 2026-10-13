@@ -116,7 +116,7 @@ func TestHandleStory_PostValid_Idempotent(t *testing.T) {
 
 	s, _ := storyTestServer(t)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest("POST", "/api/story", bytes.NewReader(validStoryBody(t)))
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, req)

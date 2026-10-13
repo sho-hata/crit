@@ -319,7 +319,7 @@ func lookupSection(settings map[string]any, section string) any {
 		return v
 	}
 	var cur any = settings
-	for _, part := range strings.Split(section, ".") {
+	for part := range strings.SplitSeq(section, ".") {
 		m, ok := cur.(map[string]any)
 		if !ok {
 			return nil

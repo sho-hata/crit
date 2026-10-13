@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"sort"
@@ -615,9 +616,7 @@ func fetchPRThreadResolved(id ChangeID) (map[int64]bool, error) {
 		if err != nil {
 			return nil, err
 		}
-		for id, r := range page {
-			resolved[id] = r
-		}
+		maps.Copy(resolved, page)
 		if nextCursor == "" {
 			return resolved, nil
 		}
@@ -1433,8 +1432,8 @@ func parseGHIncludeStatus(out []byte) int {
 	if i := strings.IndexByte(line, '\n'); i >= 0 {
 		line = line[:i]
 	}
-	fields := strings.Fields(line)
-	for _, f := range fields {
+	fields := strings.FieldsSeq(line)
+	for f := range fields {
 		if n, err := strconv.Atoi(f); err == nil && n >= 100 && n < 600 {
 			return n
 		}

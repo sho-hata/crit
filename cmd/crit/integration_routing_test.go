@@ -452,14 +452,14 @@ func TestInstallIntegration_GeminiWritesSettingsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected .gemini/settings.json to be written: %v", err)
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatalf("settings.json is not valid JSON: %v", err)
 	}
-	hooks, _ := m["hooks"].(map[string]interface{})
-	before, _ := hooks["BeforeTool"].([]interface{})
+	hooks, _ := m["hooks"].(map[string]any)
+	before, _ := hooks["BeforeTool"].([]any)
 	for _, e := range before {
-		if em, ok := e.(map[string]interface{}); ok && em["matcher"] == "exit_plan_mode" {
+		if em, ok := e.(map[string]any); ok && em["matcher"] == "exit_plan_mode" {
 			return
 		}
 	}
@@ -1108,14 +1108,14 @@ func TestInstallGeminiSettings(t *testing.T) {
 	t.Parallel()
 
 	hookEntry := func(data []byte) bool {
-		var m map[string]interface{}
+		var m map[string]any
 		if err := json.Unmarshal(data, &m); err != nil {
 			return false
 		}
-		hooks, _ := m["hooks"].(map[string]interface{})
-		before, _ := hooks["BeforeTool"].([]interface{})
+		hooks, _ := m["hooks"].(map[string]any)
+		before, _ := hooks["BeforeTool"].([]any)
 		for _, e := range before {
-			em, ok := e.(map[string]interface{})
+			em, ok := e.(map[string]any)
 			if ok && em["matcher"] == "exit_plan_mode" {
 				return true
 			}
@@ -1161,19 +1161,19 @@ func TestInstallGeminiSettings(t *testing.T) {
 		_ = os.WriteFile(path, []byte(stale), 0o644)
 		installGeminiSettings(path, true)
 		data, _ := os.ReadFile(path)
-		var m map[string]interface{}
+		var m map[string]any
 		_ = json.Unmarshal(data, &m)
-		hooks, _ := m["hooks"].(map[string]interface{})
-		before, _ := hooks["BeforeTool"].([]interface{})
+		hooks, _ := m["hooks"].(map[string]any)
+		before, _ := hooks["BeforeTool"].([]any)
 		// exactly one exit_plan_mode entry
 		count := 0
 		for _, e := range before {
-			em, ok := e.(map[string]interface{})
+			em, ok := e.(map[string]any)
 			if ok && em["matcher"] == "exit_plan_mode" {
 				count++
-				inner, _ := em["hooks"].([]interface{})
+				inner, _ := em["hooks"].([]any)
 				if len(inner) > 0 {
-					cmd, _ := inner[0].(map[string]interface{})["command"].(string)
+					cmd, _ := inner[0].(map[string]any)["command"].(string)
 					if cmd == "old-cmd" {
 						t.Error("stale command not replaced")
 					}
@@ -1194,13 +1194,13 @@ func TestInstallGeminiSettings(t *testing.T) {
 		_ = os.WriteFile(path, []byte(existing), 0o644)
 		installGeminiSettings(path, false)
 		data, _ := os.ReadFile(path)
-		var m map[string]interface{}
+		var m map[string]any
 		_ = json.Unmarshal(data, &m)
-		hooks, _ := m["hooks"].(map[string]interface{})
-		before, _ := hooks["BeforeTool"].([]interface{})
+		hooks, _ := m["hooks"].(map[string]any)
+		before, _ := hooks["BeforeTool"].([]any)
 		hasOther, hasCrit := false, false
 		for _, e := range before {
-			em, ok := e.(map[string]interface{})
+			em, ok := e.(map[string]any)
 			if !ok {
 				continue
 			}

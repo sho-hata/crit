@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -284,12 +285,7 @@ func (l *Language) availableAt(now time.Time) bool {
 
 // Any reports whether include matches at least one registered language.
 func Any(include func(*Language) bool) bool {
-	for _, l := range languages {
-		if include(l) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(languages, include)
 }
 
 // Extensions returns the sorted extensions (no dots) of every language

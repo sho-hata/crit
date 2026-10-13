@@ -668,8 +668,8 @@ func readPortFromPipe(readEnd *os.File) (portCh chan int, errCh chan error) {
 			return
 		}
 		line := scanner.Text()
-		if strings.HasPrefix(line, "error:") {
-			errCh <- fmt.Errorf("%s", strings.TrimPrefix(line, "error:"))
+		if after, ok := strings.CutPrefix(line, "error:"); ok {
+			errCh <- fmt.Errorf("%s", after)
 			return
 		}
 		port, err := strconv.Atoi(line)
@@ -889,7 +889,7 @@ func SignalReadiness(pipe *os.File, port int) {
 // DaemonFatal reports a startup error through the readiness pipe so the
 // parent process receives a structured message, then exits.
 // pipe may be nil (not running as daemon); the error is always logged to stderr.
-func DaemonFatal(pipe *os.File, format string, args ...interface{}) {
+func DaemonFatal(pipe *os.File, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	log.Print(msg)
 	if pipe != nil {

@@ -190,8 +190,8 @@ func buildCandidates(f integration, agent, projectDir, homeDir string) []candida
 	candidates = append(candidates, candidate{marketplacePath, locationMarketplace})
 
 	agentPrefix := fmt.Sprintf("integrations/%s/", agent)
-	if strings.HasPrefix(f.source, agentPrefix) {
-		relPath := strings.TrimPrefix(f.source, agentPrefix)
+	if after, ok := strings.CutPrefix(f.source, agentPrefix); ok {
+		relPath := after
 		cacheBase := filepath.Join(homeDir, toolDir, "plugins", "cache", "crit", "crit")
 		if latest := latestCacheDir(cacheBase); latest != "" {
 			cachePath := filepath.Join(cacheBase, latest, relPath)

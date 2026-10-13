@@ -259,9 +259,7 @@ func TestRoundParam_RejectInvalidConsistently(t *testing.T) {
 		{name: "very_large", round: "99999", wantStatus: 0},
 	}
 	for _, ep := range endpoints {
-		ep := ep
 		for _, tc := range cases {
-			tc := tc
 			t.Run(ep+"/"+tc.name, func(t *testing.T) {
 				t.Parallel()
 

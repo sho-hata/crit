@@ -399,11 +399,9 @@ func TestWaitBackground_TimesOut(t *testing.T) {
 
 	// Wedged goroutine: should time out.
 	release := make(chan struct{})
-	s.bgWG.Add(1)
-	go func() {
-		defer s.bgWG.Done()
+	s.bgWG.Go(func() {
 		<-release
-	}()
+	})
 	if s.WaitBackground(50 * time.Millisecond) {
 		t.Error("WaitBackground returned true while a goroutine was still running")
 	}

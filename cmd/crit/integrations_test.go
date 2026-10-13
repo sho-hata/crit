@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -683,13 +684,7 @@ func TestDetectPresentAgents_ConfigDir(t *testing.T) {
 	os.MkdirAll(filepath.Join(homeDir, ".claude"), 0o755)
 
 	agents := detectPresentAgents(homeDir)
-	found := false
-	for _, a := range agents {
-		if a == "claude-code" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(agents, "claude-code")
 	if !found {
 		t.Error("expected claude-code to be detected via .claude dir")
 	}
@@ -767,13 +762,7 @@ func TestCheckMissingIntegrations(t *testing.T) {
 
 	// No integration installed — should report claude-code as missing
 	missing := checkMissingIntegrations(projectDir, homeDir)
-	found := false
-	for _, m := range missing {
-		if m == "claude-code" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(missing, "claude-code")
 	if !found {
 		t.Error("expected claude-code in missing list when .claude dir exists but no integration installed")
 	}
@@ -878,13 +867,7 @@ func TestDetectPresentAgents_JunkFileInAmbiguousConfigDirCountsAsPresent(t *test
 		t.Fatal(err)
 	}
 
-	found := false
-	for _, agent := range detectPresentAgents(homeDir) {
-		if agent == "gemini" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(detectPresentAgents(homeDir), "gemini")
 	if !found {
 		t.Fatal("ambiguous config dir with only .DS_Store currently counts as present")
 	}

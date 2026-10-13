@@ -183,10 +183,3 @@ func captureStdout(t *testing.T, fn func()) string {
 	io.Copy(&buf, r)
 	return buf.String()
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

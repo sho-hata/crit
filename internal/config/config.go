@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -407,9 +408,7 @@ func mergeProjectPrompts(merged *Config, project Config) {
 	if merged.Prompts == nil {
 		merged.Prompts = make(map[string]string, len(project.Prompts))
 	}
-	for k, v := range project.Prompts {
-		merged.Prompts[k] = v
-	}
+	maps.Copy(merged.Prompts, project.Prompts)
 }
 
 // mergeProjectHooks unions project hook config onto merged (project overrides
@@ -421,9 +420,7 @@ func mergeProjectHooks(merged *Config, project Config) {
 	if merged.Hooks == nil {
 		merged.Hooks = make(map[string]string, len(project.Hooks))
 	}
-	for k, v := range project.Hooks {
-		merged.Hooks[k] = v
-	}
+	maps.Copy(merged.Hooks, project.Hooks)
 }
 
 // LoadConfig loads and merges configuration from all sources.

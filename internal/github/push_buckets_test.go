@@ -538,7 +538,7 @@ func TestBucketComments_DeterministicOrder(t *testing.T) {
 			"m.go": {Comments: []Comment{{ID: "m", DiffScope: "layer", HeadSHA: "h", Body: "m"}}},
 		},
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		b := bucketCommentsForPush(cj, "h", true)
 		if len(b.Postable) != 3 {
 			t.Fatalf("len=%d", len(b.Postable))
