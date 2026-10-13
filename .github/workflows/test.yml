@@ -193,6 +193,11 @@ jobs:
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
           restore-keys: go-build-${{ runner.os }}-
 
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
       - name: Install language servers
         run: bash scripts/install-lsp-servers.sh
 
@@ -226,6 +231,11 @@ jobs:
 
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
 
       - name: Install language servers
         run: bash scripts/install-lsp-servers.sh

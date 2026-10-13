@@ -32,6 +32,11 @@ type Language struct {
 	// fixed binary name is ever spawned — there is deliberately no config
 	// key for the path, so a malicious repo cannot hijack the command.
 	Command []string
+	// Args returns arguments appended to Command for a server rooted at
+	// root, or nil. For the one thing that cannot be fixed in Command: a
+	// per-workspace location (jdt.ls's -data dir). Runs once per spawn, on
+	// the request path.
+	Args func(root string) []string
 	// IDByExt maps a file extension (lower-case, no dot) to the LSP
 	// languageId sent with didOpen.
 	IDByExt map[string]string
@@ -147,6 +152,23 @@ var languages = []*Language{
 		ConfigSettings: phpConfigSettings,
 		LocalEnv:       true,
 		ExtraRoots:     phpExtraRoots,
+	},
+	{
+		Name: "java",
+		// -Dsyntaxserver=true selects jdt.ls's syntax server, the mode
+		// vscode-java runs in an untrusted workspace: no build-tool import,
+		// so the repo's Gradle/Maven build scripts and the plugins they pull
+		// in never run (measured against jdt.ls 1.61.0: the standard server
+		// started Gradle in the fixture within 40s of didOpen and wrote
+		// .gradle/, .project and .settings/ into it; the syntax server
+		// touched nothing). Source roots are inferred from the .java files,
+		// so same-tree symbols and the JDK resolve; third-party types don't.
+		// It offers no find-references (see Client.provided). --jvm-arg is
+		// the launcher's; the property is read by JDTEnvironmentUtils.
+		Command:        []string{"jdtls", "--jvm-arg=-Dsyntaxserver=true"},
+		Args:           jdtlsArgs,
+		IDByExt:        map[string]string{"java": "java"},
+		SparsePatterns: []string{"*.java"},
 	},
 }
 

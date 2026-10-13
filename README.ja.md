@@ -14,7 +14,7 @@
 
 > [!NOTE]
 > **これはフォークです。** [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) に、本家にはまだ入っていない機能を追加しています。フォーク独自の追加機能には **(fork-only)** を付けています。現時点では以下:
-> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go は gopls、TypeScript / JavaScript は typescript-language-server、Python は pyright、Terraform は terraform-ls、PHP は intelephense 経由）
+> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go は gopls、TypeScript / JavaScript は typescript-language-server、Python は pyright、Terraform は terraform-ls、PHP は intelephense、Java は jdt.ls 経由）
 
 ![「notification-plan.md」を開いた Crit の画面。「Queue - Redis Streams, SQS, RabbitMQ」の行に「Just use SQS - we're in AWS」というコメントが付いている](docs/images/demo-overview.png)
 
@@ -166,7 +166,7 @@ crit cleanup                      # 古いレビューファイルを削除
 diff を読むというのは、エディタなしでコードを読むということです。この機能は、そこで実際に知りたくなる 3 つのこと — これは何か？　どこで定義されているか？　他にどこから呼ばれているか？ — をレビュー画面の中に持ち込みます。
 
 > [!NOTE]
-> 対応言語は **Go**（[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) 経由）、**TypeScript / JavaScript**（[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) 経由）、**Python**（[pyright](https://github.com/microsoft/pyright) 経由）、**Terraform**（[terraform-ls](https://github.com/hashicorp/terraform-ls) 経由）、**PHP**（[intelephense](https://intelephense.com) 経由）です。それぞれのサーバーバイナリが `PATH` にあれば、言語ごとに独立して有効になります。
+> 対応言語は **Go**（[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) 経由）、**TypeScript / JavaScript**（[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) 経由）、**Python**（[pyright](https://github.com/microsoft/pyright) 経由）、**Terraform**（[terraform-ls](https://github.com/hashicorp/terraform-ls) 経由）、**PHP**（[intelephense](https://intelephense.com) 経由）、**Java**（[jdt.ls](https://github.com/eclipse-jdtls/eclipse.jdt.ls) 経由。ホバーと定義ジャンプのみ）です。それぞれのサーバーバイナリが `PATH` にあれば、言語ごとに独立して有効になります。
 
 #### ホバー: シグネチャとドキュメント
 
@@ -215,6 +215,10 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
    # PHP — PHP 本体のインストールは不要
    npm install -g intelephense
    which intelephense
+
+   # Java — jdtls には JDK 21 以上（とランチャー用の python3）が必要
+   brew install jdtls        # または https://download.eclipse.org/jdtls/milestones/ の tarball
+   which jdtls java
    ```
 
 2. レビューを開始します。それだけです。LSP はデフォルトで有効で（`lsp` 設定キー。無効にするには `"lsp": false`）、インストールされているサーバーに応じて言語ごとに独立して有効になります。
@@ -237,6 +241,7 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
 - **Python の仮想環境。** pyright は `.venv` を自動では見つけません。何もしないとサードパーティの import はすべて `Unknown` になり（ホバーに型が出ない、定義ジャンプが `import` 行に着地する）、エラーも出ません。そこで crit は、ファイルに最も近い `.venv/` または `venv/` の site-packages を pyright に教えます（サービスごとに venv を持つモノレポにも対応）。渡すのはディレクトリだけでインタプリタは渡さないため、レビュー対象リポジトリの Python を crit が実行することはありません。この規約から外れる構成は pyright 側で扱います: crit の起動前に venv を activate する（起動済みのレビューは元の `PATH` のままなので再起動してください）か、`venvPath` と `venv` を指定した `pyrightconfig.json` を置きます。編集可能インストールの `.pth` や、`PATH` 上と異なる Python バージョンは、`.venv` からは読み取れません。
 - **Terraform。** 対象は `.tf` と `.tfvars` です。crit は terraform-ls に `terraform` を実行させません。`terraform init` 済みのディレクトリでは terraform-ls が `terraform providers schema` を実行し、`.terraform/` 配下の provider バイナリ（レビュー対象のツリーにあるもの）が起動されるためです。provider スキーマは terraform-ls に同梱されたもの（公式・パートナー provider の最新版。どのバージョンかはホバーに表示されます）を使い、それ以外の provider のリソース内の参照は解決されません。`terraform init` でインストールされたモジュールは、作業ツリーのレビューでは解決されますが、範囲 / PR レビューでは解決されません（`.terraform/` は git 管理外のため）。なお terraform-ls は registry モジュールのメタデータを registry.terraform.io から取得します。
 - **PHP。** 対象は `.php` と `.phtml` です。intelephense は静的解析器で、PHP も Composer も実行しません。`vendor/` を含むワークスペース全体をインデックスするため、大きなプロジェクトでは最初のホバーがインデックス完了を待ちます（最大 15 秒）。インデックスのキャッシュはリポジトリ外の `~/.config/intelephense` に置かれます。有料機能は使いません。ライセンスキーを導入済みなら読み込まれますが、crit が使う機能には影響しません。
+- **Java。** 対象は `.java` です。crit は jdt.ls を **syntax server** モード（VS Code が信頼されていないワークスペースで使うモード）で起動します。通常モードの jdt.ls は Gradle / Maven プロジェクトを import するためにビルドスクリプト（レビュー対象ブランチのコード）を評価し、そこから読み込まれるプラグインも実行してしまうためです。syntax server は `.java` ファイルからソースルートを推定するので、同じツリー内のシンボルと JDK は Javadoc 付きで解決されますが、依存ライブラリのサードパーティ型は解決されません。提供されるのはホバーと定義ジャンプで、参照検索はありません（⌘/Ctrl+Shift+クリックは何も見つけません）。Eclipse ワークスペースはリポジトリ外の `~/.crit/lsp/jdtls/` に置かれます。コールドスタートには数秒かかります。
 - **デバッグ。** ホバーが反応しない・結果がおかしいときは、`CRIT_LSP_DEBUG=1` を付けて crit を起動すると、crit と言語サーバーのやり取りがログに出ます。daemon は環境変数を引き継ぐので、すでに動いているレビューは再起動してください。出力先は daemon ログ（`~/.crit/sessions/<key>.log`）です（レビュー中に `tail -f` できます。セッション終了時に crit が削除します）。内容は、通常は捨てられる各サーバーの stderr、双方向のすべての JSON-RPC フレーム（ペイロードは 1 KB で切り詰め）、リクエストごとの所要時間と結果を示す 1 行のサマリ、サーバーのライフサイクル（起動・ハンドシェイク・終了・再起動・アイドル停止）です。各行には `lsp[go]` / `lsp[typescript]` / `lsp[python]` / `lsp[terraform]` / `lsp[php]` のタグが付き、`grep 'finished in'` でリクエストごとの所要時間だけを見られます。フレームにはホバーしたファイルのソースが含まれるので、ログをそのまま公開の場に貼らないでください。
 
 ### プログラムからのコメント投稿
@@ -382,7 +387,7 @@ crit config                                    # 解決後の設定を表示（�
 | `no_update_check`      | bool     | `false`                    | 起動時に新バージョンを確認しない。                                                                                                                                                      |
 | `no_integration_check` | bool     | `false`                    | 起動時の連携設定の鮮度チェックをスキップする。                                                                                                                                          |
 | `vcs`                  | string   | 自動検出                   | 使用する VCS バックエンド: `"git"`、`"sl"`、`"jj"`。設定した場合、自動検出の代わりにこれを使います。指定した VCS が利用できない場合は git にフォールバックします。`--vcs` CLI フラグでも指定でき、フラグが設定より優先されます。 |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Go・TypeScript / JavaScript・Python・Terraform・PHP ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。各言語のサーバー（`gopls`、`typescript-language-server`、`pyright-langserver`、`terraform-ls`、`intelephense`）が PATH にある場合に言語ごとに有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Go・TypeScript / JavaScript・Python・Terraform・PHP・Java ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。各言語のサーバー（`gopls`、`typescript-language-server`、`pyright-langserver`、`terraform-ls`、`intelephense`、`jdtls`）が PATH にある場合に言語ごとに有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** 範囲 / PR レビューを対象 SHA 時点で解決するために LSP がチェックアウトする、スパースな git worktree のサイズ上限（MB）。推定サイズがこれを超えるコミットはチェックアウトせずスキップされます（そのレビューでは LSP が無効のままになります）。 |
 | `live_cookie`          | string   | `""`                       | ライブモードで上流アプリへ転送する Cookie ヘッダの値（例: `"_crit_key=..."`）。グローバル / プロジェクトどちらでも可。秘密情報は `live_cookie_file` を推奨。                            |
 | `live_cookie_file`     | string   | `""`                       | ライブモード用の上流 Cookie を記載したファイルのパス（生のヘッダ行、または Netscape 形式の cookie jar）。グローバル / プロジェクトどちらでも可。相対パスはリポジトリルートから解決されます。 |
