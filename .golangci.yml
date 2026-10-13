@@ -13,6 +13,7 @@ linters:
     - errorlint
     - unparam
     - perfsprint
+    - modernize
   settings:
     gocyclo:
       min-complexity: 15
