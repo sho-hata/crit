@@ -32,6 +32,8 @@ func TestLanguageForPath(t *testing.T) {
 		{"infra/prod.tfvars", "terraform", "terraform-vars"},
 		{"src/Http/Controller.php", "php", "php"},
 		{"templates/page.phtml", "php", "php"},
+		{"lib/src/widget.dart", "dart", "dart"},
+		{"UPPER.DART", "dart", "dart"},
 		// .hcl is shared with Packer, Nomad, Terragrunt, … and the Terraform
 		// test files (.tftest.hcl) can't be told apart by extension alone.
 		{"infra/run.tftest.hcl", "", ""},
