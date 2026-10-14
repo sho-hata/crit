@@ -9,11 +9,12 @@ crit/
 ├── cmd/crit/            # package main — thin CLI (main.go, cli_*.go, wire.go)
 ├── internal/            # Core logic packages (daemon, server, session, github, vcs, …)
 ├── web/                 # Embedded frontend assets (Go package webassets; embed.go)
-│   ├── index.html       # HTML shell — code-review OR live-mode script fork
+│   ├── index.html       # HTML shell — code-review / live-mode / file-viewer script fork
 │   ├── app.js           # Code-review mode JS
 │   ├── live-mode*.js    # Live-mode modules
 │   ├── crit-agent.js / agent-*.js / agent-marker.css  # Injected iframe scripts
 │   ├── crit-*.js        # Shared renderer, SSE, draft, comment UI modules
+│   ├── crit-view.js / style-view.css  # /view file viewer (whole file on Pierre + LSP; peek "Open full file")
 │   ├── style.css / style-live.css / theme.css
 │   ├── __tests__/       # Node.js unit tests (node --test)
 │   ├── pierre/          # Vendored @pierre/diffs + Shiki (split ESM, gzip; scripts/build-pierre.mjs)
@@ -237,7 +238,7 @@ File-scoped (require `?path=X`):
 - `POST|PUT|DELETE /api/comment/{id}/replies[/{rid}]?path=X` — reply CRUD
 - `PUT /api/comment/{id}/resolve?path=X` — set resolved state
 
-Static: `GET /files/<path>` — serve files from repo root (path traversal protected). `GET /` — embedded frontend assets.
+Static: `GET /files/<path>` — serve files from repo root (path traversal protected). `GET /` — embedded frontend assets. `GET /view?path=X&line=N` — the same `index.html` shell booting `web/crit-view.js` (not readiness-gated; the page polls `/api/session`): one whole repo file on Pierre with Shiki + LSP, read-only — the peek popup's "Open full file" link. It loads the file through `/api/file`, whose out-of-session fallback (`GetFileSnapshotOutsideSession`) reads `Focus.HeadSHA` under range/PR focus and the working tree otherwise, matching what the review pane and the LSP worktree show.
 </important>
 
 <important if="you are modifying server security, request handling, or path-validation logic">

@@ -986,7 +986,7 @@ func TestSetFocus_ExpandsShortSHAsToFullOIDs(t *testing.T) {
 	commitAt(t, dir, "added.txt", "y\n", "add y")
 	head := gitT(t, dir, "rev-parse", "HEAD")
 
-	s := &Session{RepoRoot: dir, OutputDir: dir, VCS: &vcs.GitVCS{}}
+	s := &Session{RepoRoot: dir, OutputDir: dir, VCS: &vcs.GitVCS{}, Branch: "main"}
 	t.Cleanup(func() { quiesceSession(t, s) })
 
 	if err := s.SetFocus(Focus{
@@ -1075,3 +1075,48 @@ type canonicalizeFailVCS struct{ vcs.GitVCS }
 
 func (c *canonicalizeFailVCS) Name() string               { return "hg" }
 func (c *canonicalizeFailVCS) HasObject(_, _ string) bool { return true }
+
+func TestGetFileSnapshotOutsideSession_RangeFocusReadsHeadSHA(t *testing.T) {
+	t.Parallel()
+
+	dir := initTestRepo(t)
+	commitAt(t, dir, "lib.go", "package lib // v1\n", "add lib")
+	base := gitT(t, dir, "rev-parse", "HEAD")
+	commitAt(t, dir, "added.txt", "y\n", "add y")
+	head := gitT(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "lib.go"), []byte("package lib // dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Session{RepoRoot: dir, OutputDir: dir, VCS: &vcs.GitVCS{}, Branch: "main"}
+	if err := s.SetFocus(Focus{Kind: FocusRange, BaseSHA: base, HeadSHA: head, DiffScope: DiffScopeLayer}); err != nil {
+		t.Fatal(err)
+	}
+	if s.fileByPathLocked("lib.go") != nil {
+		t.Fatal("lib.go unexpectedly in the session file list")
+	}
+
+	snap, ok := s.GetFileSnapshotOutsideSession("lib.go")
+	if !ok {
+		t.Fatal("expected lib.go at HeadSHA")
+	}
+	if got := snap["content"]; got != "package lib // v1\n" {
+		t.Errorf("content = %q, want the HeadSHA version", got)
+	}
+	if got := snap["file_type"]; got != "code" {
+		t.Errorf("file_type = %v, want code", got)
+	}
+	for _, bad := range []string{"../outside.go", "..", "/etc/passwd", "missing.go"} {
+		if _, ok := s.GetFileSnapshotOutsideSession(bad); ok {
+			t.Errorf("GetFileSnapshotOutsideSession(%q) = ok, want rejected", bad)
+		}
+	}
+
+	if err := s.SetFocus(Focus{Kind: FocusWorkingTree}); err != nil {
+		t.Fatal(err)
+	}
+	snap, ok = s.GetFileSnapshotOutsideSession("lib.go")
+	if !ok || snap["content"] != "package lib // dirty\n" {
+		t.Errorf("working-tree snapshot = %v, %v; want the on-disk version", snap, ok)
+	}
+}
