@@ -23,6 +23,8 @@
 //   - opts.renderMarkdown(text) -> safe HTML for hover markdown
 //   - opts.jumpToLocation(loc)  -> Promise<boolean>; true when the app
 //     revealed the location inside the review UI
+//   - opts.canJump(loc)         -> whether jumpToLocation is worth asking for
+//     this location (default: loc.in_session; the file viewer says in_repo)
 //   - opts.mountLineWidget(path, line, el) -> Promise<boolean>; attaches el
 //     under that line (a Pierre annotation); false when the line is not shown
 //   - opts.unmountLineWidget(el) -> detaches it again
@@ -98,6 +100,11 @@
     if (codeEl.dataset.deletions !== undefined) return null;
     if (codeEl.dataset.unified !== undefined && lineEl.dataset.lineType === 'change-deletion') return null;
     return { lineEl: lineEl, path: host.dataset.critPath, line: parseInt(lineEl.dataset.line, 10) || 0 };
+  }
+
+  function viewURL(path, line) {
+    const url = '/view?path=' + encodeURIComponent(path);
+    return line > 0 ? url + '&line=' + line : url;
   }
 
   function findHunkForLine(hunks, line) {
@@ -523,7 +530,7 @@
   // The peek fallback works because the server attaches a peek whenever the
   // file is readable.
   function resolveJump(loc) {
-    Promise.resolve(loc.in_session ? st.jumpToLocation(loc) : false)
+    Promise.resolve(st.canJump(loc) ? st.jumpToLocation(loc) : false)
       .then(function (handled) {
         if (!handled) showPeek([loc], 0);
       });
@@ -626,7 +633,7 @@
       const open = document.createElement('a');
       open.className = 'lsp-peek-open';
       open.textContent = st.openFullText;
-      open.href = '/files/' + loc.path.split('/').map(encodeURIComponent).join('/');
+      open.href = viewURL(loc.path, loc.line);
       open.target = '_blank';
       open.rel = 'noopener';
       actions.appendChild(open);
@@ -692,7 +699,7 @@
     const url = '/api/lsp/definition?path=' + encodeURIComponent(from.path) +
       '&line=' + lineNo + '&char=' + char;
     fetchLocations(url, function (locs) {
-      if (locs.length === 1 && locs[0].in_session) {
+      if (locs.length === 1 && st.canJump(locs[0])) {
         Promise.resolve(st.jumpToLocation(locs[0])).then(function (handled) {
           if (handled) {
             hidePeek();
@@ -840,7 +847,7 @@
       const open = document.createElement('a');
       open.className = 'lsp-peek-open';
       open.textContent = st.openFullText;
-      open.href = '/files/' + loc.path.split('/').map(encodeURIComponent).join('/');
+      open.href = viewURL(loc.path, loc.line);
       open.target = '_blank';
       open.rel = 'noopener';
       actions.appendChild(open);
@@ -887,7 +894,7 @@
   // Targets outside the review are already shown in the preview pane.
   function openRef(idx) {
     const loc = st.refsLocs && st.refsLocs[idx];
-    if (!loc || !loc.in_session) return;
+    if (!loc || !st.canJump(loc)) return;
     Promise.resolve(st.jumpToLocation(loc)).then(function (handled) {
       if (!handled) return;
       hideRefs();
@@ -1023,6 +1030,7 @@
     st = {
       renderMarkdown: opts.renderMarkdown,
       jumpToLocation: opts.jumpToLocation,
+      canJump: opts.canJump || function (loc) { return !!loc.in_session; },
       mountLineWidget: opts.mountLineWidget || null,
       unmountLineWidget: opts.unmountLineWidget || null,
       languageForPath: opts.languageForPath || null,
@@ -1083,6 +1091,7 @@
     wordAt: wordAt,
     symbolRange: symbolRange,
     makeExtensionMatcher: makeExtensionMatcher,
+    viewURL: viewURL,
     composeTooltip: composeTooltip,
     peekNoteHTML: peekNoteHTML,
   };

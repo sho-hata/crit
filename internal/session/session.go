@@ -2724,6 +2724,35 @@ func (s *Session) GetFileSnapshotFromDisk(path string) (map[string]any, bool) {
 	}, true
 }
 
+// GetFileSnapshotOutsideSession reads a file the session does not list from
+// the tree the review pane and the LSP workspace show: Focus.HeadSHA under
+// range/--pr focus, the working tree otherwise.
+func (s *Session) GetFileSnapshotOutsideSession(path string) (map[string]any, bool) {
+	s.mu.RLock()
+	focus := s.Focus
+	vc := s.VCS
+	s.mu.RUnlock()
+
+	if focus.Kind != FocusRange || focus.HeadSHA == "" || vc == nil {
+		return s.GetFileSnapshotFromDisk(path)
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+	if filepath.IsAbs(path) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return nil, false
+	}
+	data, err := s.readFileAtSHAForFocus(focus, focus.HeadSHA, clean)
+	if err != nil || data == nil {
+		return nil, false
+	}
+	return map[string]any{
+		"path":      clean,
+		"status":    "modified",
+		"file_type": detectFileType(clean),
+		"content":   string(data),
+		"file_hash": fileHash(data),
+	}, true
+}
+
 // whitespaceIgnoredHunks recomputes a fresh whitespace-ignored diff for a
 // normal modified file when ignoreWhitespace is requested. For added/untracked/
 // deleted files (where whitespace-ignore changes nothing) and the markdown

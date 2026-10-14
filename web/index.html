@@ -306,8 +306,28 @@
     // depend on a query string being present.
     var isLive = window.location.pathname === '/live';
     var isPreview = window.location.pathname === '/preview';
+    var isView = window.location.pathname === '/view';
 
-    if (isLive || isPreview) {
+    if (isView) {
+      // File viewer (crit-view.js); style-view.css hides the review chrome.
+      document.documentElement.classList.add('crit-mode-view');
+      var vl = document.createElement('link'); vl.rel = 'stylesheet'; vl.href = 'style-view.css';
+      document.head.appendChild(vl);
+      window.critPierreReady = new Promise(function(resolve) {
+        var pm = document.createElement('script'); pm.type = 'module'; pm.src = 'pierre/pierre-diffs.js';
+        pm.onload = function() { resolve(window.PierreDiffs || null); };
+        pm.onerror = function() { resolve(null); };
+        document.body.appendChild(pm);
+      });
+      [
+        'markdown-it.min.js', 'dompurify.min.js', 'comment-html.js',
+        'crit-shared.js', 'crit-theme-boost.js', 'crit-code-highlight.js', 'crit-lsp.js',
+        'crit-pierre-adapter.js', 'crit-pierre-view.js', 'crit-pierre-runtime.js', 'crit-pierre-dom.js',
+        'crit-view.js',
+      ].forEach(function (src) {
+        var t = document.createElement('script'); t.src = src; t.async = false; document.body.appendChild(t);
+      });
+    } else if (isLive || isPreview) {
       // Keep <body> intact and just mark <html> with a mode class. style-live.css
       // hides code-review-only chrome (file tree, main-content, comments-panel,
       // pr-panel, etc.) while keeping the header + settings overlay alive, so the

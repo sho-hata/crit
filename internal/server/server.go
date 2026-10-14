@@ -141,6 +141,9 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 
 	// Live-mode routes — NOT wrapped in withReady.
 	mux.HandleFunc("/live", s.serveIndexHTML())
+
+	// File viewer; not readiness-gated, the page polls /api/session itself.
+	mux.HandleFunc("/view", s.serveIndexHTML())
 	for _, f := range AgentScriptFiles {
 		if f == "crit-agent.js" {
 			mux.HandleFunc("/"+f, s.handleCritAgentJS)
@@ -944,9 +947,8 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, ok := s.session.Load().GetFileSnapshot(path)
 	if !ok {
-		// File not in session (e.g. scoped view showing a file added after startup).
-		// Try to serve it directly from disk.
-		snapshot, ok = s.session.Load().GetFileSnapshotFromDisk(path)
+		// Not in session: serve it from the tree the review shows.
+		snapshot, ok = s.session.Load().GetFileSnapshotOutsideSession(path)
 		if !ok {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
