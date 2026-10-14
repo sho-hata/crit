@@ -84,6 +84,12 @@ type Client struct {
 	// section name.
 	settings map[string]any
 
+	// provides records which of hover / definition / references the server
+	// declared in its initialize result. nil until that result arrives:
+	// requests sent before then (tests) go out as they are. Written once, in
+	// Initialize, before any request.
+	provides map[string]bool
+
 	// kill is nil for in-memory pipe transports (tests).
 	kill func()
 
@@ -437,10 +443,46 @@ func (c *Client) Initialize(rootDir string, initOpts map[string]any) error {
 	if initOpts != nil {
 		params["initializationOptions"] = initOpts
 	}
-	if err := c.call("initialize", params, nil); err != nil {
+	var result struct {
+		Capabilities map[string]json.RawMessage `json:"capabilities"`
+	}
+	if err := c.call("initialize", params, &result); err != nil {
 		return err
 	}
+	c.provides = map[string]bool{
+		"hover":      providerDeclared(result.Capabilities["hoverProvider"]),
+		"definition": providerDeclared(result.Capabilities["definitionProvider"]),
+		"references": providerDeclared(result.Capabilities["referencesProvider"]),
+	}
 	return c.notify("initialized", map[string]any{})
+}
+
+// providerDeclared reads a server capability: absent, null or false means
+// the server does not offer it; true or an options object means it does.
+func providerDeclared(raw json.RawMessage) bool {
+	switch s := strings.TrimSpace(string(raw)); s {
+	case "", "null", "false":
+		return false
+	default:
+		return true
+	}
+}
+
+// provided reports whether the server declared the capability. A request it
+// never offered is answered empty instead of being sent: the server would
+// refuse it with an error (jdt.ls's syntax server has no references
+// provider — lsp4j throws UnsupportedOperationException), and in the UI an
+// error counts toward the failure breaker while an empty answer is just
+// "nothing found".
+func (c *Client) provided(capability string) bool {
+	if c.provides == nil {
+		return true
+	}
+	if c.provides[capability] {
+		return true
+	}
+	c.debugf("%s not provided by the server; answering empty", capability)
+	return false
 }
 
 // DidOpen tells the server a document is open with the given content.
@@ -469,6 +511,9 @@ func (c *Client) DidChange(path, text string, version int) error {
 // Hover returns hover contents as markdown for a 0-based UTF-16 position, or
 // "" when the server has nothing to show.
 func (c *Client) Hover(path string, line, character int) (string, error) {
+	if !c.provided("hover") {
+		return "", nil
+	}
 	var result struct {
 		Contents json.RawMessage `json:"contents"`
 	}
@@ -487,6 +532,9 @@ type Location struct {
 
 // Definition returns definition locations for a 0-based UTF-16 position.
 func (c *Client) Definition(path string, line, character int) ([]Location, error) {
+	if !c.provided("definition") {
+		return nil, nil
+	}
 	var raw json.RawMessage
 	if err := c.call("textDocument/definition", positionParams(path, line, character), &raw); err != nil {
 		return nil, err
@@ -496,6 +544,9 @@ func (c *Client) Definition(path string, line, character int) ([]Location, error
 
 // References returns all reference locations (including the declaration).
 func (c *Client) References(path string, line, character int) ([]Location, error) {
+	if !c.provided("references") {
+		return nil, nil
+	}
 	params := positionParams(path, line, character)
 	params["context"] = map[string]any{"includeDeclaration": true}
 	var raw json.RawMessage

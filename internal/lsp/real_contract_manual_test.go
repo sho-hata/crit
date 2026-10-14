@@ -114,6 +114,20 @@ var realCases = map[string]realCase{
 		refsMin:   2,
 		blank:     realPos{1, 0},
 	},
+	"java": {
+		files: map[string]string{
+			"src/main/java/com/example/Greeter.java": javaGreeterSource,
+			"src/main/java/com/example/App.java":     javaAppSource,
+		},
+		file:      "src/main/java/com/example/App.java",
+		use:       realPos{javaGreetUseLine, javaGreetUseChar},
+		hoverWant: "friendly greeting",
+		defFile:   "src/main/java/com/example/Greeter.java",
+		defLine:   javaGreetDefLine,
+		refsAt:    realPos{javaGreetUseLine, javaGreetUseChar},
+		refsMin:   0, // the syntax server has no references provider: empty, not an error
+		blank:     realPos{1, 0},
+	},
 }
 
 // TestRealCasesCoverRegistry is ungated: it fails in the ordinary unit run

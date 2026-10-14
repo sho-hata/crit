@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -366,7 +367,11 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
 	}
-	cmd := exec.CommandContext(ctx, lang.Command[0], lang.Command[1:]...) //nolint:gosec // argv is fixed in the registry, never user input
+	args := lang.Command[1:]
+	if lang.Args != nil {
+		args = append(slices.Clone(args), lang.Args(rootDir)...)
+	}
+	cmd := exec.CommandContext(ctx, lang.Command[0], args...) //nolint:gosec // argv is fixed in the registry (Args derives from the root path), never user input
 	cmd.Dir = rootDir
 	debug := debugEnabled()
 	if debug {
@@ -385,7 +390,7 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("lsp: starting %s: %w", lang.Command[0], err)
 	}
-	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(lang.Command, " "), cmd.Process.Pid, rootDir)
+	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(cmd.Args, " "), cmd.Process.Pid, rootDir)
 	// Reap the process so it never zombies.
 	waitDone := make(chan struct{})
 	go func() {

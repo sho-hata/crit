@@ -14,7 +14,7 @@ Review your coding agent's plans, diffs and running apps in the browser. Click a
 
 > [!NOTE]
 > **This is a fork** of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) with features not (yet) in upstream. Fork-specific additions are marked **(fork-only)** below. Currently:
-> - **[Code intelligence in diffs (LSP)](#code-intelligence-in-diffs-lsp-fork-only)** — hover documentation, go-to-definition, and find-references in the review pane (Go via gopls, TypeScript/JavaScript via typescript-language-server, Python via pyright, Terraform via terraform-ls, PHP via intelephense)
+> - **[Code intelligence in diffs (LSP)](#code-intelligence-in-diffs-lsp-fork-only)** — hover documentation, go-to-definition, and find-references in the review pane (Go via gopls, TypeScript/JavaScript via typescript-language-server, Python via pyright, Terraform via terraform-ls, PHP via intelephense, Java via jdt.ls)
 
 ![Crit UI for "notification-plan.md" showing comment left on "Queue - Redis Streams, SQS, RabbitMQ" line saying "Just use SQS - we're in AWS"](docs/images/demo-overview.png)
 
@@ -180,7 +180,7 @@ Click a line number to comment. Drag to select a range. Comments are rendered in
 Reading a diff means reading code with no editor attached. This brings the three things you actually reach for — what is this? where is it defined? who else calls it? — into the review pane.
 
 > [!NOTE]
-> Supported languages: **Go** (via [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)), **TypeScript / JavaScript** (via [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)), **Python** (via [pyright](https://github.com/microsoft/pyright)), **Terraform** (via [terraform-ls](https://github.com/hashicorp/terraform-ls)) and **PHP** (via [intelephense](https://intelephense.com)). Each activates independently when its server binary is on `PATH`.
+> Supported languages: **Go** (via [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)), **TypeScript / JavaScript** (via [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)), **Python** (via [pyright](https://github.com/microsoft/pyright)), **Terraform** (via [terraform-ls](https://github.com/hashicorp/terraform-ls)), **PHP** (via [intelephense](https://intelephense.com)) and **Java** (via [jdt.ls](https://github.com/eclipse-jdtls/eclipse.jdt.ls), hover and definition only). Each activates independently when its server binary is on `PATH`.
 
 #### Hover: signature + docs
 
@@ -229,6 +229,10 @@ Opens a panel inline, right under the clicked line (like VS Code's peek referenc
    # PHP — no PHP install needed
    npm install -g intelephense
    which intelephense
+
+   # Java — jdtls needs a JDK 21+ (and python3 for its launcher)
+   brew install jdtls        # or the tarball from https://download.eclipse.org/jdtls/milestones/
+   which jdtls java
    ```
 
 2. Start a review — that's it. LSP is on by default (`lsp` config key, set `"lsp": false` to disable) and each language activates independently based on which servers are installed.
@@ -250,6 +254,7 @@ Notes:
 - **Python virtualenvs.** crit points pyright at the nearest `.venv/` or `venv/` site-packages (it never runs an interpreter from the reviewed repo). For other setups, activate the venv before starting crit or add a `pyrightconfig.json`.
 - **Terraform.** `.tf` and `.tfvars` files. crit never lets terraform-ls run `terraform`: in an init'ed directory it would start the provider binaries under `.terraform/`, which come from the reviewed tree. Provider schemas come from the ones embedded in terraform-ls (official and partner providers, latest version — the hover shows which); references inside a resource of any other provider don't resolve. Modules installed by `terraform init` resolve in working-tree reviews, not in range/PR reviews. terraform-ls fetches registry module metadata from registry.terraform.io.
 - **PHP.** `.php` and `.phtml` files. intelephense is a static analyzer: it runs neither PHP nor Composer. It indexes the whole workspace, `vendor/` included, so the first hover in a large project waits for indexing (up to 15 s). Its index cache lives in `~/.config/intelephense`, outside the repo. Premium features are not used; a licence key you have installed is picked up but changes nothing crit asks for.
+- **Java.** `.java` files. crit runs jdt.ls as its **syntax server** (the mode VS Code uses for an untrusted workspace): the standard server would import a Gradle or Maven project by evaluating its build scripts — code from the reviewed branch — and run the plugins they pull in. The syntax server infers source roots from the `.java` files instead, so symbols from the same tree and the JDK resolve with their Javadoc; third-party types from dependencies don't. It offers hover and go-to-definition but no find-references (⌘/Ctrl+Shift+Click finds nothing). Its Eclipse workspace lives in `~/.crit/lsp/jdtls/`, outside the repo. Cold start takes several seconds.
 - **Debugging.** Start crit with `CRIT_LSP_DEBUG=1` (restart a running review to apply) to log server stderr, JSON-RPC traffic and per-request timings to `~/.crit/sessions/<key>.log`. The log contains source text; don't share it publicly.
 
 ### Programmatic comments
@@ -398,7 +403,7 @@ All keys are optional — omit any you don't need.
 | `no_update_check`      | bool     | `false`                    | Don't check for new versions on startup.                                                                                                                                                |
 | `no_integration_check` | bool     | `false`                    | Skip the integration config freshness check on startup.                                                                                                                                 |
 | `vcs`                  | string   | auto-detected              | Preferred VCS backend: `"git"`, `"sl"`, or `"jj"`. When set, crit uses this VCS instead of auto-detecting. Falls back to git if the configured VCS isn't available. Can also be set via `--vcs` CLI flag (flag takes precedence over config). |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go, TypeScript/JavaScript, Python, Terraform and PHP files. Each language activates when its server (`gopls`, `typescript-language-server`, `pyright-langserver`, `terraform-ls`, `intelephense`) is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go, TypeScript/JavaScript, Python, Terraform, PHP and Java files. Each language activates when its server (`gopls`, `typescript-language-server`, `pyright-langserver`, `terraform-ls`, `intelephense`, `jdtls`) is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** Size cap (MB) for the sparse git worktree LSP checks out to answer range/PR reviews at their reviewed SHA. A commit whose estimated checkout exceeds this is skipped (LSP stays off for that review) rather than checked out. |
 | `live_cookie`          | string   | `""`                       | Cookie header value forwarded to the upstream app in live mode (e.g. `"_crit_key=..."`). Global or project. Prefer `live_cookie_file` for secrets. |
 | `live_cookie_file`     | string   | `""`                       | Path to a file with upstream cookies for live mode (raw header lines or Netscape jar). Global or project; relative paths resolve from repo root. |

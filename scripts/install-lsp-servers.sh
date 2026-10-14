@@ -6,9 +6,10 @@
 # own; bump them deliberately. typescript stays on 6.x: 7 is the native
 # port and ships no tsserver, which typescript-language-server needs.
 #
-# Requires go and npm. terraform-ls must be a release build (it embeds the
-# provider schemas the tests rely on), so it comes from releases.hashicorp.com
-# rather than `go install`.
+# Requires go, npm, python3 (jdt.ls's launcher) and a JDK 21+ on PATH for
+# jdt.ls. terraform-ls must be a release build (it embeds the provider
+# schemas the tests rely on), so it comes from releases.hashicorp.com rather
+# than `go install`.
 #
 # Usage: bash scripts/install-lsp-servers.sh [bin-dir]   (default ~/.local/lsp/bin)
 # Outside CI, put both bin-dir and bin-dir/npm/bin on PATH and export
@@ -21,6 +22,9 @@ TYPESCRIPT_VERSION=6.0.3
 PYRIGHT_VERSION=1.1.414
 TERRAFORM_LS_VERSION=0.39.0
 INTELEPHENSE_VERSION=1.18.5
+JDTLS_VERSION=1.61.0
+JDTLS_TIMESTAMP=202609031315
+JDTLS_SHA256=338e7e73d61836651ba2453919a0d34fa763eb4e7c03342092309bffb8934c64
 
 BIN="${1:-$HOME/.local/lsp/bin}"
 mkdir -p "$BIN"
@@ -52,6 +56,19 @@ curl -fsSL -o "$tmp/SHA256SUMS" "$base/terraform-ls_${TERRAFORM_LS_VERSION}_SHA2
 (cd "$tmp" && grep " ${zip}\$" SHA256SUMS | shasum -a 256 -c -)
 unzip -o -q "$tmp/$zip" terraform-ls -d "$BIN"
 
+# jdt.ls: the milestone tarball from eclipse.org (one build per version, hence
+# the timestamp), pinned by checksum since the mirror publishes none. It
+# unpacks flat, so it gets a dir of its own; bin/jdtls is the Python launcher
+# crit runs, and it finds the install from its own real path.
+jdtls_tgz="jdt-language-server-${JDTLS_VERSION}-${JDTLS_TIMESTAMP}.tar.gz"
+curl -fsSL -o "$tmp/$jdtls_tgz" \
+  "https://www.eclipse.org/downloads/download.php?file=/jdtls/milestones/${JDTLS_VERSION}/${jdtls_tgz}&r=1"
+echo "${JDTLS_SHA256}  $tmp/$jdtls_tgz" | shasum -a 256 -c -
+rm -rf "$BIN/jdt-language-server"
+mkdir -p "$BIN/jdt-language-server"
+tar -xzf "$tmp/$jdtls_tgz" -C "$BIN/jdt-language-server"
+ln -sf "$BIN/jdt-language-server/bin/jdtls" "$BIN/jdtls"
+
 if [ -n "${GITHUB_PATH:-}" ]; then
   echo "$BIN" >>"$GITHUB_PATH"
   echo "$NPM_CONFIG_PREFIX/bin" >>"$GITHUB_PATH"
@@ -64,6 +81,8 @@ typescript-language-server --version
 command -v pyright-langserver
 terraform-ls version
 command -v intelephense
+command -v jdtls
+java -version
 
 if [ -z "${GITHUB_PATH:-}" ]; then
   echo
