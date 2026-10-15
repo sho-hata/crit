@@ -495,7 +495,7 @@ func ghVersionSupportsSlurp(versionOutput string) bool {
 }
 
 func versionAtLeast(version string, wantMajor, wantMinor, wantPatch int) bool {
-	core := strings.SplitN(strings.TrimPrefix(version, "v"), "-", 2)[0]
+	core, _, _ := strings.Cut(strings.TrimPrefix(version, "v"), "-")
 	parts := strings.Split(core, ".")
 	if len(parts) < 3 {
 		return false

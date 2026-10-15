@@ -52,12 +52,10 @@ func jsonSourceLabel(source string) string {
 }
 
 func jsonErrorOffset(err error) (int64, bool) {
-	var syn *json.SyntaxError
-	if errors.As(err, &syn) {
+	if syn, ok := errors.AsType[*json.SyntaxError](err); ok {
 		return syn.Offset, true
 	}
-	var typ *json.UnmarshalTypeError
-	if errors.As(err, &typ) {
+	if typ, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		return typ.Offset, true
 	}
 	return 0, false

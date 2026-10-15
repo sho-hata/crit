@@ -1031,7 +1031,7 @@ func remoteBranchTipsSapling(repoRoot, defaultBranch string) ([]BranchEntry, err
 		if len(parts) != 2 || parts[1] == "" {
 			continue
 		}
-		bookmark := strings.SplitN(parts[1], " ", 2)[0]
+		bookmark, _, _ := strings.Cut(parts[1], " ")
 		if bookmark == defaultBranch || strings.HasSuffix(bookmark, "/"+defaultBranch) {
 			continue
 		}
