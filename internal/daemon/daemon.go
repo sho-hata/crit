@@ -60,6 +60,15 @@ var aliveClient = &http.Client{Timeout: time.Second}
 // daemon lifecycle and can tolerate a longer timeout.
 var browserClient = &http.Client{Timeout: 2 * time.Second}
 
+// shutdownClient is used by RequestShutdown; the endpoint answers before it
+// does any work, so a short timeout is enough.
+var shutdownClient = &http.Client{Timeout: time.Second}
+
+// stopWait bounds how long a stopping daemon may take to exit before it is
+// killed. It is longer than the daemon's own 2 s HTTP drain, so a daemon with
+// no agent run in flight still reaches its final write. Tests may shorten it.
+var stopWait = 3 * time.Second
+
 // terminateProc is the function StopDaemon uses to request graceful
 // termination. Tests may override it to simulate signal failures.
 var terminateProc = terminateProcess
@@ -67,12 +76,12 @@ var terminateProc = terminateProcess
 // killProcess force-kills a process that outlived the graceful-termination poll.
 func killProcess(proc *os.Process) error { return proc.Kill() }
 
-// killProc is the function StopDaemon uses to force-kill a process that
-// outlives the graceful-termination poll. Tests may override it.
+// killProc is the function StopDaemon and WaitForExit use to force-kill a
+// process that outlives the graceful-termination poll. Tests may override it.
 var killProc = killProcess
 
-// procExists is the function StopDaemon uses to poll for process exit.
-// Tests may override it to avoid killing real processes.
+// procExists is the function StopDaemon and WaitForExit use to poll for
+// process exit. Tests may override it to avoid killing real processes.
 var procExists = processExists
 
 const daemonFailureRetention = 10 * time.Minute
@@ -279,17 +288,18 @@ func ReadSessionFile(key string) (SessionEntry, error) {
 	return entry, nil
 }
 
-// RemoveSessionFile deletes a session file and its associated log and lock files.
+// RemoveSessionFile deletes a session file and its log, and deletes the lock
+// file only when no client holds it.
 func RemoveSessionFile(key string) {
 	path, err := sessionFilePath(key)
 	if err != nil {
 		return
 	}
 	os.Remove(path)
-	// Clean up associated log and lock files
+	// Keep a held lock in place: startup calls this after acquiring that lock.
 	dir := filepath.Dir(path)
 	os.Remove(filepath.Join(dir, key+".log"))
-	os.Remove(filepath.Join(dir, key+".lock"))
+	removeLockIfFree(filepath.Join(dir, key+".lock"))
 }
 
 // FindAliveSession looks up a session by key and returns it if alive.
@@ -515,16 +525,22 @@ func isDaemonAlive(s SessionEntry) bool {
 		return false
 	}
 	defer resp.Body.Close()
+	return responseStatus(resp) == "ok"
+}
+
+// responseStatus returns the "status" field of a 200 JSON response and "" for
+// anything else, so callers can tell a crit daemon from another service.
+func responseStatus(resp *http.Response) string {
 	if resp.StatusCode != http.StatusOK {
-		return false
+		return ""
 	}
-	var health struct {
+	var body struct {
 		Status string `json:"status"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		return false
+	if json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return ""
 	}
-	return health.Status == "ok"
+	return body.Status
 }
 
 // DaemonHasBrowser checks if the daemon has any connected browser clients.
@@ -579,7 +595,16 @@ func acquireSessionLock(key string) (*os.File, error) {
 	for time.Now().Before(deadline) {
 		err = flockExclusiveNB(f)
 		if err == nil {
-			return f, nil
+			if isFileAt(f, lockPath) {
+				return f, nil
+			}
+			// The holder deleted the file while this process waited on it,
+			// and a lock on a deleted file excludes nobody.
+			f.Close()
+			if f, err = os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0644); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		time.Sleep(backoff)
 		if backoff < 500*time.Millisecond {
@@ -590,12 +615,46 @@ func acquireSessionLock(key string) (*os.File, error) {
 	return nil, fmt.Errorf("could not acquire session lock for %s", key)
 }
 
+// isFileAt reports whether f is still the file at path.
+func isFileAt(f *os.File, path string) bool {
+	held, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	current, err := os.Stat(path)
+	return err == nil && os.SameFile(held, current)
+}
+
 // releaseSessionLock unlocks, closes, and removes the lock file.
 func releaseSessionLock(f *os.File) {
-	_ = Funlock(f)
-	name := f.Name()
-	f.Close()
-	os.Remove(name)
+	unlockAndRemove(f)
+}
+
+// removeLockIfFree deletes the lock file at path unless another process
+// holds it.
+func removeLockIfFree(path string) {
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	removeOpenedLockIfFree(f, path)
+}
+
+// removeOpenedLockIfFree also checks whether the file was replaced after it
+// was opened, before deleting the path.
+func removeOpenedLockIfFree(f *os.File, path string) {
+	if flockExclusiveNB(f) != nil {
+		f.Close()
+		return
+	}
+	// The file may have been replaced after OpenFile but before the lock was
+	// acquired. Never remove a newer session's lock by its pathname.
+	if !isFileAt(f, path) {
+		_ = Funlock(f)
+		f.Close()
+		return
+	}
+	unlockAndRemove(f)
 }
 
 // setupDaemonCmd creates and configures the daemon child process.
@@ -848,7 +907,17 @@ func cleanExpiredDaemonFailures(dir string) {
 	}
 	cutoff := time.Now().Add(-daemonFailureRetention)
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".error") {
+		name := entry.Name()
+		switch {
+		case strings.HasSuffix(name, ".error"):
+		case strings.HasSuffix(name, ".log"):
+			// A Windows daemon cannot delete its own open log when it stops,
+			// so a log can outlive its .json. A starting daemon briefly has
+			// only a log, hence the same retention.
+			if _, err := os.Stat(filepath.Join(dir, strings.TrimSuffix(name, ".log")+".json")); err == nil {
+				continue
+			}
+		default:
 			continue
 		}
 		info, err := entry.Info()
@@ -906,6 +975,108 @@ func terminationProvesGone(err error) bool {
 	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
 }
 
+// ShutdownResult is how a daemon answered RequestShutdown.
+type ShutdownResult int
+
+const (
+	// ShutdownUnavailable means no answer, or an older daemon without
+	// /api/shutdown.
+	ShutdownUnavailable ShutdownResult = iota
+	// ShutdownAccepted means the daemon is shutting down gracefully.
+	ShutdownAccepted
+	// ShutdownWrongDaemon means another daemon now serves the entry's port, so
+	// the entry is stale and its PID may belong to an unrelated process.
+	ShutdownWrongDaemon
+)
+
+// RequestShutdown asks the daemon over HTTP to shut down gracefully, which,
+// unlike a signal, reaches a Windows daemon in another console.
+func RequestShutdown(s SessionEntry) ShutdownResult {
+	url := s.ConnURL() + "/api/shutdown?pid=" + strconv.Itoa(s.PID)
+	resp, err := shutdownClient.Post(url, "application/json", nil)
+	if err != nil {
+		return ShutdownUnavailable
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return ShutdownWrongDaemon
+	}
+	if responseStatus(resp) == "stopping" {
+		return ShutdownAccepted
+	}
+	return ShutdownUnavailable
+}
+
+// WaitForExit waits for the process to exit and kills it if it is still alive
+// after stopWait. It reports whether the process is gone, so callers do not
+// remove files that a surviving daemon may write again.
+func WaitForExit(pid int) bool {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		// On Windows FindProcess opens a process handle and can fail when the
+		// daemon has already exited. Probe the PID to distinguish that from
+		// access being denied to a process that is still running.
+		return !procExists(&os.Process{Pid: pid})
+	}
+	gone, _ := waitOrKill(proc)
+	return gone
+}
+
+// waitOrKill waits stopWait for proc to exit, kills it if it is still alive,
+// and waits again. It reports whether the process is gone. err is the kill
+// error when the kill failed and does not prove the process is gone.
+func waitOrKill(proc *os.Process) (gone bool, err error) {
+	if waitForExit(proc, stopWait) {
+		return true, nil
+	}
+	if err := killProc(proc); err != nil {
+		if terminationProvesGone(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	// A kill is asynchronous on Windows, and the daemon's files stay open
+	// until it is gone.
+	return waitForExit(proc, stopWait), nil
+}
+
+// sessionOwnedBy reports whether key's session file still names the daemon
+// with the given PID.
+func sessionOwnedBy(key string, pid int) bool {
+	entry, err := ReadSessionFile(key)
+	return err == nil && entry.PID == pid
+}
+
+// UnlessSessionTakenOver runs fn under key's session lock unless another
+// daemon has registered under key. A starting daemon's client holds that lock
+// until the daemon has registered, so none can take the key over while fn
+// runs.
+func UnlessSessionTakenOver(key string, pid int, fn func()) {
+	lock, err := acquireSessionLock(key)
+	if err != nil {
+		log.Printf("Warning: could not lock session %s, skipping cleanup after daemon exit: %v", key, err)
+		return
+	}
+	defer releaseSessionLock(lock)
+	if entry, err := ReadSessionFile(key); err == nil && entry.PID != pid {
+		return
+	}
+	fn()
+}
+
+// waitForExit polls until proc has exited or timeout elapses, and reports
+// whether it exited.
+func waitForExit(proc *os.Process, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for procExists(proc) {
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return true
+}
+
 // StopDaemon stops the daemon for the given session key.
 func StopDaemon(key string) error {
 	entry, err := ReadSessionFile(key)
@@ -925,24 +1096,37 @@ func StopDaemon(key string) error {
 		return nil //nolint:nilerr // process not found, session already cleaned up
 	}
 
-	if err := terminateProc(proc); err != nil && !terminationProvesGone(err) {
-		return fmt.Errorf("could not stop daemon %s (pid %d): %w; session file kept so you can retry", key, entry.PID, err)
-	}
-
-	// Poll for process exit, escalate to Kill if still alive after the deadline.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		time.Sleep(100 * time.Millisecond)
-		if !procExists(proc) {
-			break
+	switch RequestShutdown(entry) {
+	case ShutdownWrongDaemon:
+		if sessionOwnedBy(key, entry.PID) {
+			RemoveSessionFile(key)
 		}
-	}
-	if procExists(proc) {
-		if err := killProc(proc); err != nil && !terminationProvesGone(err) {
+		return nil
+	case ShutdownUnavailable:
+		// A daemon already shutting down for another client removed its
+		// session file before it stopped answering; that client kills it if
+		// it hangs.
+		if !sessionOwnedBy(key, entry.PID) {
+			waitForExit(proc, stopWait)
+			return nil
+		}
+		if err := terminateProc(proc); err != nil && !terminationProvesGone(err) {
 			return fmt.Errorf("could not stop daemon %s (pid %d): %w; session file kept so you can retry", key, entry.PID, err)
 		}
 	}
-	RemoveSessionFile(key)
+
+	gone, err := waitOrKill(proc)
+	if err != nil {
+		return fmt.Errorf("could not stop daemon %s (pid %d): %w; session file kept so you can retry", key, entry.PID, err)
+	}
+	if !gone {
+		return fmt.Errorf("could not confirm daemon %s (pid %d) exited after kill; session file kept so you can retry", key, entry.PID)
+	}
+	// A daemon that stopped gracefully removed its own file, and a successor
+	// may own the key by now.
+	if sessionOwnedBy(key, entry.PID) {
+		RemoveSessionFile(key)
+	}
 	return nil
 }
 
@@ -983,7 +1167,7 @@ func cleanOrphanedSessions() {
 			os.Remove(path)
 			key := strings.TrimSuffix(de.Name(), ".json")
 			os.Remove(filepath.Join(sessDir, key+".log"))
-			os.Remove(filepath.Join(sessDir, key+".lock"))
+			removeLockIfFree(filepath.Join(sessDir, key+".lock"))
 		}
 	}
 }

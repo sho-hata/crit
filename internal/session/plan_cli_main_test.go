@@ -28,6 +28,75 @@ func TestResolvePlanConfig_NameAndFile(t *testing.T) {
 	}
 }
 
+func TestResolvePlanConfig_NoWait(t *testing.T) {
+	pc := resolvePlanConfig([]string{"--name", "chat", "--no-wait"})
+	if !pc.noWait || pc.name != "chat" || !pc.stdinExpected {
+		t.Errorf("pc = %+v, want noWait with name chat reading stdin", pc)
+	}
+}
+
+func TestSavePlanWithoutReview(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "chat")
+	var stdout, stderr strings.Builder
+
+	if err := savePlanWithoutReview(&stdout, &stderr, dir, "chat", []byte("# one\n"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := savePlanWithoutReview(&stdout, &stderr, dir, "chat", []byte("# one\n"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := savePlanWithoutReview(&stdout, &stderr, dir, "chat", []byte("# one\n\ntwo\n"), true); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := latestPlanVersion(dir); got != 2 {
+		t.Errorf("versions = %d, want 2 (unchanged content adds none)", got)
+	}
+	current, _ := os.ReadFile(filepath.Join(dir, "current.md"))
+	if string(current) != "# one\n\ntwo\n" {
+		t.Errorf("current.md = %q", current)
+	}
+	if stdout.String() != "chat\nchat\nchat\n" {
+		t.Errorf("stdout = %q, want the slug per call", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "saved as v001") || !strings.Contains(stderr.String(), "unchanged (v001)") || strings.Contains(stderr.String(), "v002") {
+		t.Errorf("stderr = %q (quiet run should print nothing)", stderr.String())
+	}
+}
+
+func TestRunPlan_NoWaitSavesWithoutReview(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	src := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(src, []byte("# Chat\n\nhello\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunPlan([]string{"--name", "my-chat", "--no-wait", "--quiet", src}); err != nil {
+		t.Fatalf("RunPlan --no-wait: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(home, ".crit", "plans", "my-chat", "v001.md"))
+	if err != nil || string(got) != "# Chat\n\nhello\n" {
+		t.Fatalf("v001.md = %q, %v", got, err)
+	}
+}
+
+func TestSavePlanWithoutReview_SaveError(t *testing.T) {
+	// The storage dir path is a file, so the save cannot create it.
+	blocker := filepath.Join(t.TempDir(), "taken")
+	if err := os.WriteFile(blocker, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+
+	err := savePlanWithoutReview(&stdout, &stderr, filepath.Join(blocker, "chat"), "chat", []byte("# one\n"), true)
+
+	if err == nil || !strings.Contains(stderr.String(), "Error saving plan") || stdout.String() != "" {
+		t.Fatalf("err = %v, stderr = %q, stdout = %q", err, stderr.String(), stdout.String())
+	}
+}
+
 func TestResolvePlanConfig_NameOnly(t *testing.T) {
 	t.Parallel()
 

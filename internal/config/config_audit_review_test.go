@@ -16,7 +16,7 @@ import (
 //     counts as present); mergeConfigs copies the project pointer only when
 //     the presence bit is set, so an explicit project false can override a
 //     global true. Consumers: CleanupOnApproveEnabled() (default true) ->
-//     internal/session review_cli.go / plan_cli.go cleanupOnApproval;
+//     internal/session review_cli.go / plan_cli.go -> stopDaemonOnApproval -> cleanupOnApproval;
 //     NotifyOnRoundReadyEnabled() (default false) -> internal/server
 //     daemon_cli.go DaemonCLIConfig.NotifyOnRoundReady -> notify.RoundReady.
 //   disable_stats: plain bool with presence tracking; project explicit

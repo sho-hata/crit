@@ -78,6 +78,18 @@
     const html = document.documentElement;
     if (t === 'light' || t === 'dark') html.setAttribute('data-theme', t);
     else html.removeAttribute('data-theme');
+    // UI palette for the chosen light/dark theme (crit-theme-palette.js).
+    if (window.crit && window.crit.themePalette) window.crit.themePalette.applySaved(html);
+  }
+
+  // Rendered markdown follows the code display settings (Pierre applies them
+  // to diffs and code files) through CSS keyed on <html data-line-numbers /
+  // data-code-overflow>: gutter numbers hide, code blocks wrap. Call on load
+  // and after either setting changes.
+  function applyDisplayAttributes(root) {
+    const html = root || document.documentElement;
+    html.setAttribute('data-line-numbers', getSetting('lineNumbers', 'on') === 'off' ? 'off' : 'on');
+    html.setAttribute('data-code-overflow', getSetting('codeOverflow', 'scroll') === 'wrap' ? 'wrap' : 'scroll');
   }
 
   // Generic crit-settings JSON cookie accessors (mirror app.js semantics).
@@ -482,6 +494,7 @@
   async function runFinishReview(opts) {
     var o = opts || {};
     var dedup = o.dedup;
+    if (serverStopped) return null;
     if (dedup && typeof dedup.busy === 'function' && dedup.busy()) return null;
     if (dedup && typeof dedup.set === 'function') dedup.set();
     try {
@@ -489,6 +502,7 @@
         var consentOk = await o.checkConsent();
         if (!consentOk) return null;
       }
+      if (serverStopped) return null;
       var resp = await fetch('/api/finish', { method: 'POST' });
       if (!resp.ok) throw new Error('Finish review failed: HTTP ' + resp.status);
       var data = await resp.json();
@@ -567,7 +581,7 @@
       if (approved) {
         // close_on_approve_after_ms is global-only and off by default. Prefer
         // the value baked into the /api/finish response: the daemon may stop
-        // immediately after an approved finish (killDaemonOnApproval), so a
+        // immediately after an approved finish (stopDaemonOnApproval), so a
         // separate /api/config round-trip can race and fail. Fall back to the
         // config endpoint only when the finish payload omits the field (older
         // daemon). Best-effort — a missing/failed config fetch just means no
@@ -946,7 +960,23 @@
     if (_tipInterval) { clearInterval(_tipInterval); _tipInterval = null; }
   }
 
+  // Set once the daemon announced server-shutdown; the page is read only from
+  // then on, so nothing may re-enable finishing.
+  var serverStopped = false;
+
+  // Shows the finish button as a disabled "Session complete" once the server
+  // has stopped. Returns true when it did, so callers skip their own label.
+  function lockFinishBtnIfStopped(btn) {
+    if (!serverStopped || !btn) return false;
+    btn.textContent = 'Session complete';
+    btn.disabled = true;
+    btn.classList.remove('btn-primary');
+    return true;
+  }
+
   function showDisconnected() {
+    serverStopped = true;
+    lockFinishBtnIfStopped(document.getElementById('finishBtn'));
     if (document.querySelector('.disconnected-banner')) return;
     var header = document.querySelector('.header');
     if (!header) return;
@@ -1100,6 +1130,7 @@
 
   function applyProjectPromptTrustUI(cfg, finishBtn) {
     if (!finishBtn || !cfg) return;
+    if (lockFinishBtnIfStopped(finishBtn)) return;
     if (cfg.project_prompts_untrusted) {
       // The trust dialog is opened by the finish button's click handler.
       // Keep the button actionable so the user can make that trust choice;
@@ -1126,6 +1157,7 @@
     setCookie,
     readThemeFromSettings,
     applyThemeFromCookie,
+    applyDisplayAttributes,
     getSetting,
     setSetting,
     CODE_FONT_PRESETS,
@@ -1143,6 +1175,7 @@
     computeResizeDelta,
     attachImageUploads,
     showDisconnected,
+    lockFinishBtnIfStopped,
     startTipRotation,
     stopTipRotation,
     ensureProjectPromptTrust,

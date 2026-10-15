@@ -12,7 +12,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -40,6 +42,102 @@ func latestCacheDir(dir string) string {
 		}
 	}
 	return latest
+}
+
+// opencodeBinaryKey identifies one opencode binary on disk. An upgrade
+// replaces or rewrites the binary, which changes the key.
+type opencodeBinaryKey struct {
+	path    string
+	modTime time.Time
+	size    int64
+}
+
+// opencodeVersionCache keeps the last `opencode --version` result. A daemon
+// start checks the version several times and every /api/config request checks
+// it again; the cache turns those into one stat call each. Keying on the
+// resolved binary and its mtime/size (not a process-lifetime cache) means a
+// user who upgrades opencode while a daemon runs gets the new version on the
+// next check, and tests that put a different stub on PATH are not affected.
+var opencodeVersionCache struct {
+	sync.Mutex
+	key     opencodeBinaryKey
+	major   int
+	version string
+	ok      bool
+}
+
+// opencodeVersionInfo detects the installed OpenCode version, returning the
+// cached result while the binary is unchanged. Unknown output deliberately
+// falls back to V1 so older binaries keep historical behavior.
+func opencodeVersionInfo() (int, string) {
+	path, err := exec.LookPath("opencode")
+	if err != nil {
+		return 1, ""
+	}
+	// Resolve symlinks so a Homebrew/mise upgrade (new versioned target behind
+	// the same shim, often with a normalized mtime) changes the key.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 1, ""
+	}
+	key := opencodeBinaryKey{path: path, modTime: info.ModTime(), size: info.Size()}
+
+	opencodeVersionCache.Lock()
+	defer opencodeVersionCache.Unlock()
+	if opencodeVersionCache.ok && opencodeVersionCache.key == key {
+		return opencodeVersionCache.major, opencodeVersionCache.version
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").CombinedOutput()
+	if err != nil {
+		// Do not cache failures: a timeout on a slow start should not stick.
+		return 1, ""
+	}
+	major, version := parseOpencodeVersion(string(out))
+	opencodeVersionCache.key = key
+	opencodeVersionCache.major = major
+	opencodeVersionCache.version = version
+	opencodeVersionCache.ok = true
+	return major, version
+}
+
+func parseOpencodeVersion(output string) (int, string) {
+	for _, field := range strings.Fields(output) {
+		field = strings.TrimLeft(field, "vV")
+		majorText, _, _ := strings.Cut(field, ".")
+		major, parseErr := strconv.Atoi(majorText)
+		if parseErr == nil && (major == 1 || major == 2) {
+			return major, field
+		}
+	}
+	return 1, ""
+}
+
+func opencodeMajorVersion() int {
+	major, _ := opencodeVersionInfo()
+	return major
+}
+
+func opencodeIntegrationFiles(major int) []integration {
+	files := integrationMap["opencode"]
+	selected := make([]integration, 0, len(files))
+	for _, f := range files {
+		if f.opencodeVersion == 0 || f.opencodeVersion == major {
+			selected = append(selected, f)
+		}
+	}
+	return selected
+}
+
+func integrationFilesForAgent(agent string) []integration {
+	if agent == "opencode" {
+		return opencodeIntegrationFiles(opencodeMajorVersion())
+	}
+	return integrationMap[agent]
 }
 
 // location describes where a stale file was found, determining the update advice.
@@ -121,7 +219,7 @@ func detectInstalledIntegrations(projectDir, homeDir string) []integrationStatus
 		if seen[agent] {
 			continue
 		}
-		files := integrationMap[agent]
+		files := integrationFilesForAgent(agent)
 		for _, f := range files {
 			expectedHash, ok := integrationHashes[f.source]
 			if !ok {
@@ -283,7 +381,7 @@ func checkInstalledIntegrations(projectDir, homeDir string) []staleFile {
 	sort.Strings(agents)
 
 	for _, agent := range agents {
-		files := integrationMap[agent]
+		files := integrationFilesForAgent(agent)
 		for _, f := range files {
 			expectedHash, ok := integrationHashes[f.source]
 			if !ok {
@@ -310,6 +408,7 @@ func checkInstalledIntegrations(projectDir, homeDir string) []staleFile {
 		}
 	}
 	results = append(results, checkCodexPluginInstallCompleteness(projectDir, homeDir)...)
+	results = append(results, checkOpencodePluginDependency(projectDir, homeDir)...)
 	return results
 }
 
@@ -461,6 +560,8 @@ var agentProbes = []agentProbe{
 	{"cline", nil, []string{".cline"}, ""},
 	{"codex", []string{"codex"}, nil, ""},
 	{"opencode", []string{"opencode"}, []string{".opencode"}, ""},
+	{"omo", []string{"omo"}, []string{".omo"}, ""},
+	{"omp", []string{"omp"}, []string{".omp"}, ""},
 	{"aider", []string{"aider"}, nil, ""},
 	{"qwen", []string{"qwen"}, []string{".qwen"}, ""},
 	// Ambiguous names: secondary version check prevents false positives from

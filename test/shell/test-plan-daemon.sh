@@ -175,7 +175,7 @@ api -X DELETE "http://127.0.0.1:$PORT/api/comments" > /dev/null
 # Finish with no unresolved comments = Approve
 api -X POST "http://127.0.0.1:$PORT/api/finish" > /dev/null
 
-# Wait for daemon to shut down (client detects approve and sends SIGTERM)
+# Wait for daemon to shut down (client detects approve and asks it to stop)
 wait_for_port_free "$PORT"
 
 check "Daemon shut down after approve" \

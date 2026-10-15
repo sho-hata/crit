@@ -31,8 +31,10 @@ func isAbsoluteOrTraversal(p string) bool {
 }
 
 // checkCommentCLIAllowed returns an error if the review at critPath is a
-// live review.
-func checkCommentCLIAllowed(critPath string) error {
+// live or preview review. Those reviews pin DOM elements, so the file/line
+// form does not apply. --selector adds a pin instead. form names the
+// comment the user tried to add (see commentFormFor).
+func checkCommentCLIAllowed(critPath, form string) error {
 	data, err := os.ReadFile(review.ReviewPathsFor(critPath).Review)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -44,16 +46,57 @@ func checkCommentCLIAllowed(critPath string) error {
 	if err := json.Unmarshal(data, &cj); err != nil {
 		return nil //nolint:nilerr // malformed review file: do not block CLI
 	}
-	if cj.ReviewType == "live" {
-		return fmt.Errorf("crit comment <path>:<line> is not supported for live reviews; use the browser UI to add pins")
+	if cj.ReviewType == "live" || cj.ReviewType == "preview" {
+		return fmt.Errorf("%s is not supported for %s reviews; use: crit comment --selector <css> [--route <path>] <body>", form, cj.ReviewType)
 	}
 	return nil
+}
+
+// Comment forms named in the live/preview rejection, so the error matches
+// what the user ran.
+const (
+	formReviewComment = "a review-level comment (crit comment <body>)"
+	formFileComment   = "a file comment (crit comment <path> <body>)"
+	formLineComment   = "a line comment (crit comment <path>:<line> <body>)"
+)
+
+// commentFormFor names the comment form args would create. args has at
+// least one element.
+func commentFormFor(args []string) string {
+	if len(args) == 1 {
+		return formReviewComment
+	}
+	loc := args[0]
+	if i := strings.LastIndex(loc, ":"); i > 0 && looksLikeLineSpec(loc[i+1:]) {
+		return formLineComment
+	}
+	return formFileComment
+}
+
+// bulkEntryForm names the comment form a JSON entry without a selector would
+// create, in the same words as commentFormFor.
+func bulkEntryForm(e BulkCommentEntry) string {
+	switch {
+	case e.Line > 0 || e.LineSpec != "":
+		return formLineComment
+	case e.File != "" || e.Path != "":
+		return formFileComment
+	default:
+		return formReviewComment
+	}
 }
 
 // appendCommentScoped adds a comment to the session.CritJSON struct in memory with
 // HeadSHA / DiffScope stamping. Does not write to disk.
 // scope.DiffScope == "" produces today's working-tree behavior.
 func appendCommentScoped(cj *session.CritJSON, filePath string, startLine, endLine int, body, author, userID string, scope session.InheritedScope) {
+	appendQuotedCommentScoped(cj, filePath, startLine, endLine, body, "", nil, author, userID, scope)
+}
+
+// appendQuotedCommentScoped is appendCommentScoped for a comment on part of
+// the line range: quote is the selected text and quoteOffset, when set, its
+// position as the web UI records it (see session.Comment.QuoteOffset).
+func appendQuotedCommentScoped(cj *session.CritJSON, filePath string, startLine, endLine int, body, quote string, quoteOffset *int, author, userID string, scope session.InheritedScope) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	cj.UpdatedAt = now
 
@@ -69,15 +112,17 @@ func appendCommentScoped(cj *session.CritJSON, filePath string, startLine, endLi
 	anchor := readAnchorFromDisk(filePath, startLine, endLine)
 
 	c := session.StampWithFocus(session.Comment{
-		ID:        session.RandomCommentID(),
-		StartLine: startLine,
-		EndLine:   endLine,
-		Body:      body,
-		Anchor:    anchor,
-		Author:    author,
-		UserID:    userID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          session.RandomCommentID(),
+		StartLine:   startLine,
+		EndLine:     endLine,
+		Body:        body,
+		Quote:       quote,
+		QuoteOffset: quoteOffset,
+		Anchor:      anchor,
+		Author:      author,
+		UserID:      userID,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}, scope.AsFocus())
 	cf.Comments = append(cf.Comments, c)
 	cj.Files[filePath] = cf
@@ -256,7 +301,8 @@ func addReplyToCritJSONAtPathWithRedirect(commentID, body, author, userID string
 }
 
 // BulkCommentEntry represents one entry in a bulk comment JSON array.
-// Supports review-level, file-level, line-level comments, and replies.
+// Supports review-level, file-level, line-level comments, replies, and
+// DOM pins (selector / route) for live and preview reviews.
 type BulkCommentEntry struct {
 	// New comment fields
 	File     string `json:"file,omitempty"`
@@ -267,6 +313,18 @@ type BulkCommentEntry struct {
 	Body     string `json:"body"`
 	Author   string `json:"author,omitempty"` // overrides per-entry; falls back to global
 	Scope    string `json:"scope,omitempty"`  // "review", "file", or "" (inferred)
+
+	// Pin fields for live and preview reviews. Selector is a CSS selector.
+	// CSSSelector and Pathname are aliases so a dom_anchor-shaped payload works.
+	Selector    string `json:"selector,omitempty"`
+	CSSSelector string `json:"css_selector,omitempty"`
+	Route       string `json:"route,omitempty"`
+	Pathname    string `json:"pathname,omitempty"`
+
+	// Quote narrows a line comment to the text the reviewer selected, as the
+	// web UI's text-selection comments do. QuoteOffset is optional.
+	Quote       string `json:"quote,omitempty"`
+	QuoteOffset *int   `json:"quote_offset,omitempty"`
 
 	// session.Reply fields
 	ReplyTo string `json:"reply_to,omitempty"`
@@ -310,7 +368,8 @@ func (e *BulkCommentEntry) UnmarshalJSON(data []byte) error {
 // processBulkEntry routes a single bulk comment entry to the appropriate
 // authoring helper. globalAuthor is used when an entry doesn't specify its own
 // author. scope is stamped on every authored comment (empty = today's behavior).
-func processBulkEntry(cj *session.CritJSON, i int, e BulkCommentEntry, globalAuthor, globalUserID string, scope session.InheritedScope) error {
+// pages caches live page fetches for pins across the bulk run.
+func processBulkEntry(cj *session.CritJSON, i int, e BulkCommentEntry, globalAuthor, globalUserID string, scope session.InheritedScope, pages livePageCache) error {
 	if e.Body == "" {
 		return fmt.Errorf("entry %d: body is required", i)
 	}
@@ -324,17 +383,47 @@ func processBulkEntry(cj *session.CritJSON, i int, e BulkCommentEntry, globalAut
 	userID := globalUserID
 
 	if e.ReplyTo != "" {
-		if err := appendReply(cj, e.ReplyTo, e.Body, author, userID, e.Resolve, e.File); err != nil {
-			return fmt.Errorf("entry %d: %w", i, err)
-		}
-		return nil
+		return processBulkReply(cj, i, e, author, userID)
+	}
+
+	if e.pinSelector() != "" || e.pinRoute() != "" || cj.ReviewType == "live" || cj.ReviewType == "preview" {
+		return processBulkPinOrDOMReview(cj, i, e, author, userID, pages)
 	}
 
 	if e.Scope == "review" || (e.File == "" && e.Path == "" && e.Line <= 0 && e.LineSpec == "") {
+		if hasQuote(e) {
+			return fmt.Errorf("entry %d: quote needs a line comment", i)
+		}
 		return processBulkReviewEntry(cj, i, e, author, userID, scope)
 	}
 
 	return processBulkFileOrLineEntry(cj, i, e, author, userID, scope)
+}
+
+func processBulkReply(cj *session.CritJSON, i int, e BulkCommentEntry, author, userID string) error {
+	if e.pinSelector() != "" || e.pinRoute() != "" {
+		return fmt.Errorf("entry %d: selector cannot be combined with reply_to", i)
+	}
+	if err := appendReply(cj, e.ReplyTo, e.Body, author, userID, e.Resolve, e.File); err != nil {
+		return fmt.Errorf("entry %d: %w", i, err)
+	}
+	return nil
+}
+
+func processBulkPinOrDOMReview(cj *session.CritJSON, i int, e BulkCommentEntry, author, userID string, pages livePageCache) error {
+	if e.pinSelector() == "" && e.pinRoute() == "" {
+		return fmt.Errorf("entry %d: %s is not supported for %s reviews; set \"selector\" on the entry (the JSON form of --selector)", i, bulkEntryForm(e), cj.ReviewType)
+	}
+	if e.File != "" || e.Path != "" || e.Line > 0 || e.LineSpec != "" {
+		return fmt.Errorf("entry %d: selector cannot be combined with a file or line", i)
+	}
+	if hasQuote(e) {
+		return fmt.Errorf("entry %d: quote is not valid on a pin", i)
+	}
+	if _, err := appendPin(cj, e.pinSelector(), e.pinRoute(), e.Body, author, userID, pages); err != nil {
+		return fmt.Errorf("entry %d: %w", i, err)
+	}
+	return nil
 }
 
 func processBulkReviewEntry(cj *session.CritJSON, i int, e BulkCommentEntry, author, userID string, scope session.InheritedScope) error {
@@ -367,16 +456,15 @@ func processBulkFileOrLineEntry(cj *session.CritJSON, i int, e BulkCommentEntry,
 	// Normalize for cross-platform storage — see addCommentToCritJSONScoped.
 	cleaned := filepath.ToSlash(filepath.Clean(normalizedPath))
 
-	if e.Scope == "file" {
+	if e.Scope == "file" || (e.Line <= 0 && e.LineSpec == "" && e.Path != "" && e.File == "") {
+		if hasQuote(e) {
+			return fmt.Errorf("entry %d: quote needs a line comment", i)
+		}
 		appendFileCommentScoped(cj, cleaned, e.Body, author, userID, scope)
 		return nil
 	}
 
 	if e.Line <= 0 && e.LineSpec == "" {
-		if e.Path != "" && e.File == "" {
-			appendFileCommentScoped(cj, cleaned, e.Body, author, userID, scope)
-			return nil
-		}
 		return fmt.Errorf("entry %d: line must be > 0", i)
 	}
 
@@ -402,8 +490,16 @@ func processBulkLineComment(cj *session.CritJSON, i int, e BulkCommentEntry, cle
 		endLine = startLine
 	}
 
-	appendCommentScoped(cj, cleaned, startLine, endLine, e.Body, author, userID, scope)
+	if e.QuoteOffset != nil && (*e.QuoteOffset < 0 || e.Quote == "") {
+		return fmt.Errorf("entry %d: quote_offset needs a quote and must be >= 0", i)
+	}
+
+	appendQuotedCommentScoped(cj, cleaned, startLine, endLine, e.Body, e.Quote, e.QuoteOffset, author, userID, scope)
 	return nil
+}
+
+func hasQuote(e BulkCommentEntry) bool {
+	return e.Quote != "" || e.QuoteOffset != nil
 }
 
 func parseLineSpec(spec string) (start, end int, err error) {
@@ -462,8 +558,9 @@ func bulkAddCommentsToCritJSONAtPathWithRedirect(entries []BulkCommentEntry, glo
 		return err
 	}
 
+	pages := livePageCache{}
 	for i, e := range entries {
-		if err := processBulkEntry(&targetCJ, i, e, globalAuthor, globalUserID, scope); err != nil {
+		if err := processBulkEntry(&targetCJ, i, e, globalAuthor, globalUserID, scope, pages); err != nil {
 			return err
 		}
 	}

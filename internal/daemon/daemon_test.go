@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -385,6 +386,118 @@ func TestAcquireSessionLock_FlockBased(t *testing.T) {
 	}
 }
 
+func TestAcquireSessionLock_ReopensAFileDeletedWhileWaiting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot delete a lock file that another process has open")
+	}
+	testutil.SetHome(t, t.TempDir())
+	key := "locktest123456"
+	first, err := acquireSessionLock(key)
+	if err != nil {
+		t.Fatalf("acquireSessionLock: %v", err)
+	}
+
+	got := make(chan *os.File, 1)
+	go func() {
+		f, err := acquireSessionLock(key)
+		if err != nil {
+			t.Errorf("waiting acquireSessionLock: %v", err)
+		}
+		got <- f
+	}()
+	time.Sleep(150 * time.Millisecond) // let the waiter open the file that is about to go
+	releaseSessionLock(first)
+
+	select {
+	case f := <-got:
+		if f == nil {
+			return
+		}
+		defer releaseSessionLock(f)
+		if !isFileAt(f, f.Name()) {
+			t.Error("the waiter holds the deleted lock file instead of the one at the path")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiter never got the lock")
+	}
+}
+
+func TestCleanOrphanedSessions_KeepsAHeldSessionLock(t *testing.T) {
+	testutil.SetHome(t, t.TempDir())
+	key := "deadsession123"
+	if err := WriteSessionFile(key, SessionEntry{PID: 999999, Port: 1}); err != nil {
+		t.Fatalf("WriteSessionFile: %v", err)
+	}
+	lock, err := acquireSessionLock(key)
+	if err != nil {
+		t.Fatalf("acquireSessionLock: %v", err)
+	}
+	t.Cleanup(func() { releaseSessionLock(lock) })
+
+	cleanOrphanedSessions()
+
+	if !isFileAt(lock, lock.Name()) {
+		t.Error("the dead session's cleanup deleted a session lock that a starting client holds")
+	}
+}
+
+func TestRemoveSessionFile_KeepsAHeldSessionLock(t *testing.T) {
+	testutil.SetHome(t, t.TempDir())
+	key := "startsession123"
+	lock, err := acquireSessionLock(key)
+	if err != nil {
+		t.Fatalf("acquireSessionLock: %v", err)
+	}
+	t.Cleanup(func() { releaseSessionLock(lock) })
+
+	// StartDaemonInDir calls RemoveSessionFile while holding this lock.
+	RemoveSessionFile(key)
+	if !isFileAt(lock, lock.Name()) {
+		t.Fatal("startup removed its own held session lock")
+	}
+}
+
+func TestRemoveOpenedLockIfFree_KeepsReplacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot delete a lock file that another process has open")
+	}
+	testutil.SetHome(t, t.TempDir())
+	key := "replacedlock123"
+	first, err := acquireSessionLock(key)
+	if err != nil {
+		t.Fatalf("acquireSessionLock: %v", err)
+	}
+	oldFile, err := os.OpenFile(first.Name(), os.O_WRONLY, 0)
+	if err != nil {
+		releaseSessionLock(first)
+		t.Fatalf("open old lock: %v", err)
+	}
+	releaseSessionLock(first)
+	replacement, err := acquireSessionLock(key)
+	if err != nil {
+		oldFile.Close()
+		t.Fatalf("acquire replacement lock: %v", err)
+	}
+	t.Cleanup(func() { releaseSessionLock(replacement) })
+
+	removeOpenedLockIfFree(oldFile, replacement.Name())
+	if !isFileAt(replacement, replacement.Name()) {
+		t.Fatal("orphan cleanup removed a replacement session lock")
+	}
+}
+
+func TestIsFileAt_ClosedLock(t *testing.T) {
+	testutil.SetHome(t, t.TempDir())
+	lock, err := acquireSessionLock("closedlock123")
+	if err != nil {
+		t.Fatalf("acquireSessionLock: %v", err)
+	}
+	releaseSessionLock(lock)
+	if isFileAt(lock, lock.Name()) {
+		t.Fatal("closed lock file cannot still protect its path")
+	}
+}
+
 func TestIsDaemonAlive_NoPID(t *testing.T) {
 	t.Parallel()
 
@@ -570,6 +683,71 @@ func TestIsDaemonAlive_AcceptsCritResponse(t *testing.T) {
 	entry := SessionEntry{PID: os.Getpid(), Port: port}
 	if !isDaemonAlive(entry) {
 		t.Error("isDaemonAlive should return true for valid crit health response")
+	}
+}
+
+func TestRequestShutdown(t *testing.T) {
+	pid := strconv.Itoa(os.Getpid())
+	stopping := func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"status": "stopping"})
+	}
+	tests := []struct {
+		name      string
+		handler   http.HandlerFunc
+		wantQuery string
+		want      ShutdownResult
+	}{
+		{name: "daemon accepts", handler: stopping, wantQuery: "pid=" + pid, want: ShutdownAccepted},
+		{
+			name: "another daemon on the port",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "pid does not match this daemon", http.StatusConflict)
+			},
+			want: ShutdownWrongDaemon,
+		},
+		{name: "older daemon without the endpoint", handler: http.NotFound, want: ShutdownUnavailable},
+		{
+			name: "non-crit responder",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+			},
+			want: ShutdownUnavailable,
+		},
+		{
+			name: "connection dropped",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+					conn.Close()
+				}
+			},
+			want: ShutdownUnavailable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var gotMethod, gotPath, gotQuery string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+				mu.Unlock()
+				tt.handler(w, r)
+			}))
+			defer srv.Close()
+			port, _ := strconv.Atoi(srv.URL[len("http://127.0.0.1:"):])
+			entry := SessionEntry{PID: os.Getpid(), Port: port}
+			if got := RequestShutdown(entry); got != tt.want {
+				t.Errorf("RequestShutdown = %v, want %v", got, tt.want)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if gotMethod != http.MethodPost || gotPath != "/api/shutdown" {
+				t.Errorf("request = %s %s, want POST /api/shutdown", gotMethod, gotPath)
+			}
+			if tt.wantQuery != "" && gotQuery != tt.wantQuery {
+				t.Errorf("query = %q, want %q", gotQuery, tt.wantQuery)
+			}
+		})
 	}
 }
 
@@ -1472,6 +1650,244 @@ func TestStopDaemon_RemovesSessionFileWhenProcessGone(t *testing.T) {
 	}
 }
 
+// startFakeDaemonSession writes a session file for a fake daemon served by
+// handler and returns its key.
+func startFakeDaemonSession(t *testing.T, handler http.HandlerFunc) string {
+	t.Helper()
+	testutil.SetHome(t, t.TempDir())
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	port, _ := strconv.Atoi(ts.URL[strings.LastIndex(ts.URL, ":")+1:])
+	key := "fakedaemon123"
+	entry := SessionEntry{PID: os.Getpid(), Port: port, CWD: "/tmp/repo", Branch: "main"}
+	if err := WriteSessionFile(key, entry); err != nil {
+		t.Fatalf("WriteSessionFile: %v", err)
+	}
+	return key
+}
+
+// shortenStopWait makes StopDaemon's exit waits short for the test.
+func shortenStopWait(t *testing.T) {
+	t.Helper()
+	orig := stopWait
+	stopWait = 50 * time.Millisecond
+	t.Cleanup(func() { stopWait = orig })
+}
+
+// fakeDaemonProc records what StopDaemon and WaitForExit did to the daemon
+// process. A hanging one ignores termination and is gone only once killed.
+type fakeDaemonProc struct {
+	hangs           bool
+	signalled       bool // terminated or killed
+	killed          bool
+	polled          bool // waited for it to exit
+	polledAfterKill bool
+}
+
+// stubStopSignals replaces the process hooks StopDaemon and WaitForExit use
+// with a fakeDaemonProc.
+func stubStopSignals(t *testing.T, hangs bool) *fakeDaemonProc {
+	t.Helper()
+	p := &fakeDaemonProc{hangs: hangs}
+	origTerminate, origKill, origExists := terminateProc, killProc, procExists
+	terminateProc = func(*os.Process) error { p.signalled = true; return nil }
+	killProc = func(*os.Process) error { p.signalled, p.killed = true, true; return nil }
+	procExists = func(*os.Process) bool {
+		p.polled = true
+		if p.killed {
+			p.polledAfterKill = true
+			return false
+		}
+		return p.hangs
+	}
+	t.Cleanup(func() { terminateProc, killProc, procExists = origTerminate, origKill, origExists })
+	shortenStopWait(t)
+	return p
+}
+
+func TestStopDaemon_ShutdownRequest(t *testing.T) {
+	const (
+		accept = iota
+		refuseAfterAnotherClient
+		wrongDaemon
+	)
+	tests := []struct {
+		name          string
+		reply         int
+		hangs         bool
+		wantSignalled bool
+		wantWaited    bool
+	}{
+		{name: "daemon accepts and exits", reply: accept, wantWaited: true},
+		{name: "daemon accepts but hangs, killed after the wait like a signalled one", reply: accept, hangs: true, wantSignalled: true, wantWaited: true},
+		{name: "daemon already shutting down for another client, waited for but left to it", reply: refuseAfterAnotherClient, hangs: true, wantWaited: true},
+		{name: "stale entry, another daemon on the port", reply: wrongDaemon, hangs: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var key string
+			key = startFakeDaemonSession(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/shutdown" {
+					json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+					return
+				}
+				switch tt.reply {
+				case accept:
+					json.NewEncoder(w).Encode(map[string]string{"status": "stopping"})
+				case refuseAfterAnotherClient:
+					// Another client's shutdown got there first: the daemon
+					// removed its session file and takes no more requests.
+					RemoveSessionFile(key)
+					http.NotFound(w, r)
+				case wrongDaemon:
+					http.Error(w, "pid does not match this daemon", http.StatusConflict)
+				}
+			})
+			proc := stubStopSignals(t, tt.hangs)
+
+			if err := StopDaemon(key); err != nil {
+				t.Fatalf("StopDaemon: %v", err)
+			}
+			if proc.signalled != tt.wantSignalled {
+				t.Errorf("signalled or killed = %v, want %v", proc.signalled, tt.wantSignalled)
+			}
+			if proc.polled != tt.wantWaited {
+				t.Errorf("waited for exit = %v, want %v", proc.polled, tt.wantWaited)
+			}
+			path, _ := sessionFilePath(key)
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Error("the session entry should be gone afterwards")
+			}
+		})
+	}
+}
+
+func TestWaitForExit(t *testing.T) {
+	tests := []struct {
+		name     string
+		hangs    bool
+		wantKill bool
+	}{
+		{name: "daemon exits", hangs: false},
+		{name: "daemon hangs, is killed after stopWait and waited for until gone", hangs: true, wantKill: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proc := stubStopSignals(t, tt.hangs)
+			if !WaitForExit(os.Getpid()) {
+				t.Error("WaitForExit did not confirm daemon exit")
+			}
+			if proc.killed != tt.wantKill {
+				t.Errorf("killed = %v, want %v", proc.killed, tt.wantKill)
+			}
+			if proc.killed && !proc.polledAfterKill {
+				t.Error("WaitForExit returned before the killed daemon was gone")
+			}
+		})
+	}
+}
+
+func TestWaitForExit_DoesNotConfirmSurvivingProcess(t *testing.T) {
+	tests := []struct {
+		name    string
+		killErr error
+	}{
+		{name: "kill denied", killErr: syscall.EPERM},
+		{name: "kill accepted but process survives"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stubStopSignals(t, true)
+			killProc = func(*os.Process) error { return tt.killErr }
+			procExists = func(*os.Process) bool { return true }
+			if WaitForExit(os.Getpid()) {
+				t.Error("WaitForExit confirmed exit while process was still alive")
+			}
+		})
+	}
+}
+
+func TestStopDaemon_KeepsSessionFileWhenKillDoesNotFinish(t *testing.T) {
+	key := startFakeDaemonSession(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/shutdown" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "stopping"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	stubStopSignals(t, true)
+	procExists = func(*os.Process) bool { return true }
+
+	if err := StopDaemon(key); err == nil {
+		t.Fatal("expected an error when the daemon survives the forced kill")
+	}
+	path, _ := sessionFilePath(key)
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("session entry removed before the daemon exited: %v", err)
+	}
+}
+
+func TestUnlessSessionTakenOver(t *testing.T) {
+	const noSessionFile = 0
+	tests := []struct {
+		name       string
+		sessionPID int
+		wantRun    bool
+	}{
+		{name: "no session file", sessionPID: noSessionFile, wantRun: true},
+		{name: "session file names this daemon", sessionPID: 4242, wantRun: true},
+		{name: "another daemon registered under the key", sessionPID: 4343},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testutil.SetHome(t, t.TempDir())
+			key := "takeover123"
+			if tt.sessionPID != noSessionFile {
+				if err := WriteSessionFile(key, SessionEntry{PID: tt.sessionPID}); err != nil {
+					t.Fatalf("WriteSessionFile: %v", err)
+				}
+			}
+			ran := false
+			UnlessSessionTakenOver(key, 4242, func() { ran = true })
+			if ran != tt.wantRun {
+				t.Errorf("ran = %v, want %v", ran, tt.wantRun)
+			}
+		})
+	}
+}
+
+func TestCleanOrphanedSessions_RemovesOldLoneLogs(t *testing.T) {
+	testutil.SetHome(t, t.TempDir())
+	dir, err := sessionsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldLog := filepath.Join(dir, "oldkey123.log")
+	freshLog := filepath.Join(dir, "freshkey123.log")
+	oldLock := filepath.Join(dir, "lockkey123.lock")
+	for _, p := range []string{oldLog, freshLog, oldLock} {
+		testutil.WriteFile(t, p, "x")
+	}
+	stale := time.Now().Add(-2 * daemonFailureRetention)
+	for _, p := range []string{oldLog, oldLock} {
+		if err := os.Chtimes(p, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cleanOrphanedSessions()
+
+	if _, err := os.Stat(oldLog); !os.IsNotExist(err) {
+		t.Error("a log older than daemonFailureRetention with no session file should be removed")
+	}
+	if _, err := os.Stat(freshLog); err != nil {
+		t.Error("a fresh log may belong to a daemon that is still starting and must be kept")
+	}
+	if _, err := os.Stat(oldLock); err != nil {
+		t.Error("a lock file may be held by a starting client, whatever its age, and must be kept")
+	}
+}
+
 func TestKillProcess(t *testing.T) {
 	// Start a short-lived helper so we can call killProcess on a real
 	// Process handle (Windows OpenProcess rejects bogus PIDs).
@@ -1492,6 +1908,8 @@ func TestKillProcess(t *testing.T) {
 }
 
 func TestStopDaemon_KeepsSessionFileOnKillPermissionDenied(t *testing.T) {
+	shortenStopWait(t)
+
 	home := t.TempDir()
 	testutil.SetHome(t, home)
 
@@ -1556,6 +1974,7 @@ func TestStopDaemon_RemovesSessionFileAfterKill(t *testing.T) {
 		{name: "kill succeeds", killErr: nil},
 		{name: "kill proves gone", killErr: syscall.ESRCH},
 	}
+	shortenStopWait(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -1582,12 +2001,18 @@ func TestStopDaemon_RemovesSessionFileAfterKill(t *testing.T) {
 			terminateProc = func(proc *os.Process) error { return nil }
 			t.Cleanup(func() { terminateProc = origTerminate })
 
+			killed := false
 			origExists := procExists
-			procExists = func(proc *os.Process) bool { return true }
+			procExists = func(proc *os.Process) bool { return !killed }
 			t.Cleanup(func() { procExists = origExists })
 
 			origKill := killProc
-			killProc = func(proc *os.Process) error { return tt.killErr }
+			killProc = func(proc *os.Process) error {
+				if tt.killErr == nil {
+					killed = true
+				}
+				return tt.killErr
+			}
 			t.Cleanup(func() { killProc = origKill })
 
 			if err := StopDaemon(key); err != nil {

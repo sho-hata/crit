@@ -2,13 +2,9 @@
   "name": "crit",
   "private": true,
   "dependencies": {
-    "@highlightjs/cdn-assets": "11.12.0",
-    "@sanity/diff-match-patch": "3.2.0",
-    "@taga3s/highlightjs-terraform": "1.0.7",
+    "@pierre/diffs": "1.5.1",
+    "@sanity/diff-match-patch": "3.2.1",
     "dompurify": "3.4.15",
-    "highlightjs-astro-js": "1.0.0",
-    "highlightjs-heex": "1.0.1",
-    "highlightjs-vue": "1.0.0",
     "markdown-it": "15.0.2",
     "mermaid": "11.17.2"
   },
@@ -18,12 +14,13 @@
     "verify-assets": "node scripts/verify-vendored-assets.mjs",
     "verify-assets:installed": "node scripts/verify-vendored-assets.mjs --installed",
     "verify-assets:npm": "node scripts/verify-vendored-assets.mjs --npm",
-    "test:frontend": "node web/__tests__/markdown-patch.test.mjs && node web/__tests__/vue-astro-highlight.test.mjs && node web/__tests__/crit-diff-renderer.test.js && node web/__tests__/markdown-replacements.test.js && node web/test-diff-render.mjs",
+    "test:frontend": "node --test web/__tests__/*.test.js",
     "test:perf": "node --test web/__tests__/perf/*.perf.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "eslint": "10.10.0",
+    "eslint": "10.11.0",
+    "shiki": "4.4.3",
     "stylelint": "17.15.0"
   }
 }

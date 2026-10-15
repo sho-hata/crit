@@ -1,115 +1,90 @@
 import { test, expect, type Page } from '@playwright/test';
-import { clearAllComments, loadPage, goSection, mdSection } from './helpers';
+import { clearAllComments, loadPage, goSection, mdSection, diffLine } from './helpers';
+import { mockLSP, newCalls, location, hoverForTooltip, chordClickWord, jumpFlashed, HOVER_MARKDOWN, type LspCalls } from './lsp-helpers';
 
-// LSP wiring in file mode, where code files render in document view (one
-// .line-block per source line) instead of diff markup — binding to diff
-// markup alone left the feature silently dead here.
-//
-// /api/lsp/* is mocked so the test runs without gopls and asserts the
-// frontend wiring (resolved line/column, where the jump lands), not gopls.
+// LSP wiring in file mode, where a code file is one Pierre whole-file item
+// (a side-less code[data-code] column) rather than a diff. The hover and
+// jump paths have to work on that markup as well as on diffs.
 
-const HOVER_MARKDOWN = 'authMiddleware checks for a valid API key.';
-
-/** Line the definition mock points at: `func logRequest(...)` in server.go. */
+/** `func authMiddleware(...)` in the fixture's server.go. */
+const USE_LINE = 24;
+/** `func logRequest(...)` — where the definition mock points. */
 const DEF_LINE = 19;
 
-type Recorded = { path: string; line: string; char: string };
+const DEFINITION = [location('server.go', DEF_LINE, ['func logRequest(r *http.Request) {'])];
+const REFERENCES = [
+  location('server.go', DEF_LINE, ['func logRequest(r *http.Request) {'], { character: 5 }),
+  location('server.go', 42, ['\t\tlogRequest(r)'], { character: 2 }),
+  location('server.go', 51, ['\t\tlogRequest(r)'], { character: 2 }),
+];
 
-/** Route /api/config + /api/lsp/* so LSP is on and answers deterministically. */
-async function mockLSP(page: Page, calls: { hover: Recorded[]; definition: Recorded[] }) {
-  await page.route('**/api/config', async route => {
-    const res = await route.fetch();
-    const json = await res.json();
-    json.lsp_available = true;
-    json.lsp_extensions = ['go', 'ts', 'tsx', 'js', 'jsx'];
-    await route.fulfill({ response: res, json });
-  });
-
-  const record = (url: string): Recorded => {
-    const q = new URL(url).searchParams;
-    return { path: q.get('path') ?? '', line: q.get('line') ?? '', char: q.get('char') ?? '' };
-  };
-
-  await page.route('**/api/lsp/hover*', async route => {
-    calls.hover.push(record(route.request().url()));
-    await route.fulfill({ json: { contents: HOVER_MARKDOWN } });
-  });
-
-  await page.route('**/api/lsp/definition*', async route => {
-    calls.definition.push(record(route.request().url()));
-    await route.fulfill({
-      json: {
-        locations: [{
-          path: 'server.go',
-          display_path: 'server.go',
-          line: DEF_LINE,
-          in_session: true,
-          in_repo: true,
-          peek_start: DEF_LINE,
-          peek: ['func logRequest(r *http.Request) {'],
-        }],
-      },
-    });
-  });
+async function authMiddlewareLine(page: Page) {
+  const line = diffLine(await goSection(page), USE_LINE);
+  await expect(line).toContainText('func authMiddleware');
+  return line;
 }
 
-/** The document-view block holding `func authMiddleware(...)` in server.go. */
-function authMiddlewareLine(page: Page) {
-  return goSection(page).locator('.code-document .line-block')
-    .filter({ hasText: 'func authMiddleware' });
-}
-
-test.describe('LSP — File Mode — document view', () => {
-  let calls: { hover: Recorded[]; definition: Recorded[] };
+test.describe('LSP — File Mode — whole-file view', () => {
+  let calls: LspCalls;
 
   test.beforeEach(async ({ page, request }) => {
     await clearAllComments(request);
-    calls = { hover: [], definition: [] };
-    await mockLSP(page, calls);
+    calls = newCalls();
+    await mockLSP(page, calls, { definition: DEFINITION, references: REFERENCES });
   });
 
-  test('code files render as .code-document, markdown does not', async ({ page }) => {
+  test('code files render as whole-file Pierre items, markdown as a document', async ({ page }) => {
     await loadPage(page);
-    // The scope LSP eligibility keys off: only code files carry it, which is
-    // what keeps hover off rendered markdown prose (same .line-block markup).
-    await expect(goSection(page).locator('.document-wrapper.code-document')).toHaveCount(1);
-    await expect(mdSection(page).locator('.document-wrapper.code-document')).toHaveCount(0);
+    const go = await goSection(page);
+    await expect(go.locator('code[data-code]')).toHaveCount(1);
+    await expect(go.locator('code[data-additions], code[data-deletions], code[data-unified]')).toHaveCount(0);
+    await expect((await mdSection(page)).locator('.pierre-document')).toHaveCount(1);
   });
 
-  test('hover over a code line shows the tooltip', async ({ page }) => {
+  test('hover over a code line shows the tooltip with the resolved line and column', async ({ page }) => {
     await loadPage(page);
-    const line = authMiddlewareLine(page);
-    await expect(line).toHaveCount(1);
-    const lineNum = await line.getAttribute('data-start-line');
+    const line = await authMiddlewareLine(page);
+    const p = await hoverForTooltip(page, line, 'authMiddleware');
 
-    await line.locator('code').scrollIntoViewIfNeeded();
-    await line.locator('code').hover();
-
-    const tooltip = page.locator('.lsp-tooltip');
-    await expect(tooltip).toBeVisible();
-    await expect(tooltip).toContainText('authMiddleware checks for a valid API key');
-
-    expect(calls.hover[0].path).toBe('server.go');
-    expect(calls.hover[0].line).toBe(lineNum);
-    expect(Number(calls.hover[0].char)).toBeGreaterThan(0);
+    await expect(page.locator('.lsp-tooltip')).toContainText('authMiddleware checks for a valid API key');
+    expect(calls.hover.length).toBeGreaterThan(0);
+    for (const call of calls.hover) expect(call).toEqual({ path: 'server.go', line: String(USE_LINE), char: String(p.char) });
   });
 
-  test('Cmd/Ctrl+Click jumps to the definition inside the document view', async ({ page }) => {
+  test('Cmd/Ctrl+Click jumps to the definition inside the file view', async ({ page }) => {
     await loadPage(page);
-    const line = authMiddlewareLine(page);
-    await expect(line).toHaveCount(1);
-
-    await line.locator('code').scrollIntoViewIfNeeded();
-    await line.locator('code').click({ modifiers: ['ControlOrMeta'] });
+    const line = await authMiddlewareLine(page);
+    const p = await chordClickWord(page, line, 'authMiddleware');
 
     await expect.poll(() => calls.definition.length).toBe(1);
-    expect(calls.definition[0].path).toBe('server.go');
+    expect(calls.definition[0]).toEqual({ path: 'server.go', line: String(USE_LINE), char: String(p.char) });
 
-    // Handled in-review: the target line flashes. Falling back to the peek
-    // popup instead is exactly the regression this guards.
-    const target = goSection(page).locator(`.line-block[data-start-line="${DEF_LINE}"]`);
-    await expect(target).toHaveClass(/lsp-jump-flash/);
+    // Handled in-review: the target row is selected and flashed. Falling
+    // back to the peek popup instead is exactly the regression this guards.
+    const target = diffLine(await goSection(page), DEF_LINE);
+    await expect.poll(() => jumpFlashed(target)).toBe(true);
+    await expect(target).toHaveAttribute('data-selected-line', /.*/);
     await expect(page.locator('.lsp-peek')).toHaveCount(0);
+  });
+
+  test('Cmd/Ctrl+Shift+Click opens the references widget under the line; Enter jumps', async ({ page }) => {
+    await loadPage(page);
+    const item = await goSection(page);
+    const line = await authMiddlewareLine(page);
+    await chordClickWord(page, line, 'authMiddleware', { shift: true });
+
+    await expect.poll(() => calls.references.length).toBe(1);
+    // A Pierre annotation of the file's item, not a floating panel.
+    const refs = item.locator('.lsp-refs');
+    await expect(refs).toBeVisible();
+    await expect(refs).not.toHaveClass(/lsp-refs-floating/);
+    await expect(refs.locator('.lsp-refs-item')).toHaveCount(3);
+    await expect(refs.locator('.lsp-refs-count-total')).toContainText('3 references');
+    await expect(refs.locator('.lsp-refs-list')).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.lsp-refs')).toHaveCount(0);
+    await expect(diffLine(item, DEF_LINE)).toBeVisible();
   });
 });
 
@@ -117,23 +92,19 @@ test.describe('LSP — File Mode — document view', () => {
 // the reviewer's own environment (range/PR focus + Python). It must be a quiet
 // footnote — present exactly when the server asks for it, never otherwise.
 test.describe('LSP — local environment note', () => {
-  let calls: { hover: Recorded[]; definition: Recorded[] };
+  let calls: LspCalls;
 
   test.beforeEach(async ({ page, request }) => {
     await clearAllComments(request);
-    calls = { hover: [], definition: [] };
-    await mockLSP(page, calls);
+    calls = newCalls();
+    await mockLSP(page, calls, { definition: DEFINITION });
   });
 
   async function hoverAuthMiddleware(page: Page) {
     await loadPage(page);
-    const line = authMiddlewareLine(page);
-    await expect(line).toHaveCount(1);
-    await line.locator('code').scrollIntoViewIfNeeded();
-    await line.locator('code').hover();
-    const tooltip = page.locator('.lsp-tooltip');
-    await expect(tooltip).toBeVisible();
-    return { tooltip, line };
+    const line = await authMiddlewareLine(page);
+    await hoverForTooltip(page, line, 'authMiddleware');
+    return { tooltip: page.locator('.lsp-tooltip'), line };
   }
 
   test('hover shows the note between the docs and the key hint when local_env is set', async ({ page }) => {
@@ -179,10 +150,8 @@ test.describe('LSP — local environment note', () => {
       }));
 
       await loadPage(page);
-      const line = authMiddlewareLine(page);
-      await expect(line).toHaveCount(1);
-      await line.locator('code').scrollIntoViewIfNeeded();
-      await line.locator('code').click({ modifiers: ['ControlOrMeta'] });
+      const line = await authMiddlewareLine(page);
+      await chordClickWord(page, line, 'authMiddleware');
 
       const peek = page.locator('.lsp-peek');
       await expect(peek).toBeVisible();

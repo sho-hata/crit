@@ -6,7 +6,7 @@ A recipe for running `crit` inside a container alongside an AI coding agent (Cla
 
 ## The 127.0.0.1 catch
 
-`crit`'s HTTP server binds to `127.0.0.1` only. This is intentional — there's no auth, and the API can read repo files and (if `agent_cmd` is configured) shell out. Loopback-only keeps the threat model honest for a localhost CLI.
+`crit`'s HTTP server binds to `127.0.0.1` only. This is intentional - there's no auth, and the API can read repo files and (if `agent_cmd` is configured) shell out. Loopback-only keeps the threat model honest for a localhost CLI.
 
 That means a plain `docker run -p 8080:8080` won't reach it: the host port forwards into the container, but crit isn't listening on the container's external interface. The fix is a tiny `socat` bridge inside the container that accepts on `0.0.0.0:8080` and forwards to crit's loopback port. Crit stays loopback-only; only the explicit `-p` mapping exposes anything.
 
@@ -16,12 +16,12 @@ That means a plain `docker run -p 8080:8080` won't reach it: the host port forwa
 -p 127.0.0.1:8080:8080
 ```
 
-A bare `-p 8080:8080` commonly binds all host interfaces and exposes the socat bridge (Crit itself stays on loopback inside the container). Prefer host-loopback publish. If you intentionally publish beyond the host, treat that as trusting every peer that can reach the port — Crit's API remains unauthenticated.
+A bare `-p 8080:8080` commonly binds all host interfaces and exposes the socat bridge (Crit itself stays on loopback inside the container). Prefer host-loopback publish. If you intentionally publish beyond the host, treat that as trusting every peer that can reach the port - Crit's API remains unauthenticated.
 
 ## Files in this directory
 
-- [`Dockerfile`](./Dockerfile) — multi-stage build: golang to fetch `crit`, node:22-slim runtime with claude code, socat, git
-- [`entrypoint.sh`](./entrypoint.sh) — starts the socat bridge, then execs your command
+- [`Dockerfile`](./Dockerfile) - multi-stage build: golang to fetch `crit`, node:22-slim runtime with claude code, socat, git
+- [`entrypoint.sh`](./entrypoint.sh) - starts the socat bridge, then execs your command
 
 Copy both into a directory and build:
 
