@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -619,10 +620,8 @@ func isUnmodifiedOpencodePlugin(source string, data []byte) (bool, error) {
 		return true, nil
 	}
 	hash := computeFileHash(data)
-	for _, h := range previousOpencodePluginHashes[source] {
-		if hash == h {
-			return true, nil
-		}
+	if slices.Contains(previousOpencodePluginHashes[source], hash) {
+		return true, nil
 	}
 	return false, nil
 }

@@ -133,8 +133,7 @@ func defaultLiveRoute(origin string) string {
 	}
 	// Origin is a URL (http://localhost:3000/dashboard). Use its path when
 	// the caller did not pass --route.
-	if i := strings.Index(origin, "://"); i >= 0 {
-		rest := origin[i+3:]
+	if _, rest, ok := strings.Cut(origin, "://"); ok {
 		if slash := strings.Index(rest, "/"); slash >= 0 {
 			path := rest[slash:]
 			if hash := strings.Index(path, "#"); hash >= 0 {

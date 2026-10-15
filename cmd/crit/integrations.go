@@ -106,7 +106,7 @@ func opencodeVersionInfo() (int, string) {
 }
 
 func parseOpencodeVersion(output string) (int, string) {
-	for _, field := range strings.Fields(output) {
+	for field := range strings.FieldsSeq(output) {
 		field = strings.TrimLeft(field, "vV")
 		majorText, _, _ := strings.Cut(field, ".")
 		major, parseErr := strconv.Atoi(majorText)

@@ -61,7 +61,7 @@ func installOpencodePluginDependency(path, version string, force bool) error {
 	if version == "" {
 		return errors.New("could not determine the OpenCode v2 version for @opencode/plugin")
 	}
-	root := map[string]interface{}{}
+	root := map[string]any{}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		if err := json.Unmarshal(data, &root); err != nil {
@@ -70,12 +70,12 @@ func installOpencodePluginDependency(path, version string, force bool) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	dependencies, ok := root["dependencies"].(map[string]interface{})
+	dependencies, ok := root["dependencies"].(map[string]any)
 	if !ok {
 		if _, exists := root["dependencies"]; exists {
 			return fmt.Errorf("%s has a dependencies field that is not an object", path)
 		}
-		dependencies = map[string]interface{}{}
+		dependencies = map[string]any{}
 	}
 	if current, ok := dependencies["@opencode/plugin"].(string); ok {
 		if current == version {
@@ -261,12 +261,12 @@ func removeOpencodePluginEntry(path, entry string) {
 		fmt.Printf("  Note:      remove the V1 plugin registration %q from %s; V2 discovers the Crit plugin automatically\n", entry, path)
 		return
 	}
-	root := map[string]interface{}{}
+	root := map[string]any{}
 	if err := json.Unmarshal(stripTrailingCommas(data), &root); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not remove the V1 plugin registration from %s: %v\n", path, err)
 		return
 	}
-	plugins, ok := root["plugin"].([]interface{})
+	plugins, ok := root["plugin"].([]any)
 	if !ok {
 		return
 	}
@@ -274,9 +274,9 @@ func removeOpencodePluginEntry(path, entry string) {
 		fmt.Printf("  Note:      remove the V1 plugin registration %q from %s; V2 discovers the Crit plugin automatically\n", entry, path)
 		return
 	}
-	filtered := make([]interface{}, 0, len(plugins))
+	filtered := make([]any, 0, len(plugins))
 	for _, plugin := range plugins {
-		if !pluginEntryPresent([]interface{}{plugin}, entry) {
+		if !pluginEntryPresent([]any{plugin}, entry) {
 			filtered = append(filtered, plugin)
 		}
 	}
