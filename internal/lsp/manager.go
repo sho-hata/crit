@@ -362,23 +362,12 @@ func (m *Manager) PeekRoots() []PeekRoot {
 	return roots
 }
 
-// serverEnv is the environment lang's server runs with: the daemon's own plus
-// Language.Env. nil, which exec reads as "inherit", when there is nothing to
-// add.
-func serverEnv(lang *Language) []string {
-	if len(lang.Env) == 0 {
-		return nil
-	}
-	return append(os.Environ(), lang.Env...)
-}
-
 func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
 	}
 	cmd := exec.CommandContext(ctx, lang.Command[0], lang.Command[1:]...) //nolint:gosec // argv is fixed in the registry, never user input
 	cmd.Dir = rootDir
-	cmd.Env = serverEnv(lang)
 	debug := debugEnabled()
 	if debug {
 		cmd.Stderr = &stderrLogger{name: lang.Name}

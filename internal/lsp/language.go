@@ -32,10 +32,6 @@ type Language struct {
 	// fixed binary name is ever spawned — there is deliberately no config
 	// key for the path, so a malicious repo cannot hijack the command.
 	Command []string
-	// Env is appended to the server's environment, KEY=VALUE per entry. For a
-	// kill switch a server reads only from its environment (the Dart server's
-	// DART_SERVER_DISABLE_PUB_COMMAND); fixed like Command, never from config.
-	Env []string
 	// IDByExt maps a file extension (lower-case, no dot) to the LSP
 	// languageId sent with didOpen.
 	IDByExt map[string]string
@@ -160,11 +156,10 @@ var languages = []*Language{
 		// branch would run code on the first hover. Measured against Dart
 		// 3.13.5: the plugin ran within 20s of didOpen; with the flag nothing
 		// is fetched or started. Hover, definition and references don't use
-		// plugins, so nothing is lost. The server's own `pub outdated` on an
-		// opened pubspec fetches but runs nothing; crit never opens pubspecs,
-		// and Env turns it off as well.
+		// plugins, so nothing is lost. The server's other external call,
+		// `pub outdated`, runs only for a pubspec the client opens; crit opens
+		// .dart files alone (measured: no pub process, pub cache untouched).
 		Command: []string{"dart", "language-server", "--client-id=crit", "--no-plugins"},
-		Env:     []string{"DART_SERVER_DISABLE_PUB_COMMAND=1"},
 		IDByExt: map[string]string{"dart": "dart"},
 		// pubspec.yaml marks the package root (its SDK constraint picks the
 		// language version). .dart_tool/package_config.json is untracked, so

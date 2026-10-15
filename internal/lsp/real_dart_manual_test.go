@@ -145,11 +145,12 @@ func TestRealDartNeverRunsAnalyzerPlugins(t *testing.T) {
 }
 
 // Control: the same project with the server's own defaults does fetch and run
-// the plugin, so the test above is not passing vacuously. The pub cache goes
-// to a temp dir through Env, the server's own PUB_CACHE handling.
+// the plugin, so the test above is not passing vacuously. Not parallel: it
+// points PUB_CACHE, which the server inherits, at a temp dir so the fetch
+// leaves nothing behind.
 func TestRealDartRunsAnalyzerPluginsByDefault(t *testing.T) {
-	t.Parallel()
 	requireRealDart(t)
+	t.Setenv("PUB_CACHE", t.TempDir())
 
 	dir := t.TempDir()
 	main := writeDartProject(t, dir)
@@ -157,7 +158,6 @@ func TestRealDartRunsAnalyzerPluginsByDefault(t *testing.T) {
 
 	lang := *LanguageForPath(main)
 	lang.Command = slices.DeleteFunc(slices.Clone(lang.Command), func(a string) bool { return a == "--no-plugins" })
-	lang.Env = append(slices.Clone(lang.Env), "PUB_CACHE="+t.TempDir())
 
 	c, err := startServer(context.Background(), dir, &lang, nil, nil)
 	if err != nil {

@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
-	"strings"
 	"testing"
 )
 
@@ -111,24 +109,4 @@ func TestPubCacheDir(t *testing.T) {
 			t.Errorf("pubCacheDir() = %q, want %q", got, want)
 		}
 	})
-}
-
-func TestServerEnvAppendsLanguageEnv(t *testing.T) {
-	t.Parallel()
-
-	if env := serverEnv(&Language{Name: "plain"}); env != nil {
-		t.Errorf("serverEnv without Env = %v, want nil (inherit)", env)
-	}
-	env := serverEnv(&Language{Name: "dart", Env: []string{"CRIT_TEST_FLAG=1"}})
-	if !slices.Contains(env, "CRIT_TEST_FLAG=1") {
-		t.Errorf("serverEnv = %v, want it to carry the language's entry", env)
-	}
-	// The daemon's own environment (PATH, HOME, …) must still be there: the
-	// server needs it to find its toolchain. Windows spells the key Path.
-	if !slices.ContainsFunc(env, func(kv string) bool {
-		key, _, _ := strings.Cut(kv, "=")
-		return strings.EqualFold(key, "PATH")
-	}) {
-		t.Errorf("serverEnv = %v, want it to inherit PATH", env)
-	}
 }
