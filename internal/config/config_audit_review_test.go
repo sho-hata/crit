@@ -54,7 +54,8 @@ func writeAuditReviewConfig(t *testing.T, dir, raw string) string {
 	return p
 }
 
-func auditBoolPtr(v bool) *bool { return &v }
+//go:fix inline
+func auditBoolPtr(v bool) *bool { return new(v) }
 
 // auditTriBool describes one presence-tracked *bool review key.
 type auditTriBool struct {
@@ -167,7 +168,7 @@ func TestAuditReviewTriStateBoolPresenceMerge(t *testing.T) {
 	for _, tb := range auditTriBoolKeys() {
 		t.Run(tb.key+"/absent project keeps global true", func(t *testing.T) {
 			global := Config{}
-			tb.set(&global, auditBoolPtr(true))
+			tb.set(&global, new(true))
 			merged := mergeConfigs(global, Config{}, ConfigPresence{})
 			if got := tb.get(merged); got == nil || *got != true {
 				t.Errorf("merged %s = %v, want global pointer to true", tb.key, got)
@@ -178,7 +179,7 @@ func TestAuditReviewTriStateBoolPresenceMerge(t *testing.T) {
 		})
 		t.Run(tb.key+"/absent project keeps global false", func(t *testing.T) {
 			global := Config{}
-			tb.set(&global, auditBoolPtr(false))
+			tb.set(&global, new(false))
 			merged := mergeConfigs(global, Config{}, ConfigPresence{})
 			if got := tb.get(merged); got == nil || *got != false {
 				t.Errorf("merged %s = %v, want global pointer to false", tb.key, got)
@@ -189,9 +190,9 @@ func TestAuditReviewTriStateBoolPresenceMerge(t *testing.T) {
 		})
 		t.Run(tb.key+"/project false overrides global true", func(t *testing.T) {
 			global := Config{}
-			tb.set(&global, auditBoolPtr(true))
+			tb.set(&global, new(true))
 			project := Config{}
-			tb.set(&project, auditBoolPtr(false))
+			tb.set(&project, new(false))
 			presence := ConfigPresence{}
 			setAuditTriBoolPresence(tb, &presence)
 			merged := mergeConfigs(global, project, presence)
@@ -201,9 +202,9 @@ func TestAuditReviewTriStateBoolPresenceMerge(t *testing.T) {
 		})
 		t.Run(tb.key+"/project true overrides global false", func(t *testing.T) {
 			global := Config{}
-			tb.set(&global, auditBoolPtr(false))
+			tb.set(&global, new(false))
 			project := Config{}
-			tb.set(&project, auditBoolPtr(true))
+			tb.set(&project, new(true))
 			presence := ConfigPresence{}
 			setAuditTriBoolPresence(tb, &presence)
 			merged := mergeConfigs(global, project, presence)
@@ -216,9 +217,9 @@ func TestAuditReviewTriStateBoolPresenceMerge(t *testing.T) {
 			// recorded as present (e.g. zero Config from a missing file) must
 			// not clobber the global pointer.
 			global := Config{}
-			tb.set(&global, auditBoolPtr(false))
+			tb.set(&global, new(false))
 			project := Config{}
-			tb.set(&project, auditBoolPtr(true))
+			tb.set(&project, new(true))
 			merged := mergeConfigs(global, project, ConfigPresence{})
 			if got := tb.get(merged); got == nil || *got != false {
 				t.Errorf("merged %s = %v, want global pointer to false (project without presence ignored)", tb.key, got)
@@ -231,7 +232,7 @@ func TestAuditReviewTriStateBoolPresenceMerge(t *testing.T) {
 			// Current behavior: presence(true) + nil pointer replaces the
 			// global pointer with nil, so Enabled() falls back to the default.
 			global := Config{}
-			tb.set(&global, auditBoolPtr(false))
+			tb.set(&global, new(false))
 			presence := ConfigPresence{}
 			setAuditTriBoolPresence(tb, &presence)
 			merged := mergeConfigs(global, Config{}, presence)

@@ -541,20 +541,20 @@ func TestRoundSnapshots_ConcurrentReadWrite(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(writers + readers)
 
-	for w := 0; w < writers; w++ {
+	for range writers {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < iters; i++ {
+			for i := range iters {
 				s.mu.Lock()
 				s.captureRoundSnapshot(i + 1)
 				s.mu.Unlock()
 			}
 		}()
 	}
-	for r := 0; r < readers; r++ {
+	for range readers {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < iters; i++ {
+			for range iters {
 				s.mu.RLock()
 				_ = s.availableRounds()
 				_, _ = s.roundSnapshotForFile("a.md", 1)

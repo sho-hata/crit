@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1917,8 +1918,7 @@ func TestWaitForEventIgnoresOtherEvents(t *testing.T) {
 	srv, session := newTestServer(t)
 	session.AddComment(session.Files[0].Path, 1, 1, "", "test", "", "", "")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	var resp *httptest.ResponseRecorder
 	done := make(chan struct{})
@@ -2281,12 +2281,7 @@ func TestFinishPromptIncludesAllScopesInComments(t *testing.T) {
 }
 
 func contains(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ss, want)
 }
 
 func TestReviewCommentsAPI(t *testing.T) {
@@ -2972,7 +2967,7 @@ func TestSetPRInfo_ConcurrentSafe(t *testing.T) {
 	}()
 
 	// Hit config concurrently — should not panic or race.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		req := httptest.NewRequest("GET", "/api/config", nil)
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, req)
@@ -4644,10 +4639,7 @@ func TestAgentMarkerCSS_ServedUnguarded(t *testing.T) {
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, ".crit-live-marker") {
-		end := 200
-		if len(body) < end {
-			end = len(body)
-		}
+		end := min(len(body), 200)
 		t.Fatalf("missing marker class in body: %s", body[:end])
 	}
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
@@ -4691,7 +4683,7 @@ func TestHandleSession_LiveFields(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d", w.Code)
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp["review_type"] != "live" {
 		t.Errorf("review_type = %v, want live", resp["review_type"])

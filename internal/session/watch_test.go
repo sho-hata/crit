@@ -167,26 +167,22 @@ func TestWatchFileMtimes_ConcurrentAddDuringChange(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Writer goroutine: keep modifying the file to trigger the watcher's change path.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 10; i++ {
+	wg.Go(func() {
+		for i := range 10 {
 			newContent := []byte("# Plan\n\n## Revision " + string(rune('A'+i)) + "\n\nUpdated\n")
 			os.WriteFile(mdPath, newContent, 0644)
 			time.Sleep(200 * time.Millisecond)
 		}
-	}()
+	})
 
 	// Comment goroutines: keep adding comments concurrently with file changes.
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 20; j++ {
+	for range 5 {
+		wg.Go(func() {
+			for range 20 {
 				s.AddComment("plan.md", 1, 1, "", "concurrent comment", "", "tester", "")
 				time.Sleep(50 * time.Millisecond)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

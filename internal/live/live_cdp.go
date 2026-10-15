@@ -106,7 +106,7 @@ func splitCookiePairs(header string) []string {
 		return nil
 	}
 	var out []string
-	for _, part := range strings.Split(header, ";") {
+	for part := range strings.SplitSeq(header, ";") {
 		part = strings.TrimSpace(part)
 		if part != "" {
 			out = append(out, part)

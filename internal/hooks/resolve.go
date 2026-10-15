@@ -174,8 +174,8 @@ func ResolveFinishCommand(globalHooks, projectHooks map[string]string, projectDi
 
 // commandSource describes where a config-driven hook came from (file: → path; inline → inline).
 func commandSource(layer, value string) string {
-	if strings.HasPrefix(value, PrefixFile) {
-		return layer + ":" + strings.TrimPrefix(value, PrefixFile)
+	if after, ok := strings.CutPrefix(value, PrefixFile); ok {
+		return layer + ":" + after
 	}
 	return layer + ":inline"
 }

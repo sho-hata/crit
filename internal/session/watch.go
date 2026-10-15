@@ -1044,10 +1044,7 @@ func levenshteinRatio(a, b string) float64 {
 	if la == 0 && lb == 0 {
 		return 1
 	}
-	maxLen := la
-	if lb > maxLen {
-		maxLen = lb
-	}
+	maxLen := max(lb, la)
 	d := levenshtein(ar, br)
 	return 1 - float64(d)/float64(maxLen)
 }
@@ -1076,14 +1073,7 @@ func levenshtein(a, b []rune) int {
 			del := prev[j] + 1
 			ins := curr[j-1] + 1
 			sub := prev[j-1] + cost
-			m := del
-			if ins < m {
-				m = ins
-			}
-			if sub < m {
-				m = sub
-			}
-			curr[j] = m
+			curr[j] = min(ins, del, sub)
 		}
 		prev, curr = curr, prev
 	}

@@ -503,9 +503,9 @@ func hasQuote(e BulkCommentEntry) bool {
 }
 
 func parseLineSpec(spec string) (start, end int, err error) {
-	if dashIdx := strings.Index(spec, "-"); dashIdx >= 0 {
-		s, err1 := strconv.Atoi(spec[:dashIdx])
-		e, err2 := strconv.Atoi(spec[dashIdx+1:])
+	if before, after, ok := strings.Cut(spec, "-"); ok {
+		s, err1 := strconv.Atoi(before)
+		e, err2 := strconv.Atoi(after)
 		if err1 != nil || err2 != nil {
 			if err1 != nil {
 				return 0, 0, err1

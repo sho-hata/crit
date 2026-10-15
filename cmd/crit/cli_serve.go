@@ -68,7 +68,7 @@ func bindListener(host string, port int) (net.Listener, error) {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	var listener net.Listener
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for range 3 {
 		listener, err = net.Listen("tcp", addr)
 		if err == nil {
 			return listener, nil
@@ -323,21 +323,17 @@ func runServe(args []string) {
 	sess.Shutdown()
 
 	var shutWG sync.WaitGroup
-	shutWG.Add(1)
-	go func() {
-		defer shutWG.Done()
+	shutWG.Go(func() {
 		apiCtx, apiCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer apiCancel()
 		_ = httpServer.Shutdown(apiCtx)
-	}()
+	})
 	if proxySrv != nil {
-		shutWG.Add(1)
-		go func() {
-			defer shutWG.Done()
+		shutWG.Go(func() {
 			proxyCtx, proxyCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer proxyCancel()
 			_ = proxySrv.Shutdown(proxyCtx)
-		}()
+		})
 	}
 	shutWG.Wait()
 	_ = proxyLn

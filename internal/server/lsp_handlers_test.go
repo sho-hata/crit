@@ -135,7 +135,7 @@ func TestLSPProviderReusedAcrossWorkingTreeRequests(t *testing.T) {
 		return fake
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=3&char=5")
 		if w.Code != http.StatusOK {
 			t.Fatalf("request %d: status = %d, body = %s", i, w.Code, w.Body.String())
@@ -571,7 +571,7 @@ func TestReadPeekBoundaries(t *testing.T) {
 	write := func(name string, lineCount int) string {
 		path := filepath.Join(dir, name)
 		var b strings.Builder
-		for i := 0; i < lineCount; i++ {
+		for i := range lineCount {
 			fmt.Fprintf(&b, "line %d\n", i+1)
 		}
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -612,7 +612,7 @@ func TestLSPDefinitionPeekTruncatesLargeFiles(t *testing.T) {
 	bigPath := filepath.Join(sess.RepoRoot, "generated.go")
 	var b strings.Builder
 	b.WriteString("package main\n")
-	for i := 0; i < 3000; i++ {
+	for range 3000 {
 		b.WriteString("// filler line\n")
 	}
 	if err := os.WriteFile(bigPath, []byte(b.String()), 0o644); err != nil {
@@ -811,7 +811,7 @@ func TestLSPReferencesCapKeepsRelevantFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	refs := make([]lsp.Location, 0, maxReferenceLocations+10)
-	for i := 0; i < maxReferenceLocations+5; i++ {
+	for i := range maxReferenceLocations + 5 {
 		refs = append(refs, lsp.Location{Path: bulkPath, Line: i})
 	}
 	refs = append(refs, lsp.Location{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 2})
@@ -856,7 +856,7 @@ func TestLSPReferencesSmallPeekWindow(t *testing.T) {
 	bigPath := filepath.Join(sess.RepoRoot, "big.go")
 	var b strings.Builder
 	b.WriteString("package main\n")
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		b.WriteString("// filler line\n")
 	}
 	if err := os.WriteFile(bigPath, []byte(b.String()), 0o644); err != nil {

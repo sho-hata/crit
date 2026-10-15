@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -233,12 +234,7 @@ func TestDaemonArgsForReconnect_OutputAndPublicURL(t *testing.T) {
 }
 
 func containsArg(args []string, want string) bool {
-	for _, a := range args {
-		if a == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(args, want)
 }
 
 func TestResolveReconnectReviewDir_MissingStaleReview(t *testing.T) {
@@ -453,13 +449,7 @@ func TestDaemonArgsForReconnect_Host(t *testing.T) {
 	stale := daemon.SessionEntry{Host: "0.0.0.0"}
 	args := daemonArgsForReconnect(key, nil, stale, defaultDir)
 	assertDaemonFlag(t, args, "--host", "0.0.0.0")
-	foundAllow := false
-	for _, a := range args {
-		if a == "--allow-unauthenticated-network" {
-			foundAllow = true
-			break
-		}
-	}
+	foundAllow := slices.Contains(args, "--allow-unauthenticated-network")
 	if !foundAllow {
 		t.Fatalf("args %v missing --allow-unauthenticated-network", args)
 	}

@@ -113,7 +113,7 @@ func isRegisteredWorktree(ctx context.Context, repoRoot, dir string) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if p, ok := strings.CutPrefix(line, "worktree "); ok && samePath(p, dir) {
 			return true
 		}

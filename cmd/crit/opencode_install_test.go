@@ -15,39 +15,39 @@ func TestInstallOpencodePluginEntry(t *testing.T) {
 	cases := []struct {
 		name         string
 		initial      string // existing file content; "" means file absent
-		expectPlugin []interface{}
+		expectPlugin []any
 		expectErr    bool
 		expectSkip   bool // file should be left untouched (e.g. JSONC with comments)
 	}{
 		{
 			name:         "missing file",
 			initial:      "",
-			expectPlugin: []interface{}{projectEntry},
+			expectPlugin: []any{projectEntry},
 		},
 		{
 			name:         "empty object",
 			initial:      `{}`,
-			expectPlugin: []interface{}{projectEntry},
+			expectPlugin: []any{projectEntry},
 		},
 		{
 			name:         "existing plugins, no crit entry",
 			initial:      `{"plugin":["some-other-plugin"]}`,
-			expectPlugin: []interface{}{"some-other-plugin", projectEntry},
+			expectPlugin: []any{"some-other-plugin", projectEntry},
 		},
 		{
 			name:         "already registered as string (idempotent)",
 			initial:      `{"plugin":["./.opencode/plugins/crit.ts"]}`,
-			expectPlugin: []interface{}{projectEntry},
+			expectPlugin: []any{projectEntry},
 		},
 		{
 			name:         "already registered as tuple",
 			initial:      `{"plugin":[["./.opencode/plugins/crit.ts",{}]]}`,
-			expectPlugin: []interface{}{[]interface{}{projectEntry, map[string]interface{}{}}},
+			expectPlugin: []any{[]any{projectEntry, map[string]any{}}},
 		},
 		{
 			name:         "trailing comma tolerated",
 			initial:      `{"plugin": ["other-plugin"],}`,
-			expectPlugin: []interface{}{"other-plugin", projectEntry},
+			expectPlugin: []any{"other-plugin", projectEntry},
 		},
 		{
 			name:       "trailing comma with schema key left untouched",
@@ -119,11 +119,11 @@ func TestInstallOpencodePluginEntry(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read result: %v", err)
 			}
-			var root map[string]interface{}
+			var root map[string]any
 			if err := json.Unmarshal(data, &root); err != nil {
 				t.Fatalf("result not valid JSON: %v\n%s", err, data)
 			}
-			plugins, _ := root["plugin"].([]interface{})
+			plugins, _ := root["plugin"].([]any)
 			if len(plugins) != len(tc.expectPlugin) {
 				t.Fatalf("plugin array len = %d want %d (got %v)", len(plugins), len(tc.expectPlugin), plugins)
 			}

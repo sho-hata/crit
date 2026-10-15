@@ -18,7 +18,7 @@ import (
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
-func captureStatusJSON(t *testing.T) map[string]interface{} {
+func captureStatusJSON(t *testing.T) map[string]any {
 	t.Helper()
 	original := os.Stdout
 	reader, writer, err := os.Pipe()
@@ -43,7 +43,7 @@ func captureStatusJSON(t *testing.T) map[string]interface{} {
 		t.Fatal(err)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatalf("decoding status JSON %q: %v", data, err)
 	}
@@ -97,7 +97,7 @@ func TestRunStatusUsesConfiguredOutputWithoutDaemon(t *testing.T) {
 	t.Chdir(projectDir)
 	if err := os.WriteFile(
 		filepath.Join(projectDir, ".crit.config.json"),
-		[]byte(fmt.Sprintf(`{"output":%q}`, outputDir)),
+		fmt.Appendf(nil, `{"output":%q}`, outputDir),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestRunStatusLiveSessionWinsOverConfiguredOutput(t *testing.T) {
 	t.Chdir(projectDir)
 	if err := os.WriteFile(
 		filepath.Join(projectDir, ".crit.config.json"),
-		[]byte(fmt.Sprintf(`{"output":%q}`, configuredOutput)),
+		fmt.Appendf(nil, `{"output":%q}`, configuredOutput),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -242,13 +242,13 @@ func TestRunStatusListsAllMatchingSessions(t *testing.T) {
 	}
 
 	result := captureStatusJSON(t)
-	sessions, ok := result["sessions"].([]interface{})
+	sessions, ok := result["sessions"].([]any)
 	if !ok || len(sessions) != 2 {
 		t.Fatalf("sessions = %#v, want two entries", result["sessions"])
 	}
 	got := map[string]bool{}
 	for _, raw := range sessions {
-		entry := raw.(map[string]interface{})
+		entry := raw.(map[string]any)
 		got[entry["id"].(string)] = true
 	}
 	if !got[firstKey] || !got[secondKey] {
@@ -263,7 +263,7 @@ func TestRunStatusListsAllMatchingSessions(t *testing.T) {
 	if note, _ := result["note"].(string); !strings.Contains(note, "multiple active review sessions") {
 		t.Fatalf("note = %#v, want ambiguity note", result["note"])
 	}
-	daemonStatus, ok := result["daemon"].(map[string]interface{})
+	daemonStatus, ok := result["daemon"].(map[string]any)
 	if !ok {
 		t.Fatalf("daemon = %#v, want object", result["daemon"])
 	}
@@ -285,7 +285,7 @@ func TestRunStatusFindsRepoRootSessionFromNestedDirectory(t *testing.T) {
 	configuredOutput := filepath.Join(repoDir, "configured-output")
 	if err := os.WriteFile(
 		filepath.Join(repoDir, ".crit.config.json"),
-		[]byte(fmt.Sprintf(`{"output":%q}`, configuredOutput)),
+		fmt.Appendf(nil, `{"output":%q}`, configuredOutput),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestRunStatusFindsRepoRootSessionFromNestedDirectory(t *testing.T) {
 	if result["review_file"] != want {
 		t.Fatalf("review_file = %q, want root daemon path %q", result["review_file"], want)
 	}
-	daemonStatus, ok := result["daemon"].(map[string]interface{})
+	daemonStatus, ok := result["daemon"].(map[string]any)
 	if !ok {
 		t.Fatalf("daemon status = %#v, want object", result["daemon"])
 	}
@@ -493,7 +493,7 @@ func TestPrintStatusJSONAmbiguousAndSole(t *testing.T) {
 		os.Stdout = old
 		data, _ := io.ReadAll(r)
 		_ = r.Close()
-		var result map[string]interface{}
+		var result map[string]any
 		if err := json.Unmarshal(data, &result); err != nil {
 			t.Fatal(err)
 		}

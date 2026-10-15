@@ -83,8 +83,7 @@ func RunReviewClientRaw(entry SessionEntry, sessionKey, planHook string) (approv
 	statusCode, body, err := waitForDaemonReady(client, entry.Host, entry.Port, sessionKey, entry.StartedAt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "crit plan-hook: %v\n", err)
-		var initErr *daemonInitializationError
-		if errors.As(err, &initErr) {
+		if initErr, ok := errors.AsType[*daemonInitializationError](err); ok {
 			return false, "crit daemon failed to initialize: " + initErr.Error()
 		}
 		return false, "crit daemon was unreachable; plan was not reviewed."

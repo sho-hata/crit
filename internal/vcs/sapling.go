@@ -459,7 +459,7 @@ func SplitNonEmpty(output string) []string {
 		return nil
 	}
 	var result []string
-	for _, line := range strings.Split(trimmed, "\n") {
+	for line := range strings.SplitSeq(trimmed, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if line != "" {
 			result = append(result, line)
@@ -471,7 +471,7 @@ func SplitNonEmpty(output string) []string {
 // parseRemoteBookmarks extracts bookmark names from `sl bookmark --list --remote` output.
 func parseRemoteBookmarks(output string) []string {
 	var names []string
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
 		line = strings.TrimRight(line, "\r")
 		fields := strings.Fields(line)
 		if len(fields) == 0 {

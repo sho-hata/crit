@@ -46,11 +46,11 @@ func TestConcurrentSaveCritJSON_NoCorruption(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var failures atomic.Int64
-	for w := 0; w < writers; w++ {
+	for w := range writers {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for i := 0; i < iters; i++ {
+			for i := range iters {
 				data, err := ReadFileShared(ReviewPathsFor(path).Review)
 				if err != nil {
 					t.Errorf("worker %d read iter %d: %v", id, i, err)

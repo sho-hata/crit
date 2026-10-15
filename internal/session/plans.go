@@ -156,8 +156,8 @@ func resolveSlug(content []byte) string {
 	// Try first markdown heading
 	for _, line := range strings.SplitN(string(content), "\n", 30) {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "# ") {
-			heading := strings.TrimPrefix(line, "# ")
+		if after, ok := strings.CutPrefix(line, "# "); ok {
+			heading := after
 			if s := slugify(heading); s != "" {
 				return s + "-" + date
 			}

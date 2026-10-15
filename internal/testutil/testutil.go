@@ -14,11 +14,11 @@ func init() {
 		if !strings.HasPrefix(kv, "GIT_") {
 			continue
 		}
-		eq := strings.IndexByte(kv, '=')
-		if eq < 0 {
+		before, _, ok := strings.Cut(kv, "=")
+		if !ok {
 			continue
 		}
-		os.Unsetenv(kv[:eq])
+		os.Unsetenv(before)
 	}
 }
 

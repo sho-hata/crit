@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1242,10 +1243,7 @@ func extractAnchor(content string, startLine, endLine int) string {
 	if startLine > len(lines) {
 		return ""
 	}
-	end := endLine
-	if end > len(lines) {
-		end = len(lines)
-	}
+	end := min(endLine, len(lines))
 	return strings.Join(lines[startLine-1:end], "\n")
 }
 
@@ -1718,10 +1716,8 @@ func (s *Session) appendPendingGHDelete(ghID int64) {
 	if ghID == 0 {
 		return
 	}
-	for _, existing := range s.pendingGitHubDeletes {
-		if existing == ghID {
-			return
-		}
+	if slices.Contains(s.pendingGitHubDeletes, ghID) {
+		return
 	}
 	s.pendingGitHubDeletes = append(s.pendingGitHubDeletes, ghID)
 }

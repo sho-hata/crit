@@ -67,11 +67,11 @@ func stripFence(s string) (string, bool) {
 		return "", false
 	}
 	// Drop the opening fence line (```json, ```JSON, or bare ```).
-	nl := strings.IndexByte(s, '\n')
-	if nl < 0 {
+	_, after, ok := strings.Cut(s, "\n")
+	if !ok {
 		return "", false
 	}
-	rest := s[nl+1:]
+	rest := after
 	// Drop the closing fence: everything up to the last ``` .
 	closeIdx := strings.LastIndex(rest, "```")
 	if closeIdx < 0 {

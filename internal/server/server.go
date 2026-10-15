@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -480,7 +481,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	latestVersion := s.latestVersion
 	s.versionMu.RUnlock()
 	sess := s.session.Load()
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"version":             s.currentVersion,
 		"latest_version":      latestVersion,
 		"installation_source": s.installationSource,
@@ -523,9 +524,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// Integration detection
 	s.addIntegrationStatus(resp)
 
-	for k, v := range s.projectPromptTrustPayload() {
-		resp[k] = v
-	}
+	maps.Copy(resp, s.projectPromptTrustPayload())
 	if sess != nil && s.projectPromptsUntrusted() {
 		resp["project_prompt_preview"] = s.renderProjectPromptPreview(sess)
 	}
@@ -607,7 +606,7 @@ func (s *Server) handleCodeFonts(w http.ResponseWriter, r *http.Request) {
 }
 
 // addIntegrationStatus populates integration detection fields in the config response.
-func (s *Server) addIntegrationStatus(resp map[string]interface{}) {
+func (s *Server) addIntegrationStatus(resp map[string]any) {
 	if s.cfg.NoIntegrationCheck {
 		resp["integrations"] = []IntegrationStatus{}
 		resp["any_integration_installed"] = false
@@ -2416,11 +2415,9 @@ func (s *Server) handleAgentRequest(w http.ResponseWriter, r *http.Request) {
 	// Run agent command asynchronously. Tracked via bgWG so the daemon
 	// shutdown path can wait for the reply to be posted before WriteFiles
 	// persists the final review state.
-	s.bgWG.Add(1)
-	go func() {
-		defer s.bgWG.Done()
+	s.bgWG.Go(func() {
 		s.runAgentCmd(prompt, comment.ID, filePath)
-	}()
+	})
 
 	writeJSONStatus(w, http.StatusAccepted, map[string]any{
 		"status":     "accepted",

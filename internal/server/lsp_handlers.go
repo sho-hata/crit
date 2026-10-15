@@ -600,10 +600,7 @@ func readPeek(absPath string, targetLine, fullMaxLines, contextLines int) (start
 	}
 	defer f.Close()
 
-	windowStart := targetLine - contextLines
-	if windowStart < 1 {
-		windowStart = 1
-	}
+	windowStart := max(targetLine-contextLines, 1)
 	windowEnd := targetLine + contextLines
 
 	// Scanning stops once the file is known to exceed fullMaxLines and the
