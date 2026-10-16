@@ -114,6 +114,21 @@ var realCases = map[string]realCase{
 		refsMin:   2,
 		blank:     realPos{1, 0},
 	},
+	"dart": {
+		files: map[string]string{
+			"pubspec.yaml":     dartPubspecSource,
+			"lib/greeter.dart": dartGreeterSource,
+			"lib/main.dart":    dartMainSource,
+		},
+		file:      "lib/main.dart",
+		use:       realPos{dartGreetUseLine, dartGreetUseChar},
+		hoverWant: "friendly greeting",
+		defFile:   "lib/greeter.dart",
+		defLine:   1,
+		refsAt:    realPos{dartGreetUseLine, dartGreetUseChar},
+		refsMin:   2,
+		blank:     realPos{1, 0},
+	},
 }
 
 // TestRealCasesCoverRegistry is ungated: it fails in the ordinary unit run

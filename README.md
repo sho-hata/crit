@@ -14,7 +14,7 @@ Review your coding agent's plans, diffs and running apps in the browser. Click a
 
 > [!NOTE]
 > **This is a fork** of [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) with features not (yet) in upstream. Fork-specific additions are marked **(fork-only)** below. Currently:
-> - **[Code intelligence in diffs (LSP)](#code-intelligence-in-diffs-lsp-fork-only)** — hover documentation, go-to-definition, and find-references in the review pane (Go via gopls, TypeScript/JavaScript via typescript-language-server, Python via pyright, Terraform via terraform-ls, PHP via intelephense)
+> - **[Code intelligence in diffs (LSP)](#code-intelligence-in-diffs-lsp-fork-only)** — hover documentation, go-to-definition, and find-references in the review pane (Go via gopls, TypeScript/JavaScript via typescript-language-server, Python via pyright, Terraform via terraform-ls, PHP via intelephense, Dart via the SDK's analysis server)
 
 ![Crit UI for "notification-plan.md" showing comment left on "Queue - Redis Streams, SQS, RabbitMQ" line saying "Just use SQS - we're in AWS"](docs/images/demo-overview.png)
 
@@ -180,7 +180,7 @@ Click a line number to comment. Drag to select a range. Comments are rendered in
 Reading a diff means reading code with no editor attached. This brings the three things you actually reach for — what is this? where is it defined? who else calls it? — into the review pane.
 
 > [!NOTE]
-> Supported languages: **Go** (via [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)), **TypeScript / JavaScript** (via [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)), **Python** (via [pyright](https://github.com/microsoft/pyright)), **Terraform** (via [terraform-ls](https://github.com/hashicorp/terraform-ls)) and **PHP** (via [intelephense](https://intelephense.com)). Each activates independently when its server binary is on `PATH`.
+> Supported languages: **Go** (via [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)), **TypeScript / JavaScript** (via [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)), **Python** (via [pyright](https://github.com/microsoft/pyright)), **Terraform** (via [terraform-ls](https://github.com/hashicorp/terraform-ls)), **PHP** (via [intelephense](https://intelephense.com)) and **Dart** (via the [analysis server](https://github.com/dart-lang/sdk/tree/main/pkg/analysis_server) in the Dart SDK). Each activates independently when its server binary is on `PATH`.
 
 #### Hover: signature + docs
 
@@ -229,6 +229,10 @@ Opens a panel inline, right under the clicked line (like VS Code's peek referenc
    # PHP — no PHP install needed
    npm install -g intelephense
    which intelephense
+
+   # Dart — the analysis server ships inside the SDK
+   brew install dart-sdk   # or any SDK / Flutter install that puts `dart` on PATH
+   which dart
    ```
 
 2. Start a review — that's it. LSP is on by default (`lsp` config key, set `"lsp": false` to disable) and each language activates independently based on which servers are installed.
@@ -245,11 +249,12 @@ Notes:
 
 - Works in both the **diff** view and file mode's **document view** (`crit some.ts`).
 - Servers start **lazily** on the first request and stop after 3 minutes idle, so the first hover can take a few seconds.
-- Definition/reference peeks only read your repo and each language's known source roots (Go: `GOROOT` / `GOMODCACHE`; TypeScript: global `node_modules`; Python: stdlib, site-packages, `.venv`, typeshed; PHP: Composer `vendor/`, intelephense's built-in stubs). There is no general file-read endpoint.
-- **Range / PR reviews** (`--range`, `--pr`) answer from a sparse git worktree at the reviewed SHA, not your working tree (local git only). Its size is capped by `lsp_worktree_max_mb` (default 500). Untracked dependencies (`node_modules`, `.venv`) aren't in it: cross-package TypeScript degrades, Python borrows your local `.venv` and PHP your local Composer `vendor/`, noted in the tooltip.
+- Definition/reference peeks only read your repo and each language's known source roots (Go: `GOROOT` / `GOMODCACHE`; TypeScript: global `node_modules`; Python: stdlib, site-packages, `.venv`, typeshed; PHP: Composer `vendor/`, intelephense's built-in stubs; Dart: the SDK's `lib/`, the pub cache). There is no general file-read endpoint.
+- **Range / PR reviews** (`--range`, `--pr`) answer from a sparse git worktree at the reviewed SHA, not your working tree (local git only). Its size is capped by `lsp_worktree_max_mb` (default 500). Untracked dependencies (`node_modules`, `.venv`, `.dart_tool/`) aren't in it: cross-package TypeScript degrades, Dart `package:` imports don't resolve, Python borrows your local `.venv` and PHP your local Composer `vendor/`, noted in the tooltip.
 - **Python virtualenvs.** crit points pyright at the nearest `.venv/` or `venv/` site-packages (it never runs an interpreter from the reviewed repo). For other setups, activate the venv before starting crit or add a `pyrightconfig.json`.
 - **Terraform.** `.tf` and `.tfvars` files. crit never lets terraform-ls run `terraform`: in an init'ed directory it would start the provider binaries under `.terraform/`, which come from the reviewed tree. Provider schemas come from the ones embedded in terraform-ls (official and partner providers, latest version — the hover shows which); references inside a resource of any other provider don't resolve. Modules installed by `terraform init` resolve in working-tree reviews, not in range/PR reviews. terraform-ls fetches registry module metadata from registry.terraform.io.
 - **PHP.** `.php` and `.phtml` files. intelephense is a static analyzer: it runs neither PHP nor Composer. It indexes the whole workspace, `vendor/` included, so the first hover in a large project waits for indexing (up to 15 s). Its index cache lives in `~/.config/intelephense`, outside the repo. Premium features are not used; a licence key you have installed is picked up but changes nothing crit asks for.
+- **Dart.** `.dart` files, via the analysis server in the Dart SDK (`dart language-server`). crit starts it with `--no-plugins`: the analyzer plugins a repo names in `analysis_options.yaml` are otherwise fetched with `dart pub` and run inside the server, and hover, definition and references don't need them. Package resolution follows your `.dart_tool/package_config.json` (run `dart pub get` first); without it `package:` imports — the own package's included — don't resolve, which is the case in range/PR reviews, where that untracked file is absent. Relative imports and `dart:` libraries always resolve.
 - **Debugging.** Start crit with `CRIT_LSP_DEBUG=1` (restart a running review to apply) to log server stderr, JSON-RPC traffic and per-request timings to `~/.crit/sessions/<key>.log`. The log contains source text; don't share it publicly.
 
 ### Programmatic comments
@@ -398,7 +403,7 @@ All keys are optional — omit any you don't need.
 | `no_update_check`      | bool     | `false`                    | Don't check for new versions on startup.                                                                                                                                                |
 | `no_integration_check` | bool     | `false`                    | Skip the integration config freshness check on startup.                                                                                                                                 |
 | `vcs`                  | string   | auto-detected              | Preferred VCS backend: `"git"`, `"sl"`, or `"jj"`. When set, crit uses this VCS instead of auto-detecting. Falls back to git if the configured VCS isn't available. Can also be set via `--vcs` CLI flag (flag takes precedence over config). |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go, TypeScript/JavaScript, Python, Terraform and PHP files. Each language activates when its server (`gopls`, `typescript-language-server`, `pyright-langserver`, `terraform-ls`, `intelephense`) is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go, TypeScript/JavaScript, Python, Terraform, PHP and Dart files. Each language activates when its server (`gopls`, `typescript-language-server`, `pyright-langserver`, `terraform-ls`, `intelephense`, `dart`) is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** Size cap (MB) for the sparse git worktree LSP checks out to answer range/PR reviews at their reviewed SHA. A commit whose estimated checkout exceeds this is skipped (LSP stays off for that review) rather than checked out. |
 | `live_cookie`          | string   | `""`                       | Cookie header value forwarded to the upstream app in live mode (e.g. `"_crit_key=..."`). Global or project. Prefer `live_cookie_file` for secrets. |
 | `live_cookie_file`     | string   | `""`                       | Path to a file with upstream cookies for live mode (raw header lines or Netscape jar). Global or project; relative paths resolve from repo root. |
