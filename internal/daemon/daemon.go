@@ -669,7 +669,11 @@ func removeOpenedLockIfFree(f *os.File, path string) {
 // readiness via os.Stdout and the parent reads it via the pipe's read end.
 // _CRIT_READY_STDOUT=1 tells the child to treat stdout as the readiness pipe
 // (otherwise stdout is the user's terminal and we must not emit the port).
-func setupDaemonCmd(key string, args []string, dir string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
+//
+// liveCookie, when non-empty, reaches the child through LiveCookieEnv rather
+// than argv: process arguments are readable by every local user (ps -eww,
+// /proc/<pid>/cmdline), the environment is not.
+func setupDaemonCmd(key string, args []string, dir, liveCookie string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
 	selfPath, err := os.Executable()
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("finding executable: %w", err)
@@ -703,7 +707,7 @@ func setupDaemonCmd(key string, args []string, dir string) (*exec.Cmd, *os.File,
 		return nil, nil, nil, nil, fmt.Errorf("creating readiness pipe: %w", err)
 	}
 	cmd.Stdout = writeEnd
-	cmd.Env = append(os.Environ(), "_CRIT_READY_STDOUT=1")
+	cmd.Env = daemonEnv(os.Environ(), liveCookie)
 	cmd.SysProcAttr = daemonSysProcAttr()
 
 	return cmd, readEnd, writeEnd, logFile, nil
@@ -712,9 +716,42 @@ func setupDaemonCmd(key string, args []string, dir string) (*exec.Cmd, *os.File,
 // prepareDaemonCmd removes stale session state before creating the log that
 // the new daemon inherits. This keeps fatal initialization errors readable by
 // the client after the daemon exits.
-func prepareDaemonCmd(key string, args []string, dir string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
+func prepareDaemonCmd(key string, args []string, dir, liveCookie string) (*exec.Cmd, *os.File, *os.File, *os.File, error) {
 	RemoveSessionFile(key)
-	return setupDaemonCmd(key, args, dir)
+	return setupDaemonCmd(key, args, dir, liveCookie)
+}
+
+// LiveCookieEnv carries the upstream Cookie header from `crit live` to its
+// _serve daemon. The daemon reads and unsets it once at startup
+// (TakeLiveCookieEnv) so its own children (hooks, agent_cmd, language
+// servers) never inherit the cookies.
+const LiveCookieEnv = "_CRIT_LIVE_COOKIE"
+
+// daemonEnv builds the daemon child's environment from base. An inherited
+// LiveCookieEnv is always dropped so only an explicit liveCookie reaches the
+// child; variable names compare case-insensitively for Windows.
+func daemonEnv(base []string, liveCookie string) []string {
+	env := make([]string, 0, len(base)+2)
+	for _, kv := range base {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(name, LiveCookieEnv) {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "_CRIT_READY_STDOUT=1")
+	if liveCookie != "" {
+		env = append(env, LiveCookieEnv+"="+liveCookie)
+	}
+	return env
+}
+
+// TakeLiveCookieEnv returns the cookie header passed by StartLiveDaemon and
+// removes it from this process's environment.
+func TakeLiveCookieEnv() string {
+	v := os.Getenv(LiveCookieEnv)
+	os.Unsetenv(LiveCookieEnv)
+	return v
 }
 
 func readPortFromPipe(readEnd *os.File) (portCh chan int, errCh chan error) {
@@ -792,6 +829,16 @@ func StartDaemon(key string, args []string) (SessionEntry, error) {
 // started from the current directory wants. `crit resume` passes the directory
 // recorded in the review file so a session can be restarted from anywhere.
 func StartDaemonInDir(key string, args []string, dir string) (SessionEntry, error) {
+	return startDaemon(key, args, dir, "")
+}
+
+// StartLiveDaemon is StartDaemon for `crit live`: the upstream cookie header
+// is handed to the daemon through its environment, never its argv.
+func StartLiveDaemon(key string, args []string, liveCookie string) (SessionEntry, error) {
+	return startDaemon(key, args, "", liveCookie)
+}
+
+func startDaemon(key string, args []string, dir, liveCookie string) (SessionEntry, error) {
 	lock, err := acquireSessionLock(key)
 	if err != nil {
 		return SessionEntry{}, err
@@ -802,7 +849,7 @@ func StartDaemonInDir(key string, args []string, dir string) (SessionEntry, erro
 		return entry, nil
 	}
 
-	cmd, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, args, dir)
+	cmd, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, args, dir, liveCookie)
 	if err != nil {
 		return SessionEntry{}, err
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/sho-hata/crit/internal/clicmd"
 	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/daemon"
 	"github.com/sho-hata/crit/internal/focus"
 	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
@@ -72,7 +73,6 @@ type daemonFlagSet struct {
 	scopeSpec                   string
 	remoteFiles                 bool
 	liveOrigin                  string
-	liveCookie                  string
 	previewFile                 string
 	sessionID                   string
 	sessionKeyOverride          string
@@ -102,7 +102,6 @@ func parseDaemonFlags(args []string) daemonFlagSet {
 	scopeSpec := fs.String("scope", "", "Diff scope when reviewing a PR: layer (default) or full-stack")
 	remoteFiles := fs.Bool("remote", false, "Read PR file content via GitHub API instead of local git (avoids `git fetch`; requires gh)")
 	liveOrigin := fs.String("live-origin", "", "")
-	liveCookie := fs.String("live-cookie", "", "")
 	previewFile := fs.String("preview-file", "", "")
 	sessionID := fs.String("session", "", "Reconnect to an existing review session by ID")
 	sessionKeyOverride := fs.String("session-key", "", "")
@@ -144,7 +143,6 @@ func parseDaemonFlags(args []string) daemonFlagSet {
 		scopeSpec:                   *scopeSpec,
 		remoteFiles:                 *remoteFiles,
 		liveOrigin:                  *liveOrigin,
-		liveCookie:                  *liveCookie,
 		previewFile:                 *previewFile,
 		sessionID:                   *sessionID,
 		sessionKeyOverride:          *sessionKeyOverride,
@@ -192,6 +190,9 @@ func resolveVCSOverride(flagVal, cfgVal string) string {
 // final daemon configuration from all sources (CLI > env > config > defaults).
 // Returns nil when the command should exit early (e.g. --version).
 func ResolveDaemonCLIConfig(args []string) (*DaemonCLIConfig, error) {
+	// Taken before anything else so no early return leaves the cookies in the
+	// environment for this process's children to inherit.
+	liveCookie := daemon.TakeLiveCookieEnv()
 	sf := parseDaemonFlags(args)
 
 	if sf.showVersion {
@@ -268,7 +269,7 @@ func ResolveDaemonCLIConfig(args []string) (*DaemonCLIConfig, error) {
 		Focus:                       f,
 		RemoteFiles:                 remoteFiles,
 		LiveOrigin:                  sf.liveOrigin,
-		LiveCookie:                  sf.liveCookie,
+		LiveCookie:                  liveCookie,
 		PreviewFile:                 sf.previewFile,
 		SessionID:                   sf.sessionID,
 		SessionKeyOverride:          sf.sessionKeyOverride,

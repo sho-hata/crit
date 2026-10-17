@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/daemon"
 	"github.com/sho-hata/crit/internal/testutil"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -31,6 +32,22 @@ func resetBranchOverride(t *testing.T) {
 
 func branchOverride() string {
 	return (&vcs.GitVCS{}).GetDefaultBranchOverride()
+}
+
+func TestResolveDaemonCLIConfig_LiveCookieFromEnv(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv(daemon.LiveCookieEnv, "sess=secret")
+
+	sc, err := ResolveDaemonCLIConfig([]string{"--live-origin", "http://localhost:3000"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sc.LiveCookie != "sess=secret" {
+		t.Errorf("LiveCookie = %q, want sess=secret", sc.LiveCookie)
+	}
+	if _, ok := os.LookupEnv(daemon.LiveCookieEnv); ok {
+		t.Errorf("%s must be unset so the daemon's children don't inherit it", daemon.LiveCookieEnv)
+	}
 }
 
 func TestResolveServerConfig_BaseBranch(t *testing.T) {
