@@ -476,6 +476,24 @@ paths:
 # Skill Body
 
 Body paragraph for commenting.
+
+## Raw HTML
+
+Press <kbd>Ctrl</kbd> + <kbd>K</kbd>.
+
+<img class="xss-img" src="missing.png" onerror="window.__critDocXss = 'img'">
+
+<svg onload="window.__critDocXss = 'svg'"></svg>
+
+<details class="xss-details" open ontoggle="window.__critDocXss = 'details'"><summary>More</summary>Hidden text</details>
+
+<a class="xss-link" href="javascript:window.__critDocXss='link'">bad link</a>
+
+<form action="/api/finish" method="post"><button>Approve</button></form>
+
+| Col | Raw |
+|-----|-----|
+| one | <img class="xss-cell" src="missing-cell.png" onerror="window.__critDocXss = 'cell'"> |
 MDFILE
 
 # Modify routes.go: change beginning and end, leave large middle gap (>20 unchanged lines)
