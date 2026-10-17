@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -36,31 +37,59 @@ func RepoRootHash(projectDir string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// contentHashPrefix tags the encoding of ContentHash. It was "sha256:" while
+// the fingerprint concatenated raw file bytes without framing, which let one
+// file's tail impersonate another file's record. Stored "until_change"
+// entries carrying the old prefix can never equal a new hash, so those
+// projects are asked to trust again instead of being silently trusted.
+const contentHashPrefix = "sha256v2:"
+
 // ContentHash fingerprints project prompt AND hook config plus referenced
 // files, so changing either prompts or hooks invalidates a "trust until
 // change" decision. Hooks are included because project hooks run arbitrary code
 // and must be gated by the same trust flow as project prompts.
+//
+// Every field is length-prefixed (see writeField) so the encoding is
+// injective: file contents are attacker-controlled, and without framing a
+// prompt whose tail spells out a hook record hashes the same as that prompt
+// plus a real hook file.
 func ContentHash(projectPrompts, projectHooks map[string]string, projectDir string) string {
 	h := sha256.New()
-	hashConfigMap(h, "prompt:", projectPrompts, projectDir)
-	for _, path := range ListDiscoveredProjectPromptFiles(projectDir) {
-		h.Write([]byte("discovered-prompt:"))
-		h.Write([]byte(filepath.Base(path)))
+	hashConfigMap(h, "prompt", projectPrompts, projectDir)
+	hashDiscoveredFiles(h, "discovered-prompt", ListDiscoveredProjectPromptFiles(projectDir))
+	hashConfigMap(h, "hook", projectHooks, projectDir)
+	hashDiscoveredFiles(h, "discovered-hook", listDiscoveredProjectHookFiles(projectDir))
+	return contentHashPrefix + hex.EncodeToString(h.Sum(nil))
+}
+
+// writeField writes b with a fixed-width length prefix.
+func writeField(h hash.Hash, b []byte) {
+	var n [8]byte
+	binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+	h.Write(n[:])
+	h.Write(b)
+}
+
+// writeFileField writes a presence byte and, when path is readable, its
+// contents as a framed field, so a missing file differs from an empty one.
+func writeFileField(h hash.Hash, path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		h.Write([]byte{0})
-		if data, err := os.ReadFile(path); err == nil {
-			h.Write(data)
-		}
+		return
 	}
-	hashConfigMap(h, "hook:", projectHooks, projectDir)
-	for _, path := range listDiscoveredProjectHookFiles(projectDir) {
-		h.Write([]byte("discovered-hook:"))
-		h.Write([]byte(filepath.Base(path)))
-		h.Write([]byte{0})
-		if data, err := os.ReadFile(path); err == nil {
-			h.Write(data)
-		}
+	h.Write([]byte{1})
+	writeField(h, data)
+}
+
+// hashDiscoveredFiles writes one framed record (section, base name, contents)
+// per discovered file.
+func hashDiscoveredFiles(h hash.Hash, section string, paths []string) {
+	for _, path := range paths {
+		writeField(h, []byte(section))
+		writeField(h, []byte(filepath.Base(path)))
+		writeFileField(h, path)
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
 // hashConfigMap writes a sorted key/value section into the hash, and for file:
@@ -74,20 +103,18 @@ func hashConfigMap(h hash.Hash, section string, m map[string]string, projectDir 
 	sort.Strings(keys)
 	for _, k := range keys {
 		v := m[k]
-		h.Write([]byte(section))
-		h.Write([]byte(k))
-		h.Write([]byte{0})
-		h.Write([]byte(v))
-		h.Write([]byte{0})
-		if after, ok := strings.CutPrefix(v, prefixFile); ok {
-			path := after
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(projectDir, path)
-			}
-			if data, err := os.ReadFile(path); err == nil {
-				h.Write(data)
-			}
+		writeField(h, []byte(section))
+		writeField(h, []byte(k))
+		writeField(h, []byte(v))
+		path, ok := strings.CutPrefix(v, prefixFile)
+		if !ok {
+			h.Write([]byte{0})
+			continue
 		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(projectDir, path)
+		}
+		writeFileField(h, path)
 	}
 }
 
