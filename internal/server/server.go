@@ -2222,6 +2222,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	setUntrustedContentHeaders(w, repoFileCSP)
 
 	reqPath := strings.TrimPrefix(r.URL.Path, "/files/")
 	reqPath = filepath.ToSlash(filepath.Clean(reqPath))
