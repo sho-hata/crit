@@ -14,6 +14,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -274,12 +275,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.hostForbiddenMessage(r), http.StatusForbidden)
 		return
 	}
-	// CSRF defense for browser clients: modern browsers always send
-	// Sec-Fetch-Site on requests they initiate. Cross-site values mean the
-	// request came from another origin (e.g. evil.com → 127.0.0.1). Missing
-	// header = non-browser client (CLI, curl, agent) — allow. same-origin =
-	// Crit UI on this port — allow. DNS-rebinding is handled by checkHost.
-	if !checkSecFetchSite(r) {
+	// CSRF defense for browser clients: modern browsers send Sec-Fetch-Site
+	// on requests they initiate; same-origin = Crit UI on this port. Browsers
+	// without Fetch Metadata still send Origin (or Referer), which must name
+	// this server. Only a request with none of the three is treated as a
+	// non-browser client (CLI, curl, agent). DNS-rebinding is handled by
+	// checkHost.
+	if !s.checkSecFetchSite(r) {
 		http.Error(w, secFetchSiteForbiddenMessage(r), http.StatusForbidden)
 		return
 	}
@@ -304,26 +306,55 @@ func (s *Server) hostForbiddenMessage(r *http.Request) string {
 
 // secFetchSiteForbiddenMessage explains a checkSecFetchSite rejection.
 func secFetchSiteForbiddenMessage(r *http.Request) string {
-	return fmt.Sprintf(
-		"Forbidden: cross-origin browser request rejected (Sec-Fetch-Site: %q)",
-		r.Header.Get("Sec-Fetch-Site"),
-	)
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return fmt.Sprintf(
+			"Forbidden: cross-origin browser request rejected (Sec-Fetch-Site: %q)",
+			site,
+		)
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		return fmt.Sprintf("Forbidden: cross-origin browser request rejected (Origin: %q)", origin)
+	}
+	return fmt.Sprintf("Forbidden: cross-origin browser request rejected (Referer: %q)", r.Header.Get("Referer"))
 }
 
 // checkSecFetchSite reports whether a request is allowed under the CSRF policy.
 // Safe methods (GET/HEAD/OPTIONS) always pass. For state-changing methods:
-// absent Sec-Fetch-Site is allowed (CLI/curl); "same-origin" is allowed (UI);
-// any other value (notably "cross-site") is rejected.
-func checkSecFetchSite(r *http.Request) bool {
+//   - Sec-Fetch-Site present: only "same-origin" is allowed (UI).
+//   - Otherwise (browsers without Fetch Metadata), Origin — or Referer when
+//     Origin is absent — must name this server (isSameOriginURL). "null" and
+//     unparseable values are rejected.
+//   - None of the three headers: non-browser client (CLI/curl/agent), allowed.
+func (s *Server) checkSecFetchSite(r *http.Request) bool {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
-	site := r.Header.Get("Sec-Fetch-Site")
-	if site == "" {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site == "same-origin"
+	}
+	if _, ok := r.Header["Origin"]; ok {
+		return s.isSameOriginURL(r, r.Header.Get("Origin"))
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		return s.isSameOriginURL(r, ref)
+	}
+	return true
+}
+
+// isSameOriginURL reports whether raw (an Origin or Referer value) names this
+// server: its host[:port] equals the request Host that checkHost already
+// vetted, or its hostname is the --public-url host (reverse proxies may
+// rewrite Host to the loopback upstream).
+func (s *Server) isSameOriginURL(r *http.Request, raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
 		return true
 	}
-	return site == "same-origin"
+	return s.publicURLHost != "" && strings.EqualFold(u.Hostname(), s.publicURLHost)
 }
 
 // requireReady returns false and writes a 503 or 500 response if the server
