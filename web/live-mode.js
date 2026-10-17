@@ -285,8 +285,14 @@
         '</div>' +
         '<div class="crit-live-iframe-pane-inner">' +
         '<div class="crit-live-iframe-frame" id="critLiveFrame">' +
-        // No `sandbox` attribute by design — see spec security section.
-        '<iframe id="critLiveIframe" title="Live target" referrerpolicy="no-referrer"></iframe>' +
+        // Live mode: no `sandbox` attribute by design — see spec security
+        // section. Preview mode: the previewed file is untrusted content on
+        // the Crit origin, so sandbox the frame (no allow-same-origin) on top
+        // of the CSP sandbox /preview-content sends; that also covers any
+        // document the preview navigates the frame to.
+        '<iframe id="critLiveIframe" title="Live target" referrerpolicy="no-referrer"' +
+        (state.isPreview ? ' sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"' : '') +
+        '></iframe>' +
         '<div class="crit-live-iframe-resizer" id="critLiveResizer" role="separator" aria-orientation="vertical" aria-label="Resize live viewport" tabindex="0"></div>' +
         '</div>' +
         '</div>';
@@ -372,17 +378,19 @@
       } catch (_) { /* malformed origin — keep default "/" */ }
     }
 
-    // Capture proxyOrigin once for the message handler. The agent
-    // posts from the proxy origin; the chrome lives on the API origin and
-    // accepts only that source+origin pair.
-    // Preview mode: same-origin (agent served from /preview-content/).
+    // Capture the agent origins once for the message handler. Live mode: the
+    // agent posts from the proxy origin; the chrome lives on the API origin
+    // and accepts only that source+origin pair. Preview mode: the previewed
+    // document is CSP-sandboxed into an opaque origin ("null") so it can't
+    // call the API as the Crit UI — see agentOrigins.
     var s = state.session || {};
-    var proxyHost = window.location.hostname || 'localhost';
-    if (state.isPreview) {
-      state.proxyOrigin = window.location.origin;
-    } else {
-      state.proxyOrigin = 'http://' + proxyHost + ':' + (s.proxy_port || 0);
-    }
+    var origins = window.crit.live.origin.agentOrigins({
+      isPreview: state.isPreview,
+      proxyHost: window.location.hostname || 'localhost',
+      proxyPort: s.proxy_port,
+    });
+    state.proxyOrigin = origins.expect;
+    state.agentTargetOrigin = origins.target;
     buildShell();
     // Cache the iframeWindow once buildShell has inserted it.
     state.iframeWindow = els.iframe ? els.iframe.contentWindow : null;
@@ -2336,7 +2344,7 @@
       post: function (m) {
         var iw = state.iframeWindow;
         if (!iw) { _sender.requeue(m); return; }
-        try { iw.postMessage(m, state.proxyOrigin); } catch (_) { /* noop */ }
+        try { iw.postMessage(m, state.agentTargetOrigin); } catch (_) { /* noop */ }
       },
     });
 

@@ -8,12 +8,53 @@ import (
 	"strings"
 )
 
+// previewContentCSP isolates the previewed document from the Crit origin.
+// The sandbox directive without allow-same-origin gives the document an
+// opaque origin, so its requests to /api/* carry `Origin: null` and
+// `Sec-Fetch-Site: cross-site` and the CSRF gate rejects every state-changing
+// call (trusting project hooks, finishing the review, invoking agent_cmd).
+// Scripts still run so the preview renders and the injected agent can talk
+// to the chrome over postMessage. Never add allow-same-origin here: a
+// same-origin sandboxed document can lift its own sandbox.
+const previewContentCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+
+// repoFileCSP sandboxes documents served from /files/ (an .html, .svg or
+// .xml file in the reviewed tree opened directly) with no script at all.
+// The Crit UI only embeds those files as images, where CSP does not apply.
+const repoFileCSP = "sandbox"
+
+// setUntrustedContentHeaders marks a response whose bytes come from the
+// tree under review: a document rendered from it must never share the
+// Crit API's origin.
+func setUntrustedContentHeaders(w http.ResponseWriter, csp string) {
+	w.Header().Set("Content-Security-Policy", csp)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
+
+// allowOpaqueOriginSubresource lets the sandboxed preview load the CORS-mode
+// sub-resources a page needs to render (module scripts, web fonts). They are
+// requested from the preview's opaque origin (`Origin: null`) and would fail
+// without an ACAO header. fetch()/XHR (Sec-Fetch-Dest: empty) stay excluded:
+// granting them would let any opaque-origin page read files next to the
+// previewed one. A script or font load exposes nothing a classic <script> or
+// <link> could not already pull in.
+func allowOpaqueOriginSubresource(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Origin") != "null" {
+		return
+	}
+	switch r.Header.Get("Sec-Fetch-Dest") {
+	case "script", "font":
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
+}
+
 // handlePreviewContent serves the previewed HTML file and its sibling assets.
 func (s *Server) handlePreviewContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	setUntrustedContentHeaders(w, previewContentCSP)
 	sess := s.session.Load()
 	if sess == nil {
 		http.Error(w, "not ready", http.StatusServiceUnavailable)
@@ -53,6 +94,7 @@ func (s *Server) handlePreviewContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	allowOpaqueOriginSubresource(w, r)
 	http.ServeFile(w, r, resolved)
 }
 
