@@ -2,10 +2,13 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sho-hata/crit/internal/pathsafe"
 )
 
 // handlePreviewContent serves the previewed HTML file and its sibling assets.
@@ -32,9 +35,15 @@ func (s *Server) handlePreviewContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved := filepath.Join(baseDir, filepath.Clean(reqPath))
-	if !strings.HasPrefix(resolved, baseDir+string(filepath.Separator)) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	// Resolve symlinks before the containment check: a lexical prefix check
+	// would let a symlink in the preview directory serve files outside it.
+	resolved, err := pathsafe.ResolveUnder(filepath.Join(baseDir, filepath.Clean(reqPath)), baseDir)
+	if err != nil {
+		if errors.Is(err, pathsafe.ErrNotFound) {
+			http.NotFound(w, r)
+		} else {
+			http.Error(w, "forbidden", http.StatusForbidden)
+		}
 		return
 	}
 
