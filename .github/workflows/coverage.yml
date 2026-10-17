@@ -8,9 +8,9 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
@@ -34,7 +34,7 @@ jobs:
           sl --version
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
@@ -46,7 +46,7 @@ jobs:
           go test -coverprofile=coverage.out -covermode=atomic $PKGS
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           files: coverage.out
           flags: unit
