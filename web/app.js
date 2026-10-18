@@ -1197,6 +1197,10 @@
   function buildMarkdown(tokens, content) {
     headingSlugCounter.clear();
     const blocks = buildLineBlocks(tokens, documentMd, content);
+    // Raw HTML from the reviewed file renders on the API's origin: sanitize
+    // once here so every view of these blocks (document, rendered diff,
+    // word diff) gets the clean markup.
+    if (documentHtml.hasRawHtml(tokens)) documentHtml.sanitizeBlocks(blocks, documentHtml.sanitizer);
     const tocItems = extractTocItems(tokens);
     return { blocks, tocItems };
   }
@@ -1214,6 +1218,9 @@
     }
     return items;
   }
+
+  // Document sanitizer — crit-document-html.js (window.crit.documentHtml)
+  const documentHtml = window.crit.documentHtml;
 
   // Line-block building — extracted to crit-line-blocks.js (window.crit.lineBlocks)
   const buildLineBlocks = window.crit.lineBlocks.buildLineBlocks;
@@ -1257,7 +1264,9 @@
   function rewriteImageSrcs(html, filePath) {
     return html.replace(/(<img\s[^>]*src=")([^"]+)(")/gi, function(match, pre, src, post) {
       if (/^https?:\/\/|^data:|^\//.test(src)) return match;
-      return pre + '/files/' + resolveImagePath(filePath || '', src) + post;
+      // Runs after sanitizing, so the path must not reopen the attribute:
+      // src is already serialized HTML, the file path is not.
+      return pre + '/files/' + resolveImagePath(escapeHtml(filePath || ''), src) + post;
     });
   }
 
@@ -7423,10 +7432,12 @@
   }
 
   function mermaidOptions() {
-    if (!document.documentElement.dataset.critPalette) return { startOnLoad: false, theme: getMermaidTheme() };
+    // securityLevel 'strict' (mermaid's default, pinned here) sanitizes
+    // diagram labels: the source comes from the reviewed file.
+    if (!document.documentElement.dataset.critPalette) return { startOnLoad: false, securityLevel: 'strict', theme: getMermaidTheme() };
     const css = getComputedStyle(document.documentElement);
     const role = function(name) { return css.getPropertyValue('--crit-palette-' + name).trim(); };
-    return { startOnLoad: false, theme: 'base', themeVariables: {
+    return { startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: {
       darkMode: getMermaidTheme() === 'dark', background: role('bg'),
       primaryColor: role('surface'), primaryTextColor: role('fg'), primaryBorderColor: role('border'),
       secondaryColor: role('elevated'), tertiaryColor: role('bg'), lineColor: role('muted'),

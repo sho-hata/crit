@@ -249,7 +249,7 @@ Static: `GET /files/<path>` — serve files from repo root (path traversal prote
 - Body size: 10MB for comments via `http.MaxBytesReader`
 - HTTP server: `ReadTimeout: 15s`, `IdleTimeout: 60s` (no `WriteTimeout` — SSE needs open connections)
 - Comment renderer uses `html: true` then DOMPurify with a pinned GitHub-compatible allowlist (`web/comment-html.js`) before `innerHTML` — never trust raw comment HTML
-- Document renderer uses `html: true` intentionally (reviewing local files)
+- Document renderer uses `html: true` (GitHub-like raw HTML in reviewed markdown), but the reviewed file is repo-controlled and renders on the API's origin, so `buildMarkdown` runs every line block through `web/crit-document-html.js` (DOMPurify defaults plus forbidden form controls, embeds, `style`, `base`/`meta`/`link`) whenever the document has raw HTML tokens. Never insert rendered document HTML that bypasses it
 </important>
 
 <important if="you are modifying web/ — app.js, style.css, theme.css, or index.html">
