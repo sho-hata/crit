@@ -37,8 +37,11 @@ func setUntrustedContentHeaders(w http.ResponseWriter, csp string) {
 // without an ACAO header. fetch()/XHR (Sec-Fetch-Dest: empty) stay excluded:
 // granting them would let any opaque-origin page read files next to the
 // previewed one. A script or font load exposes nothing a classic <script> or
-// <link> could not already pull in.
+// <link> could not already pull in. Vary is sent on every response, granted
+// or not: otherwise a page could prime the HTTP cache with a font-mode load
+// and replay the ACAO response to fetch(..., {cache: 'force-cache'}).
 func allowOpaqueOriginSubresource(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Origin, Sec-Fetch-Dest")
 	if r.Header.Get("Origin") != "null" {
 		return
 	}

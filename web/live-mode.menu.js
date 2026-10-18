@@ -14,9 +14,14 @@
     : function (s) { return String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
+  // options come from the iframe's agent, i.e. from the page under review:
+  // drop any entry whose level is not a nonnegative integer and escape both
+  // fields, since the markup lands in the chrome's (privileged) document.
   function renderAncestorMenuHTML(options) {
-    var items = options.map(function (o) {
-      return '<button type="button" class="crit-live-ancestor-menu-item" data-level="' + o.level + '">' + escapeHTML(o.label) + '</button>';
+    var items = options.filter(function (o) {
+      return o && Number.isInteger(o.level) && o.level >= 0;
+    }).map(function (o) {
+      return '<button type="button" class="crit-live-ancestor-menu-item" data-level="' + escapeHTML(o.level) + '">' + escapeHTML(o.label) + '</button>';
     }).join('');
     return '<div class="crit-live-ancestor-menu" role="menu">' + items + '</div>';
   }

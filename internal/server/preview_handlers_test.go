@@ -161,6 +161,9 @@ func TestPreviewContent_OpaqueOriginSubresourceCORS(t *testing.T) {
 			if got := w.Header().Get("Access-Control-Allow-Origin"); got != tt.wantACAO {
 				t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, tt.wantACAO)
 			}
+			if got := w.Header().Get("Vary"); got != "Origin, Sec-Fetch-Dest" {
+				t.Errorf("Vary = %q, want %q", got, "Origin, Sec-Fetch-Dest")
+			}
 		})
 	}
 }
