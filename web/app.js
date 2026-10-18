@@ -1264,7 +1264,9 @@
   function rewriteImageSrcs(html, filePath) {
     return html.replace(/(<img\s[^>]*src=")([^"]+)(")/gi, function(match, pre, src, post) {
       if (/^https?:\/\/|^data:|^\//.test(src)) return match;
-      return pre + '/files/' + resolveImagePath(filePath || '', src) + post;
+      // Runs after sanitizing, so the path must not reopen the attribute:
+      // src is already serialized HTML, the file path is not.
+      return pre + '/files/' + resolveImagePath(escapeHtml(filePath || ''), src) + post;
     });
   }
 

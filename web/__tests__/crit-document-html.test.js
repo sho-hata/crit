@@ -55,7 +55,7 @@ test('create: forbids form controls, embeds and style; rows are sanitized in tab
   for (const tag of ['form', 'input', 'button', 'iframe', 'object', 'embed', 'style', 'base', 'meta', 'link']) {
     assert.ok(calls[0].config.FORBID_TAGS.includes(tag), tag + ' must be forbidden');
   }
-  for (const attr of ['formaction', 'srcdoc', 'ping', 'action']) {
+  for (const attr of ['formaction', 'srcdoc', 'ping', 'action', 'for']) {
     assert.ok(calls[0].config.FORBID_ATTR.includes(attr), attr + ' must be forbidden');
   }
   assert.equal(s.html(''), '');

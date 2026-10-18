@@ -33,4 +33,26 @@ test.describe('Markdown raw HTML — skill.md', () => {
 
     expect(await page.evaluate(() => (window as unknown as { __critDocXss?: string }).__critDocXss)).toBeUndefined();
   });
+
+  test('a document label cannot activate the Approve button', async ({ page }) => {
+    await loadPage(page);
+    await revealFile(page, 'skill.md');
+    await fileHeader(page, 'skill.md').locator('.file-header-toggle .toggle-btn[data-mode="document"]').click();
+    const label = page.locator('[id="file-section-skill.md"].pierre-document label.xss-label');
+    await expect(label).toBeVisible();
+    await expect(label).not.toHaveAttribute('for', /.*/);
+
+    // Record (and swallow) any click reaching Approve so a regression can't finish the shared review.
+    await page.evaluate(() => {
+      window.addEventListener('click', (e) => {
+        if ((e.target as Element).id === 'finishBtn') {
+          (window as unknown as { __finishClicked?: boolean }).__finishClicked = true;
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+    });
+    await label.click();
+    expect(await page.evaluate(() => (window as unknown as { __finishClicked?: boolean }).__finishClicked)).toBeUndefined();
+  });
 });

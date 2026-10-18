@@ -15,7 +15,8 @@
     'iframe', 'frame', 'frameset', 'object', 'embed', 'portal', 'base',
     'link', 'meta', 'noscript', 'template', 'dialog'
   ];
-  var FORBID_ATTR = ['action', 'formaction', 'ping', 'srcdoc'];
+  // `for` would let a document <label> click Crit's own controls (Approve).
+  var FORBID_ATTR = ['action', 'formaction', 'ping', 'srcdoc', 'for'];
 
   // Documents without raw HTML tokens contain only markup markdown-it
   // generated itself (text escaped, links validated), so they skip the

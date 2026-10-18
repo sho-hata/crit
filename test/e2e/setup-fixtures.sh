@@ -491,6 +491,8 @@ Press <kbd>Ctrl</kbd> + <kbd>K</kbd>.
 
 <form action="/api/finish" method="post"><button>Approve</button></form>
 
+<label class="xss-label" for="finishBtn">Show details</label>
+
 | Col | Raw |
 |-----|-----|
 | one | <img class="xss-cell" src="missing-cell.png" onerror="window.__critDocXss = 'cell'"> |
