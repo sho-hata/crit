@@ -64,7 +64,7 @@ func detectFrameworks(body []byte) []string {
 var smokeClient = &http.Client{Timeout: 10 * time.Second}
 
 var (
-	startLiveDaemon                = daemon.StartDaemon
+	startLiveDaemon                = daemon.StartLiveDaemon
 	runLiveClient                  = daemon.RunReviewClient
 	installLiveDaemonSignalHandler = installDaemonSignalHandler
 	openLiveBrowser                = browser.OpenBrowserWithCommand
@@ -236,11 +236,11 @@ func parseLiveCLIFlags(args []string) liveCLIFlags {
 	}
 }
 
-func buildLiveDaemonArgs(origin, liveCookies string, f liveCLIFlags, cfg config.Config, noOpenResolved bool) []string {
+// buildLiveDaemonArgs builds the _serve argv for a live daemon. Cookies are
+// deliberately absent: they travel through the daemon's environment
+// (daemon.StartLiveDaemon) because argv is visible to every local user.
+func buildLiveDaemonArgs(origin string, f liveCLIFlags, cfg config.Config, noOpenResolved bool) []string {
 	daemonArgs := []string{"--live-origin", origin}
-	if liveCookies != "" {
-		daemonArgs = append(daemonArgs, "--live-cookie", liveCookies)
-	}
 	return daemon.AppendCommonDaemonFlags(daemonArgs, daemon.CommonDaemonFlags{
 		Port:                        config.ResolvePort(f.port, cfg.Port),
 		Host:                        config.ResolveHost(f.host, cfg.Host),
@@ -280,7 +280,7 @@ func RunLive(args []string) {
 		return
 	}
 
-	entry, err := startLiveDaemon(key, buildLiveDaemonArgs(f.origin, liveCookies, f, cfg, noOpenResolved))
+	entry, err := startLiveDaemon(key, buildLiveDaemonArgs(f.origin, f, cfg, noOpenResolved), liveCookies)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not start live daemon: %v\n", err)
 		os.Exit(1)
