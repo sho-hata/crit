@@ -34,6 +34,19 @@ func TestRealSessionFilesFindReferences(t *testing.T) {
 			callers: []string{"b.ts", "c.ts"},
 		},
 		{
+			// tsconfig.json without allowJs: c.js is in an inferred project
+			// of its own, next to the configured one holding a.ts and b.ts.
+			name: "javascript beside a tsconfig without allowJs",
+			files: map[string]string{
+				"tsconfig.json": `{"compilerOptions":{"strict":true}}`,
+				"a.ts":          "export function foo() { return 1 }\n",
+				"b.ts":          "import { foo } from './a'\nfoo()\n",
+				"c.js":          "import { foo } from './a'\nfoo()\n",
+			},
+			target: "a.ts", line: 0, char: 17,
+			callers: []string{"b.ts", "c.js"},
+		},
+		{
 			// Right after start pyright has analyzed only the open files.
 			name: "python",
 			files: map[string]string{

@@ -27,7 +27,7 @@ type startFunc func(ctx context.Context, rootDir string, lang *Language, initOpt
 type fileState struct {
 	version int
 	hash    [sha256.Size]byte
-	// modTime and size, from a stat taken before the read, let
+	// modTime and size, from a stat of the file that was read, let
 	// syncSessionFiles skip re-reading an untouched file.
 	modTime time.Time
 	size    int64
@@ -40,9 +40,10 @@ type serverState struct {
 	mu     sync.Mutex
 	client *Client              // nil until the first request spawns it
 	files  map[string]fileState // abs path -> sync state
-	// skipped caches the review files Language.OpenSessionFile declined,
-	// so the check runs once per server rather than per request.
-	skipped map[string]bool
+	// reviewDocs marks the open documents syncSessionFiles keeps open for
+	// the review, so it can close one the review no longer lists (deleted,
+	// renamed away, or declined by Language.OpenSessionFile).
+	reviewDocs map[string]bool
 	// dropped marks a state removed from Manager.servers (idle shutdown);
 	// a request that raced the lookup must re-fetch instead of respawning
 	// a server into an orphaned, untracked state.
@@ -219,7 +220,7 @@ func (m *Manager) serverFor(lang *Language) *serverState {
 	m.touchIdleLocked()
 	srv, ok := m.servers[lang.Name]
 	if !ok {
-		srv = &serverState{files: make(map[string]fileState), skipped: make(map[string]bool)}
+		srv = &serverState{files: make(map[string]fileState), reviewDocs: make(map[string]bool)}
 		m.servers[lang.Name] = srv
 	}
 	return srv
@@ -236,7 +237,7 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 		srv.client.Close()
 		srv.client = nil
 		srv.files = make(map[string]fileState)
-		srv.skipped = make(map[string]bool)
+		srv.reviewDocs = make(map[string]bool)
 	}
 	initOpts := m.handshake(lang.InitOptions, absPath)
 	settings := m.handshake(lang.ConfigSettings, absPath)
@@ -279,11 +280,7 @@ func (m *Manager) depHandshake(hook func(root, absPath string) map[string]any, a
 // syncFile makes the server's view of absPath match the disk, which agents
 // edit between review rounds. Caller holds srv.mu.
 func syncFile(srv *serverState, lang *Language, absPath string) (opened bool, err error) {
-	fi, err := os.Stat(absPath)
-	if err != nil {
-		return false, fmt.Errorf("lsp: reading %s: %w", absPath, err)
-	}
-	data, err := os.ReadFile(absPath)
+	data, fi, err := readFileStat(absPath)
 	if err != nil {
 		return false, fmt.Errorf("lsp: reading %s: %w", absPath, err)
 	}
@@ -320,32 +317,60 @@ func (m *Manager) syncDocuments(srv *serverState, lang *Language, absPath string
 	return m.syncSessionFiles(srv, lang, absPath) || opened, nil
 }
 
+// readFileStat reads absPath along with the stat of the same open file.
+func readFileStat(absPath string) ([]byte, os.FileInfo, error) {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := io.ReadAll(f)
+	return data, fi, err
+}
+
 // syncSessionFiles opens the review's other files of lang that
-// Language.OpenSessionFile accepts, and keeps them in sync with the disk.
-// A file deleted from disk is closed so the server stops answering from its
-// last content. Reports whether anything was newly opened. Caller holds
-// srv.mu.
+// Language.OpenSessionFile accepts and keeps them in sync with the disk. A
+// document it opened that the review no longer lists, or that is gone from
+// disk, is closed so the server stops answering from its last content.
+// Reports whether anything was newly opened. Caller holds srv.mu.
 func (m *Manager) syncSessionFiles(srv *serverState, lang *Language, requested string) (opened bool) {
-	for _, absPath := range m.sessionDocuments(srv, lang, requested) {
+	docs := m.sessionDocuments(lang, requested)
+	listed := make(map[string]bool, len(docs))
+	for _, absPath := range docs {
+		listed[absPath] = true
 		if unchangedOnDisk(srv, absPath) {
+			srv.reviewDocs[absPath] = true
 			continue
 		}
 		newlyOpened, err := syncFile(srv, lang, absPath)
 		if err != nil {
-			if _, open := srv.files[absPath]; open && errors.Is(err, os.ErrNotExist) {
-				delete(srv.files, absPath)
-				_ = srv.client.DidClose(absPath)
-			}
+			listed[absPath] = false // deleted: close it below
 			continue
 		}
+		srv.reviewDocs[absPath] = true
 		opened = opened || newlyOpened
+	}
+	for absPath := range srv.reviewDocs {
+		if listed[absPath] || absPath == requested {
+			continue
+		}
+		delete(srv.reviewDocs, absPath)
+		if _, open := srv.files[absPath]; open {
+			delete(srv.files, absPath)
+			_ = srv.client.DidClose(absPath)
+		}
 	}
 	return opened
 }
 
 // sessionDocuments lists the review files of lang to keep open besides
-// requested, at most maxSessionDocuments. Caller holds srv.mu.
-func (m *Manager) sessionDocuments(srv *serverState, lang *Language, requested string) []string {
+// requested, at most maxSessionDocuments. OpenSessionFile is asked on every
+// request: its answer depends on files a review round can add or remove.
+func (m *Manager) sessionDocuments(lang *Language, requested string) []string {
 	if m.sessionFiles == nil || lang.OpenSessionFile == nil {
 		return nil
 	}
@@ -355,11 +380,7 @@ func (m *Manager) sessionDocuments(srv *serverState, lang *Language, requested s
 			continue
 		}
 		absPath := filepath.Join(m.root, rel)
-		if absPath == requested || srv.skipped[absPath] {
-			continue
-		}
-		if _, open := srv.files[absPath]; !open && !lang.OpenSessionFile(m.root, absPath) {
-			srv.skipped[absPath] = true
+		if absPath == requested || !lang.OpenSessionFile(m.root, absPath) {
 			continue
 		}
 		if docs = append(docs, absPath); len(docs) == maxSessionDocuments {

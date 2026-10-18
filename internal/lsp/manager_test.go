@@ -644,6 +644,63 @@ func TestManagerOpensSessionFiles(t *testing.T) {
 		}
 	})
 
+	t.Run("a path the review stops listing is closed", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		for _, f := range []string{"a.py", "old.py", "new.py"} {
+			writeGoFile(t, m.root, f, "x = 1\n")
+		}
+		var mu sync.Mutex
+		listed := []string{"a.py", "old.py"}
+		m.SetSessionFiles(func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(listed)
+		})
+		a := filepath.Join(m.root, "a.py")
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover: %v", err)
+		}
+		// A rename: the old path leaves the list, whatever is on disk.
+		mu.Lock()
+		listed = []string{"a.py", "new.py"}
+		mu.Unlock()
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover(2): %v", err)
+		}
+		want := []string{"didOpen a.py", "didOpen old.py", "didOpen new.py", "didClose old.py"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a tsconfig.json added or removed between requests is honored", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		writeGoFile(t, m.root, "a.ts", "\n")
+		writeGoFile(t, m.root, "b.ts", "\n")
+		writeGoFile(t, m.root, "tsconfig.json", "{}")
+		m.SetSessionFiles(func() []string { return []string{"a.ts", "b.ts"} })
+		a := filepath.Join(m.root, "a.ts")
+		hover := func() {
+			t.Helper()
+			if _, err := m.Hover(a, 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+		}
+		hover()
+		if err := os.Remove(filepath.Join(m.root, "tsconfig.json")); err != nil {
+			t.Fatal(err)
+		}
+		hover()
+		writeGoFile(t, m.root, "tsconfig.json", "{}")
+		hover()
+		want := []string{"didOpen a.ts", "didOpen b.ts", "didClose b.ts"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("at most maxSessionDocuments besides the request", func(t *testing.T) {
 		t.Parallel()
 		m, h := newManagerHarness(t, hoverOK)

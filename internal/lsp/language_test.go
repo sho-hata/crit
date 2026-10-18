@@ -285,6 +285,9 @@ func TestTSOpenSessionFile(t *testing.T) {
 		{"jsconfig.json in the file's package", "root/web/jsconfig.json", "web/a.js", false},
 		{"a sibling package's tsconfig.json", "root/api/tsconfig.json", "web/a.ts", true},
 		{"tsconfig.json above the root", "tsconfig.json", "src/a.ts", true},
+		{"JavaScript under a tsconfig.json, which may lack allowJs", "root/tsconfig.json", "src/a.js", true},
+		{"JavaScript under a jsconfig.json", "root/jsconfig.json", "src/a.mjs", false},
+		{"TypeScript under a jsconfig.json", "root/jsconfig.json", "src/a.tsx", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -191,15 +191,22 @@ func findTSServer(root, absPath string) string {
 	return tsserver
 }
 
-// tsOpenSessionFile reports whether absPath falls in no tsconfig.json or
-// jsconfig.json within root. Such a file belongs to an inferred project,
+// tsOpenSessionFile reports whether absPath may fall outside every
+// configured project within root. Such a file belongs to an inferred project,
 // which tsserver builds from the open files and their imports only, so
 // references from it are found only once it is open. A configured project
 // already covers its files, and opening them would only add the cost of
-// checking them.
+// checking them. A tsconfig.json takes JavaScript only with allowJs, which
+// may come through extends, so a JavaScript file is left out only under a
+// jsconfig.json (allowJs by definition). A config whose include or files
+// leave absPath out still counts as covering it.
 func tsOpenSessionFile(root, absPath string) bool {
+	configs := []string{"tsconfig.json", "jsconfig.json"}
+	if tsJavaScriptExt[strings.ToLower(strings.TrimPrefix(filepath.Ext(absPath), "."))] {
+		configs = []string{"jsconfig.json"}
+	}
 	return !walkUpWithin(root, absPath, func(dir string) bool {
-		for _, name := range []string{"tsconfig.json", "jsconfig.json"} {
+		for _, name := range configs {
 			if st, err := os.Stat(filepath.Join(dir, name)); err == nil && !st.IsDir() {
 				return true
 			}
@@ -207,6 +214,8 @@ func tsOpenSessionFile(root, absPath string) bool {
 		return false
 	})
 }
+
+var tsJavaScriptExt = map[string]bool{"js": true, "mjs": true, "cjs": true, "jsx": true}
 
 // walkUpWithin calls found for absPath's directory and each parent through
 // root (inclusive), stopping at the first true, and reports whether one was.
