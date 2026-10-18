@@ -80,24 +80,26 @@ func TestContentHash_PromptTailCannotImpersonateHook(t *testing.T) {
 func TestContentHash_ConfigMapFraming(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	writeProjectFile(t, dir, "empty.md", "")
+	t.Run("key/value boundary", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		a := map[string]string{"a": "inline:b\x00inline:c"}
+		b := map[string]string{"a\x00inline:b": "inline:c"}
+		if prompt.ContentHash(a, nil, dir) == prompt.ContentHash(b, nil, dir) {
+			t.Fatal("expected different hashes across key/value boundaries")
+		}
+	})
 
-	cases := []struct {
-		name string
-		a, b map[string]string
-	}{
-		{"key/value boundary", map[string]string{"ab": "inline:c"}, map[string]string{"a": "binline:c"}},
-		{"missing vs empty file", map[string]string{"k": "file:missing.md"}, map[string]string{"k": "file:empty.md"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if prompt.ContentHash(tc.a, nil, dir) == prompt.ContentHash(tc.b, nil, dir) {
-				t.Fatal("expected different hashes")
-			}
-		})
-	}
+	t.Run("missing vs empty file", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		m := map[string]string{"k": "file:empty.md"}
+		missing := prompt.ContentHash(m, nil, dir)
+		writeProjectFile(t, dir, "empty.md", "")
+		if missing == prompt.ContentHash(m, nil, dir) {
+			t.Fatal("expected different hashes for missing and empty files")
+		}
+	})
 }
 
 // Stored "until_change" entries from before the v2 encoding (or otherwise
