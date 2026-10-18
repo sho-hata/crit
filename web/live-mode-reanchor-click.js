@@ -41,5 +41,12 @@
     }
   }
 
-  return { handleTrayClick, armReanchor, disarmReanchor };
+  // A selection carrying reanchor_for comes from the untrusted preview frame;
+  // honor it only for the pin the reviewer armed, so the page cannot move
+  // anchors on its own (it learns every pin id from set-pins).
+  function isArmedFor(state, pinId) {
+    return !!state.reanchorPending && state.reanchorPending === pinId;
+  }
+
+  return { handleTrayClick, armReanchor, disarmReanchor, isArmedFor };
 });

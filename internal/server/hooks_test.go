@@ -163,6 +163,55 @@ func TestHandleFinish_ProjectHookRunsAfterTrust(t *testing.T) {
 	}
 }
 
+// TestProjectPromptTrust_RejectsSandboxedPreviewRequests replays what script
+// in a CSP-sandboxed preview (opaque origin) sends: Origin: null and
+// Sec-Fetch-Site: cross-site. Neither the trust grant nor the finish that
+// would run the project hook may go through, and no trust may be persisted.
+func TestProjectPromptTrust_RejectsSandboxedPreviewRequests(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh -c inline hook tested on unix")
+	}
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+	s, session := newTestServer(t)
+	s.homeDir = home
+	dir := session.RepoRoot
+	s.projectDir = dir
+
+	_, marker := markerCmd(t)
+	os.WriteFile(filepath.Join(dir, ".crit.config.json"), []byte(`{"hooks":{"on_finish_approved":"inline:printf p > '`+marker+`'"}}`), 0o644)
+
+	sandboxed := func(req *http.Request) *http.Request {
+		req.Header.Set("Origin", "null")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		return req
+	}
+
+	trustReq := sandboxed(httptest.NewRequest("POST", "/api/project-prompts/trust", strings.NewReader(`{"mode":"always"}`)))
+	tw := httptest.NewRecorder()
+	s.ServeHTTP(tw, trustReq)
+	if tw.Code != http.StatusForbidden {
+		t.Fatalf("trust status = %d, want 403; body=%s", tw.Code, tw.Body.String())
+	}
+
+	finishReq := sandboxed(httptest.NewRequest("POST", "/api/finish", nil))
+	fw := httptest.NewRecorder()
+	s.ServeHTTP(fw, finishReq)
+	if fw.Code != http.StatusForbidden {
+		t.Fatalf("finish status = %d, want 403; body=%s", fw.Code, fw.Body.String())
+	}
+
+	// A legitimate finish from the CLI must still see the project as untrusted.
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest("POST", "/api/finish", nil))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("finish after rejected trust: status = %d, want 403 (project still untrusted)", w.Code)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("project hook ran without trust (marker stat err = %v)", err)
+	}
+}
+
 func TestHandleFinish_ProjectHookRunsWithPromptUntilChangeTrust(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sh -c inline hook tested on unix")

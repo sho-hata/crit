@@ -1257,6 +1257,39 @@ func TestHandleFiles_ValidFile(t *testing.T) {
 	}
 }
 
+// TestHandleFiles_SandboxCSP: a repo file opened through /files/ (an HTML or
+// SVG document in the tree under review) must not run script on the Crit
+// origin, so every response carries a script-less CSP sandbox.
+func TestHandleFiles_SandboxCSP(t *testing.T) {
+	t.Parallel()
+
+	s, session := newTestServer(t)
+	for name, body := range map[string]string{
+		"evil.html": `<script>fetch('/api/finish',{method:'POST'})</script>`,
+		"evil.svg":  `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		"image.png": "fake png",
+	} {
+		if err := os.WriteFile(filepath.Join(session.RepoRoot, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, name := range []string{"evil.html", "evil.svg", "image.png"} {
+		req := httptest.NewRequest("GET", "/files/"+name, nil)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", name, w.Code)
+		}
+		if got := w.Header().Get("Content-Security-Policy"); got != "sandbox" {
+			t.Errorf("%s: CSP = %q, want %q", name, got, "sandbox")
+		}
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", name, got)
+		}
+	}
+}
+
 func TestHandleFiles_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 
