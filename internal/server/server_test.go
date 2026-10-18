@@ -380,6 +380,12 @@ func TestCheckSecFetchSite(t *testing.T) {
 		{"POST public-url Origin", http.MethodPost, "", "https://mymac.ts.net", "", "https://mymac.ts.net", true},
 		{"POST public-url Referer", http.MethodPost, "", "-", "https://mymac.ts.net/", "https://mymac.ts.net", true},
 		{"POST public-url set, foreign Origin", http.MethodPost, "", "https://evil.com", "", "https://mymac.ts.net", false},
+		{"POST public-url explicit default port", http.MethodPost, "", "https://MyMac.ts.net:443", "", "https://mymac.ts.net", true},
+		{"POST public-url with port", http.MethodPost, "", "https://mymac.ts.net:8443", "", "https://mymac.ts.net:8443", true},
+		{"POST public-url other port", http.MethodPost, "", "https://mymac.ts.net:8443", "", "https://mymac.ts.net", false},
+		{"POST public-url other scheme", http.MethodPost, "", "http://mymac.ts.net", "", "https://mymac.ts.net", false},
+		{"POST public-url Referer other port", http.MethodPost, "", "-", "https://mymac.ts.net:8443/x", "https://mymac.ts.net", false},
+		{"POST public-url Referer other scheme", http.MethodPost, "", "-", "http://mymac.ts.net/x", "https://mymac.ts.net", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

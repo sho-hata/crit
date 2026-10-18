@@ -89,6 +89,9 @@ type Server struct {
 	// publicURLHost is the hostname from --public-url / CRIT_PUBLIC_URL, allowed
 	// through the DNS-rebinding guard when requests arrive via a reverse proxy.
 	publicURLHost string
+	// publicOrigin is the --public-url origin (scheme://host:port, effective
+	// port) that Origin/Referer may name under the CSRF fallback.
+	publicOrigin string
 
 	// shutdownCtx is the daemon's signal-handled context; child operations
 	// (e.g. runAgentCmd subprocesses) derive their context from this so a
@@ -237,6 +240,28 @@ func (s *Server) SetListenHost(host string) {
 // if the server is bound to loopback — needed for tailscale serve and similar proxies.
 func (s *Server) SetPublicURL(publicURL string) {
 	s.publicURLHost = config.PublicURLHost(publicURL)
+	s.publicOrigin = ""
+	if s.publicURLHost != "" {
+		if u, err := url.Parse(publicURL); err == nil {
+			s.publicOrigin = urlOrigin(u)
+		}
+	}
+}
+
+// urlOrigin returns u's origin as scheme://host:port with the scheme's default
+// port filled in, so https://h and https://h:443 compare equal.
+func urlOrigin(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 // isLoopbackHost reports whether host (no port) is a loopback address.
@@ -344,8 +369,9 @@ func (s *Server) checkSecFetchSite(r *http.Request) bool {
 
 // isSameOriginURL reports whether raw (an Origin or Referer value) names this
 // server: its host[:port] equals the request Host that checkHost already
-// vetted, or its hostname is the --public-url host (reverse proxies may
-// rewrite Host to the loopback upstream).
+// vetted, or it is the --public-url origin (reverse proxies may rewrite Host
+// to the loopback upstream). Scheme and port must match the public URL too:
+// another app on the same hostname is a different origin.
 func (s *Server) isSameOriginURL(r *http.Request, raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -354,7 +380,7 @@ func (s *Server) isSameOriginURL(r *http.Request, raw string) bool {
 	if strings.EqualFold(u.Host, r.Host) {
 		return true
 	}
-	return s.publicURLHost != "" && strings.EqualFold(u.Hostname(), s.publicURLHost)
+	return s.publicOrigin != "" && urlOrigin(u) == s.publicOrigin
 }
 
 // requireReady returns false and writes a 503 or 500 response if the server
