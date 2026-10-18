@@ -1304,7 +1304,7 @@ func TestPrepareDaemonCmd_KeepsNewLogAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, nil, "")
+	_, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, nil, "", "")
 	if err != nil {
 		t.Fatalf("prepareDaemonCmd: %v", err)
 	}
@@ -1330,7 +1330,7 @@ func TestSetupDaemonCmd_WorkingDirectory(t *testing.T) {
 
 	t.Run("explicit directory", func(t *testing.T) {
 		want := t.TempDir()
-		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("explicitdirxx", nil, want)
+		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("explicitdirxx", nil, want, "")
 		if err != nil {
 			t.Fatalf("setupDaemonCmd: %v", err)
 		}
@@ -1341,7 +1341,7 @@ func TestSetupDaemonCmd_WorkingDirectory(t *testing.T) {
 	})
 
 	t.Run("empty directory inherits ours", func(t *testing.T) {
-		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("inheriteddirx", nil, "")
+		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("inheriteddirx", nil, "", "")
 		if err != nil {
 			t.Fatalf("setupDaemonCmd: %v", err)
 		}
@@ -1354,6 +1354,58 @@ func TestSetupDaemonCmd_WorkingDirectory(t *testing.T) {
 			t.Errorf("cmd.Dir = %q, want the current directory %q", cmd.Dir, wd)
 		}
 	})
+}
+
+func TestSetupDaemonCmd_LiveCookieEnv(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+	if err := os.MkdirAll(filepath.Join(home, ".crit", "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// An inherited value must never reach a daemon on its own.
+	t.Setenv(LiveCookieEnv, "inherited=1")
+
+	tests := []struct {
+		name       string
+		liveCookie string
+		wantEnv    []string
+	}{
+		{name: "cookie passed through env", liveCookie: "sess=secret", wantEnv: []string{LiveCookieEnv + "=sess=secret"}},
+		{name: "no cookie drops inherited value", liveCookie: "", wantEnv: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("livecookiexx", []string{"--live-origin", "http://localhost:3000"}, "", tt.liveCookie)
+			if err != nil {
+				t.Fatalf("setupDaemonCmd: %v", err)
+			}
+			defer closeAll(readEnd, writeEnd, logFile)
+			for _, a := range cmd.Args {
+				if strings.Contains(a, "sess=secret") || strings.Contains(a, "inherited=1") {
+					t.Fatalf("cookie leaked into argv: %v", cmd.Args)
+				}
+			}
+			var got []string
+			for _, kv := range cmd.Env {
+				if strings.HasPrefix(kv, LiveCookieEnv+"=") {
+					got = append(got, kv)
+				}
+			}
+			if strings.Join(got, "\n") != strings.Join(tt.wantEnv, "\n") {
+				t.Fatalf("%s entries = %q, want %q", LiveCookieEnv, got, tt.wantEnv)
+			}
+		})
+	}
+}
+
+func TestTakeLiveCookieEnv(t *testing.T) {
+	t.Setenv(LiveCookieEnv, "sess=secret")
+	if got := TakeLiveCookieEnv(); got != "sess=secret" {
+		t.Fatalf("TakeLiveCookieEnv = %q, want sess=secret", got)
+	}
+	if _, ok := os.LookupEnv(LiveCookieEnv); ok {
+		t.Fatalf("%s still set after TakeLiveCookieEnv", LiveCookieEnv)
+	}
 }
 
 func closeAll(files ...*os.File) {

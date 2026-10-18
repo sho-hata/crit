@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -163,6 +164,81 @@ func TestPreviewContent_OpaqueOriginSubresourceCORS(t *testing.T) {
 			}
 			if got := w.Header().Get("Vary"); got != "Origin, Sec-Fetch-Dest" {
 				t.Errorf("Vary = %q, want %q", got, "Origin, Sec-Fetch-Dest")
+			}
+		})
+	}
+}
+
+// TestHandlePreviewContent_PathContainment verifies that sibling assets are
+// served only when their symlink-resolved target stays inside the preview
+// file's directory.
+func TestHandlePreviewContent_PathContainment(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs elevated privileges on Windows")
+	}
+
+	root := t.TempDir()
+	siteDir := filepath.Join(root, "site")
+	outsideDir := filepath.Join(root, "outside")
+	for _, d := range []string{siteDir, outsideDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(target, name string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(siteDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	htmlFile := filepath.Join(siteDir, "index.html")
+	write(htmlFile, "<html><body>page</body></html>")
+	write(filepath.Join(siteDir, "app.js"), "inside-asset")
+	write(filepath.Join(root, "parent-secret.txt"), "parent-secret")
+	write(filepath.Join(outsideDir, "secret.txt"), "outside-secret")
+	link(filepath.Join(outsideDir, "secret.txt"), "leak.txt")
+	link(outsideDir, "leakdir")
+	link("app.js", "alias.js")
+
+	s := newPreviewContentTestServer(t, htmlFile)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+		wantBody   string
+	}{
+		{"normal asset", "/preview-content/app.js", http.StatusOK, "inside-asset"},
+		{"in-directory symlink", "/preview-content/alias.js", http.StatusOK, "inside-asset"},
+		{"symlinked file escape", "/preview-content/leak.txt", http.StatusForbidden, ""},
+		{"symlinked dir escape", "/preview-content/leakdir/secret.txt", http.StatusForbidden, ""},
+		{"dot-dot traversal", "/preview-content/../parent-secret.txt", http.StatusNotFound, ""},
+		{"missing file", "/preview-content/nope.js", http.StatusNotFound, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest("GET", tc.path, nil)
+			w := httptest.NewRecorder()
+			s.handlePreviewContent(w, req)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d (body %q)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			body := w.Body.String()
+			if tc.wantBody != "" && !strings.Contains(body, tc.wantBody) {
+				t.Errorf("body = %q, want it to contain %q", body, tc.wantBody)
+			}
+			if strings.Contains(body, "secret") {
+				t.Errorf("response leaked a file outside the preview directory: %q", body)
 			}
 		})
 	}
