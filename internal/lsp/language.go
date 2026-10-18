@@ -70,6 +70,14 @@ type Language struct {
 	// to load the files, so leave it nil for a server that indexes the
 	// workspace anyway (gopls). Same cost rule as InitOptions.
 	OpenSessionFile func(root, absPath string) bool
+	// StartupProgress reports whether the server is known to report
+	// work-done progress for loading absPath's project, so the first wait
+	// after opening it gives the report startupProgressGrace, not
+	// progressGrace, to begin. On a busy machine starting the server alone can
+	// outlast progressGrace, and an answer before the project loads leaves out
+	// what it alone holds. nil for a server that may report nothing. Same cost
+	// rule as InitOptions.
+	StartupProgress func(root, absPath string) bool
 	// NoResult reports whether an error answer to a position request
 	// (hover, definition, references) means there is simply nothing at that
 	// position, for a server that says so with an error instead of null; nil
@@ -108,6 +116,7 @@ var languages = []*Language{
 		Name:            "typescript",
 		Command:         []string{"typescript-language-server", "--stdio"},
 		OpenSessionFile: tsOpenSessionFile,
+		StartupProgress: tsStartupProgress,
 		IDByExt: map[string]string{
 			"ts":  "typescript",
 			"mts": "typescript",
@@ -201,12 +210,27 @@ func findTSServer(root, absPath string) string {
 // jsconfig.json (allowJs by definition). A config whose include or files
 // leave absPath out still counts as covering it.
 func tsOpenSessionFile(root, absPath string) bool {
-	configs := []string{"tsconfig.json", "jsconfig.json"}
+	configs := tsConfigNames
 	if tsJavaScriptExt[strings.ToLower(strings.TrimPrefix(filepath.Ext(absPath), "."))] {
 		configs = []string{"jsconfig.json"}
 	}
-	return !walkUpWithin(root, absPath, func(dir string) bool {
-		for _, name := range configs {
+	return !tsConfigAbove(root, absPath, configs)
+}
+
+// tsStartupProgress: typescript-language-server reports "Initializing JS/TS
+// language features" while it loads a configured project, and nothing for an
+// inferred one.
+func tsStartupProgress(root, absPath string) bool {
+	return tsConfigAbove(root, absPath, tsConfigNames)
+}
+
+var tsConfigNames = []string{"tsconfig.json", "jsconfig.json"}
+
+// tsConfigAbove reports whether one of names is a file in absPath's
+// directory or a parent of it within root.
+func tsConfigAbove(root, absPath string, names []string) bool {
+	return walkUpWithin(root, absPath, func(dir string) bool {
+		for _, name := range names {
 			if st, err := os.Stat(filepath.Join(dir, name)); err == nil && !st.IsDir() {
 				return true
 			}

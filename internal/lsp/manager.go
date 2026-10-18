@@ -181,7 +181,7 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 		if opened && !lang.SkipReadyWait {
 			// Opening a document is what makes a TypeScript server build the
 			// project around it (see WaitReady).
-			srv.client.WaitReady(progressGrace, warmupTimeout)
+			srv.client.WaitReady(m.readyGrace(lang, absPath), warmupTimeout)
 		}
 		reqErr := fn(srv.client)
 		if reqErr == nil {
@@ -203,6 +203,20 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 		}
 		return reqErr
 	}
+}
+
+// startupProgressGrace bounds the wait for progress a server is known to
+// report (Language.StartupProgress). It only runs out if that report never
+// comes; on a loaded machine it can begin over a second after the didOpen.
+const startupProgressGrace = 10 * time.Second
+
+// readyGrace is how long WaitReady waits for lang's server to report work
+// after absPath is opened.
+func (m *Manager) readyGrace(lang *Language, absPath string) time.Duration {
+	if lang.StartupProgress != nil && lang.StartupProgress(m.root, absPath) {
+		return startupProgressGrace
+	}
+	return progressGrace
 }
 
 // retryDelay reports whether withClient should ask again after reqErr, and

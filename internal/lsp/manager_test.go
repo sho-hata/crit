@@ -778,3 +778,56 @@ func TestManagerRetriesContentModified(t *testing.T) {
 		})
 	}
 }
+
+// A TypeScript server under a tsconfig.json always reports loading the
+// project, so the first request waits for that report even when it starts
+// later than progressGrace; without a config it reports nothing, and the
+// request goes out once progressGrace has passed.
+func TestManagerWaitsForLateStartupProgress(t *testing.T) {
+	t.Parallel()
+
+	const lateBy = progressGrace + 500*time.Millisecond
+	cases := []struct {
+		name       string
+		config     bool
+		wantWaited bool
+	}{
+		{"under a tsconfig.json", true, true},
+		{"inferred project", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var progressDone, hoverAt atomic.Int64
+			m, h := newManagerHarness(t, func(method string, params json.RawMessage) any {
+				if method == "textDocument/hover" {
+					hoverAt.Store(time.Now().UnixNano())
+				}
+				return hoverOK(method, params)
+			})
+			start := m.start
+			m.start = func(ctx context.Context, root string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
+				c, err := start(ctx, root, lang, initOpts, settings)
+				fs := h.server(0)
+				time.AfterFunc(lateBy, func() {
+					fs.sendProgress("load", "begin")
+					fs.sendProgress("load", "end")
+					progressDone.Store(time.Now().UnixNano())
+				})
+				return c, err
+			}
+			if tc.config {
+				writeGoFile(t, m.root, "tsconfig.json", "{}")
+			}
+			file := writeGoFile(t, m.root, "a.ts", "\n")
+
+			if _, err := m.Hover(file, 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+			waited := progressDone.Load() != 0 && hoverAt.Load() >= progressDone.Load()
+			if waited != tc.wantWaited {
+				t.Errorf("hover sent after the late progress = %v, want %v", waited, tc.wantWaited)
+			}
+		})
+	}
+}
