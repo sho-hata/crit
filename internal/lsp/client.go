@@ -466,6 +466,14 @@ func (c *Client) DidChange(path, text string, version int) error {
 	})
 }
 
+// DidClose tells the server a document is no longer open, so it reads the
+// file from disk again.
+func (c *Client) DidClose(path string) error {
+	return c.notify("textDocument/didClose", map[string]any{
+		"textDocument": map[string]any{"uri": PathToURI(path)},
+	})
+}
+
 // Hover returns hover contents as markdown for a 0-based UTF-16 position, or
 // "" when the server has nothing to show.
 func (c *Client) Hover(path string, line, character int) (string, error) {

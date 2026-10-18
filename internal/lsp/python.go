@@ -176,3 +176,9 @@ func pyrightTypeshed() string {
 	}
 	return ""
 }
+
+// pyOpenSessionFile opens every review file: pyright answers references from
+// the files it has analyzed, and right after start that is the open ones
+// only, so references from the rest appear just once its background analysis
+// reaches them.
+func pyOpenSessionFile(_, _ string) bool { return true }

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -541,6 +544,183 @@ func TestManagerNoResultIsAnEmptyResult(t *testing.T) {
 	}
 }
 
+// docEvents lists the documents a fake server was told about, as
+// "didOpen a.py" and the like, with paths relative to root.
+func docEvents(t *testing.T, fs *fakeServer, root string) []string {
+	t.Helper()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	var out []string
+	for _, n := range fs.notifications {
+		method, ok := strings.CutPrefix(n.Method, "textDocument/")
+		if !ok {
+			continue
+		}
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+		}
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(root, URIToPath(p.TextDocument.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, method+" "+filepath.ToSlash(rel))
+	}
+	return out
+}
+
+// The review's other files open next to a request for a language that wants
+// them (Language.OpenSessionFile), and stay in sync with the disk: an edit
+// sends didChange, a deletion didClose, an untouched file nothing.
+func TestManagerOpensSessionFiles(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		files  []string // first one is requested
+		config string   // written at root when set
+		want   []string // after the first request
+	}{
+		{"python opens every review file", []string{"a.py", "b.py", "pkg/c.py", "main.go"}, "",
+			[]string{"didOpen a.py", "didOpen b.py", "didOpen pkg/c.py"}},
+		{"typescript without a project opens them", []string{"a.ts", "b.ts"}, "",
+			[]string{"didOpen a.ts", "didOpen b.ts"}},
+		{"typescript under a tsconfig.json leaves them to the project", []string{"a.ts", "b.ts"}, "tsconfig.json",
+			[]string{"didOpen a.ts"}},
+		{"go indexes the module itself", []string{"a.go", "b.go"}, "",
+			[]string{"didOpen a.go"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m, h := newManagerHarness(t, hoverOK)
+			for _, f := range append([]string{tc.config}, tc.files...) {
+				if f == "" {
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(filepath.Join(m.root, f)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeGoFile(t, m.root, f, "\n")
+			}
+			m.SetSessionFiles(func() []string { return tc.files })
+
+			if _, err := m.Hover(filepath.Join(m.root, tc.files[0]), 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+			if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, tc.want) {
+				t.Errorf("after the first request: %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("edits and deletions reach the server", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		for _, f := range []string{"a.py", "b.py", "c.py"} {
+			writeGoFile(t, m.root, f, "x = 1\n")
+		}
+		m.SetSessionFiles(func() []string { return []string{"a.py", "b.py", "c.py"} })
+		a := filepath.Join(m.root, "a.py")
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover: %v", err)
+		}
+		writeGoFile(t, m.root, "b.py", "x = 22\n")
+		if err := os.Remove(filepath.Join(m.root, "c.py")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover(2): %v", err)
+		}
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover(3): %v", err)
+		}
+		want := []string{"didOpen a.py", "didOpen b.py", "didOpen c.py", "didChange b.py", "didClose c.py"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a path the review stops listing is closed", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		for _, f := range []string{"a.py", "old.py", "new.py"} {
+			writeGoFile(t, m.root, f, "x = 1\n")
+		}
+		var mu sync.Mutex
+		listed := []string{"a.py", "old.py"}
+		m.SetSessionFiles(func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(listed)
+		})
+		a := filepath.Join(m.root, "a.py")
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover: %v", err)
+		}
+		// A rename: the old path leaves the list, whatever is on disk.
+		mu.Lock()
+		listed = []string{"a.py", "new.py"}
+		mu.Unlock()
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover(2): %v", err)
+		}
+		want := []string{"didOpen a.py", "didOpen old.py", "didOpen new.py", "didClose old.py"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a tsconfig.json added or removed between requests is honored", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		writeGoFile(t, m.root, "a.ts", "\n")
+		writeGoFile(t, m.root, "b.ts", "\n")
+		writeGoFile(t, m.root, "tsconfig.json", "{}")
+		m.SetSessionFiles(func() []string { return []string{"a.ts", "b.ts"} })
+		a := filepath.Join(m.root, "a.ts")
+		hover := func() {
+			t.Helper()
+			if _, err := m.Hover(a, 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+		}
+		hover()
+		if err := os.Remove(filepath.Join(m.root, "tsconfig.json")); err != nil {
+			t.Fatal(err)
+		}
+		hover()
+		writeGoFile(t, m.root, "tsconfig.json", "{}")
+		hover()
+		want := []string{"didOpen a.ts", "didOpen b.ts", "didClose b.ts"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("at most maxSessionDocuments besides the request", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		var files []string
+		for i := range maxSessionDocuments + 5 {
+			name := fmt.Sprintf("m%d.py", i)
+			writeGoFile(t, m.root, name, "\n")
+			files = append(files, name)
+		}
+		m.SetSessionFiles(func() []string { return files })
+		if _, err := m.Hover(filepath.Join(m.root, files[0]), 0, 0); err != nil {
+			t.Fatalf("Hover: %v", err)
+		}
+		if got, want := len(docEvents(t, h.server(0), m.root)), maxSessionDocuments+1; got != want {
+			t.Errorf("didOpen count = %d, want %d", got, want)
+		}
+	})
+}
+
 // A ContentModified reply means the server dropped an answer it judged stale.
 // The manager re-syncs the document and asks again, a bounded number of times;
 // past that the error surfaces.
@@ -594,6 +774,59 @@ func TestManagerRetriesContentModified(t *testing.T) {
 			}
 			if changes != 1 {
 				t.Errorf("didChange = %d, want 1 (the retry re-syncs the edited file)", changes)
+			}
+		})
+	}
+}
+
+// A TypeScript server under a tsconfig.json always reports loading the
+// project, so the first request waits for that report even when it starts
+// later than progressGrace; without a config it reports nothing, and the
+// request goes out once progressGrace has passed.
+func TestManagerWaitsForLateStartupProgress(t *testing.T) {
+	t.Parallel()
+
+	const lateBy = progressGrace + 500*time.Millisecond
+	cases := []struct {
+		name       string
+		config     bool
+		wantWaited bool
+	}{
+		{"under a tsconfig.json", true, true},
+		{"inferred project", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var progressDone, hoverAt atomic.Int64
+			m, h := newManagerHarness(t, func(method string, params json.RawMessage) any {
+				if method == "textDocument/hover" {
+					hoverAt.Store(time.Now().UnixNano())
+				}
+				return hoverOK(method, params)
+			})
+			start := m.start
+			m.start = func(ctx context.Context, root string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
+				c, err := start(ctx, root, lang, initOpts, settings)
+				fs := h.server(0)
+				time.AfterFunc(lateBy, func() {
+					fs.sendProgress("load", "begin")
+					fs.sendProgress("load", "end")
+					progressDone.Store(time.Now().UnixNano())
+				})
+				return c, err
+			}
+			if tc.config {
+				writeGoFile(t, m.root, "tsconfig.json", "{}")
+			}
+			file := writeGoFile(t, m.root, "a.ts", "\n")
+
+			if _, err := m.Hover(file, 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+			waited := progressDone.Load() != 0 && hoverAt.Load() >= progressDone.Load()
+			if waited != tc.wantWaited {
+				t.Errorf("hover sent after the late progress = %v, want %v", waited, tc.wantWaited)
 			}
 		})
 	}

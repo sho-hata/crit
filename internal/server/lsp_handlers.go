@@ -264,10 +264,29 @@ func (s *Server) lspManager() lspProvider {
 			if sess := s.session.Load(); sess != nil {
 				repoRoot = sess.RepoRoot
 			}
-			s.lsp.prov = lsp.NewManager(s.lspRootLocked(), repoRoot, s.shutdownCtx)
+			mgr := lsp.NewManager(s.lspRootLocked(), repoRoot, s.shutdownCtx)
+			mgr.SetSessionFiles(s.lspSessionFiles)
+			s.lsp.prov = mgr
 		}
 	}
 	return s.lsp.prov
+}
+
+// lspSessionFiles lists the review's files for the manager to open next to
+// each request (lsp.Manager.SetSessionFiles). Deleted files stay in: one the
+// manager opened before it was deleted must be closed.
+func (s *Server) lspSessionFiles() []string {
+	sess := s.session.Load()
+	if sess == nil {
+		return nil
+	}
+	sess.RLock()
+	defer sess.RUnlock()
+	paths := make([]string, 0, len(sess.Files))
+	for _, f := range sess.Files {
+		paths = append(paths, f.Path)
+	}
+	return paths
 }
 
 // ShutdownLSP is called on daemon shutdown.
