@@ -270,3 +270,42 @@ func TestAvailableCachesLookupPerPath(t *testing.T) {
 		t.Error("PATH without the binary answered from the other PATH's entry")
 	}
 }
+
+func TestTSOpenSessionFile(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		config string // relative to the parent of root; "" writes none
+		file   string // relative to root
+		want   bool
+	}{
+		{"no project anywhere", "", "src/a.ts", true},
+		{"tsconfig.json at the root", "root/tsconfig.json", "src/a.ts", false},
+		{"jsconfig.json in the file's package", "root/web/jsconfig.json", "web/a.js", false},
+		{"a sibling package's tsconfig.json", "root/api/tsconfig.json", "web/a.ts", true},
+		{"tsconfig.json above the root", "tsconfig.json", "src/a.ts", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parent := t.TempDir()
+			root := filepath.Join(parent, "root")
+			for _, p := range []string{tc.config, filepath.Join("root", tc.file)} {
+				if p == "" {
+					continue
+				}
+				abs := filepath.Join(parent, p)
+				if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(abs, []byte("{}"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := tsOpenSessionFile(root, filepath.Join(root, tc.file)); got != tc.want {
+				t.Errorf("tsOpenSessionFile = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
