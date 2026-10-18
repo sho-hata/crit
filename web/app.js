@@ -984,7 +984,6 @@
     // extensions it covers. The module owns all its listeners.
     if (configRes.lsp_available && window.crit.lsp) {
       window.crit.lsp.init({
-        renderMarkdown: function (text) { return commentMd.render(text); },
         jumpToLocation: lspJumpToLocation,
         mountLineWidget: mountPierreLineWidget,
         unmountLineWidget: unmountPierreLineWidget,

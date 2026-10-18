@@ -6,6 +6,21 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
+// crit-lsp.js binds its hover renderer to window.markdownit at load, and
+// escapes through crit.shared, so both exist before the require.
+global.window = {
+  markdownit: require('markdown-it'),
+  crit: {
+    shared: {
+      escapeHTML: function (s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+      },
+    },
+  },
+};
+
 const lsp = require('../crit-lsp.js');
 
 // ===== fake DOM nodes (duck-typed: nodeType / childNodes / textContent) =====
@@ -287,4 +302,33 @@ test('symbolRange: null on mismatch (alias, stale column) or missing input', fun
   assert.strictEqual(lsp.symbolRange('import { a as b } from "x"', 14, 'a'), null);
   assert.strictEqual(lsp.symbolRange('foo()', undefined, 'foo'), null);
   assert.strictEqual(lsp.symbolRange('foo()', 0, ''), null);
+});
+
+// ===== hover markdown =====
+
+test('renderHoverMarkdown: raw HTML from a server is shown as text, not elements', function () {
+  const html = lsp.renderHoverMarkdown('<img src=x onerror=1> and <script>1</script>');
+  assert.ok(!/<img|<script/i.test(html), html);
+  assert.ok(html.includes('&lt;img src=x onerror=1&gt;'), html);
+});
+
+test('renderHoverMarkdown: a markdown image yields no <img>', function () {
+  const html = lsp.renderHoverMarkdown('![x](https://h/t.png)');
+  assert.ok(!/<img/i.test(html), html);
+});
+
+test('renderHoverMarkdown: fenced code still renders as <pre><code>', function () {
+  const html = lsp.renderHoverMarkdown('```go\nfunc main() {}\n```\n');
+  assert.ok(/<pre><code class="language-go">/.test(html), html);
+  assert.ok(html.includes('func main() {}'), html);
+});
+
+test('renderHoverMarkdown: a bare URL becomes a link', function () {
+  const html = lsp.renderHoverMarkdown('see https://example.com');
+  assert.ok(/<a href="https:\/\/example\.com">https:\/\/example\.com<\/a>/.test(html), html);
+});
+
+test('renderHoverMarkdown: empty input renders to nothing', function () {
+  assert.strictEqual(lsp.renderHoverMarkdown(''), '');
+  assert.strictEqual(lsp.renderHoverMarkdown(undefined), '');
 });
