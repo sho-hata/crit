@@ -1926,6 +1926,7 @@
 
   async function handleReanchorSelection(pinId, domAnchor) {
     if (!reanchorPutAPI) return;
+    if (!reanchorClickAPI || !reanchorClickAPI.isArmedFor(state, pinId)) return;
     try {
       var req = reanchorPutAPI.buildReanchorRequest(pinId, domAnchor);
       var res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });

@@ -131,6 +131,7 @@ func TestPreviewContent_OpaqueOriginSubresourceCORS(t *testing.T) {
 		"app.js":     "export const x = 1;",
 		"font.woff2": "font",
 		"data.json":  `{"secret":true}`,
+		"lib.MJS":    "export const y = 2;",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
 			t.Fatal(err)
@@ -144,6 +145,8 @@ func TestPreviewContent_OpaqueOriginSubresourceCORS(t *testing.T) {
 		{"module script from sandbox", "/preview-content/app.js", "null", "script", "*"},
 		{"font from sandbox", "/preview-content/font.woff2", "null", "font", "*"},
 		{"fetch from sandbox", "/preview-content/data.json", "null", "empty", ""},
+		{"JSON module from sandbox", "/preview-content/data.json", "null", "script", ""},
+		{"mjs module from sandbox", "/preview-content/lib.MJS", "null", "script", "*"},
 		{"module script from another site", "/preview-content/app.js", "https://evil.example", "script", ""},
 		{"no origin", "/preview-content/app.js", "", "script", ""},
 	}

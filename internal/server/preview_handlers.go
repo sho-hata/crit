@@ -43,15 +43,30 @@ func setUntrustedContentHeaders(w http.ResponseWriter, csp string) {
 // <link> could not already pull in. Vary is sent on every response, granted
 // or not: otherwise a page could prime the HTTP cache with a font-mode load
 // and replay the ACAO response to fetch(..., {cache: 'force-cache'}).
-func allowOpaqueOriginSubresource(w http.ResponseWriter, r *http.Request) {
+// Script grants are limited to JavaScript files: JSON modules
+// (import(..., {with: {type: 'json'}})) also load with the script destination
+// and would hand the page the parsed file.
+func allowOpaqueOriginSubresource(w http.ResponseWriter, r *http.Request, path string) {
 	w.Header().Add("Vary", "Origin, Sec-Fetch-Dest")
 	if r.Header.Get("Origin") != "null" {
 		return
 	}
 	switch r.Header.Get("Sec-Fetch-Dest") {
-	case "script", "font":
+	case "script":
+		if isJavaScriptPath(path) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+	case "font":
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 	}
+}
+
+func isJavaScriptPath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".js", ".mjs", ".cjs":
+		return true
+	}
+	return false
 }
 
 // handlePreviewContent serves the previewed HTML file and its sibling assets.
@@ -106,7 +121,7 @@ func (s *Server) handlePreviewContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowOpaqueOriginSubresource(w, r)
+	allowOpaqueOriginSubresource(w, r, resolved)
 	http.ServeFile(w, r, resolved)
 }
 
