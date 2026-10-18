@@ -149,6 +149,26 @@ var languages = []*Language{
 		LocalEnv:       true,
 		ExtraRoots:     phpExtraRoots,
 	},
+	{
+		Name: "dart",
+		// --no-plugins: the analysis server otherwise runs the analyzer
+		// plugins a repo names in analysis_options.yaml — fetched with
+		// `dart pub`, then executed in-process as isolates — so an untrusted
+		// branch would run code on the first hover. Measured against Dart
+		// 3.13.5: the plugin ran within 20s of didOpen; with the flag nothing
+		// is fetched or started. Hover, definition and references don't use
+		// plugins, so nothing is lost. The server's other external call,
+		// `pub outdated`, runs only for a pubspec the client opens; crit opens
+		// .dart files alone (measured: no pub process, pub cache untouched).
+		Command: []string{"dart", "language-server", "--client-id=crit", "--no-plugins"},
+		IDByExt: map[string]string{"dart": "dart"},
+		// pubspec.yaml marks the package root (its SDK constraint picks the
+		// language version). .dart_tool/package_config.json is untracked, so
+		// package: imports — the own package's included — don't resolve in a
+		// range-focus worktree; relative imports and dart: libraries do.
+		SparsePatterns: []string{"*.dart", "pubspec.yaml", "analysis_options.yaml"},
+		ExtraRoots:     dartExtraRoots,
+	},
 }
 
 // tsInitOptions pins the nearest TypeScript install. typescript-language-server

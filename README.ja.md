@@ -14,7 +14,7 @@
 
 > [!NOTE]
 > **これはフォークです。** [tomasz-tomczyk/crit](https://github.com/tomasz-tomczyk/crit) に、本家にはまだ入っていない機能を追加しています。フォーク独自の追加機能には **(fork-only)** を付けています。現時点では以下:
-> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go は gopls、TypeScript / JavaScript は typescript-language-server、Python は pyright、Terraform は terraform-ls、PHP は intelephense 経由）
+> - **[diff 内のコードインテリジェンス（LSP）](#lsp-fork-only)** — ホバードキュメント・定義ジャンプ・参照検索をレビュー画面上で（Go は gopls、TypeScript / JavaScript は typescript-language-server、Python は pyright、Terraform は terraform-ls、PHP は intelephense、Dart は SDK 同梱の analysis server 経由）
 
 ![「notification-plan.md」を開いた Crit の画面。「Queue - Redis Streams, SQS, RabbitMQ」の行に「Just use SQS - we're in AWS」というコメントが付いている](docs/images/demo-overview.png)
 
@@ -166,7 +166,7 @@ crit cleanup                      # 古いレビューファイルを削除
 diff を読むというのは、エディタなしでコードを読むということです。この機能は、そこで実際に知りたくなる 3 つのこと — これは何か？　どこで定義されているか？　他にどこから呼ばれているか？ — をレビュー画面の中に持ち込みます。
 
 > [!NOTE]
-> 対応言語は **Go**（[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) 経由）、**TypeScript / JavaScript**（[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) 経由）、**Python**（[pyright](https://github.com/microsoft/pyright) 経由）、**Terraform**（[terraform-ls](https://github.com/hashicorp/terraform-ls) 経由）、**PHP**（[intelephense](https://intelephense.com) 経由）です。それぞれのサーバーバイナリが `PATH` にあれば、言語ごとに独立して有効になります。
+> 対応言語は **Go**（[gopls](https://pkg.go.dev/golang.org/x/tools/gopls) 経由）、**TypeScript / JavaScript**（[typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) 経由）、**Python**（[pyright](https://github.com/microsoft/pyright) 経由）、**Terraform**（[terraform-ls](https://github.com/hashicorp/terraform-ls) 経由）、**PHP**（[intelephense](https://intelephense.com) 経由）、**Dart**（Dart SDK 同梱の [analysis server](https://github.com/dart-lang/sdk/tree/main/pkg/analysis_server) 経由）です。それぞれのサーバーバイナリが `PATH` にあれば、言語ごとに独立して有効になります。
 
 #### ホバー: シグネチャとドキュメント
 
@@ -215,6 +215,10 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
    # PHP — PHP 本体のインストールは不要
    npm install -g intelephense
    which intelephense
+
+   # Dart — analysis server は SDK に同梱
+   brew install dart-sdk   # `dart` が PATH に乗る SDK / Flutter の入れ方なら何でも可
+   which dart
    ```
 
 2. レビューを開始します。それだけです。LSP はデフォルトで有効で（`lsp` 設定キー。無効にするには `"lsp": false`）、インストールされているサーバーに応じて言語ごとに独立して有効になります。
@@ -232,11 +236,12 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
 - コードファイルの 2 つの表示方法のどちらでも動作します: **diff**（git モード）と、ファイルモード（`crit some.ts`）で使われる**ファイル全体のドキュメントビュー**です。ファイルモードではホバーした行がそのままファイルの行番号なので、定義ジャンプで diff を展開する必要もありません。
 - 言語サーバーは最初のホバー時に**遅延起動**し、3 分間リクエストがなければ停止します。多数の worktree で同時に crit を動かしていても、実際にホバーしているレビューの分しか言語サーバーは生きません。
 - コールドスタート直後の最初のホバーは、サーバーがワークスペースを読み込む数秒間かかることがあります（その間ツールチップにはローディング表示が出ます）。
-- 定義・参照のジャンプ先として読み取るのは、自分のリポジトリと、インストール済みの各言語の既知のソースルートのみです: Go は `GOROOT` と `GOMODCACHE`、TypeScript はグローバルの `node_modules`（`npm root -g`）、Python は `PATH` 上の `python3` の標準ライブラリと site-packages・プロジェクトの `.venv`・pyright 同梱の typeshed、PHP は Composer の `vendor/` と intelephense 同梱の組み込みスタブ。汎用のファイル読み取りエンドポイントは意図的に用意していません（リポジトリ内の `node_modules` や `.venv` への定義ジャンプはリポジトリルート配下なので、リポジトリルートのルールでカバーされます）。
-- **範囲 / PR レビュー**（`--range`、`--pr`）は、固定された SHA 時点のファイル内容を表示します。これはディスク上の内容と異なりうるため、作業ツリーを見て回答すると、読んでいる diff と静かに食い違ってしまいます。そこで crit は、その SHA をチェックアウトしたスパースな git worktree に言語サーバーをアンカーします。この worktree は最初の LSP リクエスト時に作られ、言語サーバーと同じアイドルタイムアウトで破棄されます。対応するのはローカル git のみで、`--remote` と Sapling / JJ の範囲レビューでは `lsp_available: false` になります。チェックアウトのサイズ上限は `lsp_worktree_max_mb`（デフォルト 500）で設定でき、推定サイズがこれを超えるコミットはチェックアウトせずスキップされます。TypeScript では `node_modules` は git 管理外のためチェックアウトに含まれず、範囲 / PR フォーカスではパッケージをまたぐホバー・定義ジャンプが劣化します（リポジトリ内のシンボルは引き続き動作します）。Python の `.venv` も git 管理外なので作業ツリー側から読み取ります。サードパーティの型は PR の依存ではなく**手元にインストールされているもの**で解決されます（バージョンを上げた依存は古い API が表示され、新しく追加された依存は `Unknown` になります）。Python のホバーと、手元のパッケージへの peek には、その旨を 1 行で表示します。PHP の Composer `vendor/` も同じく手元のもので解決され、同じ表示が出ます。
+- 定義・参照のジャンプ先として読み取るのは、自分のリポジトリと、インストール済みの各言語の既知のソースルートのみです: Go は `GOROOT` と `GOMODCACHE`、TypeScript はグローバルの `node_modules`（`npm root -g`）、Python は `PATH` 上の `python3` の標準ライブラリと site-packages・プロジェクトの `.venv`・pyright 同梱の typeshed、PHP は Composer の `vendor/` と intelephense 同梱の組み込みスタブ、Dart は SDK の `lib/` と pub キャッシュ。汎用のファイル読み取りエンドポイントは意図的に用意していません（リポジトリ内の `node_modules` や `.venv` への定義ジャンプはリポジトリルート配下なので、リポジトリルートのルールでカバーされます）。
+- **範囲 / PR レビュー**（`--range`、`--pr`）は、固定された SHA 時点のファイル内容を表示します。これはディスク上の内容と異なりうるため、作業ツリーを見て回答すると、読んでいる diff と静かに食い違ってしまいます。そこで crit は、その SHA をチェックアウトしたスパースな git worktree に言語サーバーをアンカーします。この worktree は最初の LSP リクエスト時に作られ、言語サーバーと同じアイドルタイムアウトで破棄されます。対応するのはローカル git のみで、`--remote` と Sapling / JJ の範囲レビューでは `lsp_available: false` になります。チェックアウトのサイズ上限は `lsp_worktree_max_mb`（デフォルト 500）で設定でき、推定サイズがこれを超えるコミットはチェックアウトせずスキップされます。TypeScript では `node_modules` は git 管理外のためチェックアウトに含まれず、範囲 / PR フォーカスではパッケージをまたぐホバー・定義ジャンプが劣化します（リポジトリ内のシンボルは引き続き動作します）。Python の `.venv` も git 管理外なので作業ツリー側から読み取ります。サードパーティの型は PR の依存ではなく**手元にインストールされているもの**で解決されます（バージョンを上げた依存は古い API が表示され、新しく追加された依存は `Unknown` になります）。Python のホバーと、手元のパッケージへの peek には、その旨を 1 行で表示します。PHP の Composer `vendor/` も同じく手元のもので解決され、同じ表示が出ます。Dart の `.dart_tool/package_config.json` も git 管理外のため、範囲 / PR フォーカスでは `package:` import（自パッケージのものを含む）が解決されません。相対 import と `dart:` ライブラリは動作します。
 - **Python の仮想環境。** pyright は `.venv` を自動では見つけません。何もしないとサードパーティの import はすべて `Unknown` になり（ホバーに型が出ない、定義ジャンプが `import` 行に着地する）、エラーも出ません。そこで crit は、ファイルに最も近い `.venv/` または `venv/` の site-packages を pyright に教えます（サービスごとに venv を持つモノレポにも対応）。渡すのはディレクトリだけでインタプリタは渡さないため、レビュー対象リポジトリの Python を crit が実行することはありません。この規約から外れる構成は pyright 側で扱います: crit の起動前に venv を activate する（起動済みのレビューは元の `PATH` のままなので再起動してください）か、`venvPath` と `venv` を指定した `pyrightconfig.json` を置きます。編集可能インストールの `.pth` や、`PATH` 上と異なる Python バージョンは、`.venv` からは読み取れません。
 - **Terraform。** 対象は `.tf` と `.tfvars` です。crit は terraform-ls に `terraform` を実行させません。`terraform init` 済みのディレクトリでは terraform-ls が `terraform providers schema` を実行し、`.terraform/` 配下の provider バイナリ（レビュー対象のツリーにあるもの）が起動されるためです。provider スキーマは terraform-ls に同梱されたもの（公式・パートナー provider の最新版。どのバージョンかはホバーに表示されます）を使い、それ以外の provider のリソース内の参照は解決されません。`terraform init` でインストールされたモジュールは、作業ツリーのレビューでは解決されますが、範囲 / PR レビューでは解決されません（`.terraform/` は git 管理外のため）。なお terraform-ls は registry モジュールのメタデータを registry.terraform.io から取得します。
 - **PHP。** 対象は `.php` と `.phtml` です。intelephense は静的解析器で、PHP も Composer も実行しません。`vendor/` を含むワークスペース全体をインデックスするため、大きなプロジェクトでは最初のホバーがインデックス完了を待ちます（最大 15 秒）。インデックスのキャッシュはリポジトリ外の `~/.config/intelephense` に置かれます。有料機能は使いません。ライセンスキーを導入済みなら読み込まれますが、crit が使う機能には影響しません。
+- **Dart。** 対象は `.dart` です。Dart SDK 同梱の analysis server（`dart language-server`）を使います。crit は `--no-plugins` 付きで起動します。これがないと、リポジトリの `analysis_options.yaml` に書かれた analyzer plugin を `dart pub` で取得してサーバー内で実行してしまうためです。ホバー・定義ジャンプ・参照検索に plugin は不要です。パッケージの解決は手元の `.dart_tool/package_config.json` に従います（先に `dart pub get` を実行してください）。このファイルがないと `package:` import（自パッケージのものを含む）は解決されません。範囲 / PR レビューでは git 管理外のこのファイルが worktree に存在しないため、この状態になります。相対 import と `dart:` ライブラリは常に解決されます。
 - **デバッグ。** ホバーが反応しない・結果がおかしいときは、`CRIT_LSP_DEBUG=1` を付けて crit を起動すると、crit と言語サーバーのやり取りがログに出ます。daemon は環境変数を引き継ぐので、すでに動いているレビューは再起動してください。出力先は daemon ログ（`~/.crit/sessions/<key>.log`）です（レビュー中に `tail -f` できます。セッション終了時に crit が削除します）。内容は、通常は捨てられる各サーバーの stderr、双方向のすべての JSON-RPC フレーム（ペイロードは 1 KB で切り詰め）、リクエストごとの所要時間と結果を示す 1 行のサマリ、サーバーのライフサイクル（起動・ハンドシェイク・終了・再起動・アイドル停止）です。各行には `lsp[go]` / `lsp[typescript]` / `lsp[python]` / `lsp[terraform]` / `lsp[php]` のタグが付き、`grep 'finished in'` でリクエストごとの所要時間だけを見られます。フレームにはホバーしたファイルのソースが含まれるので、ログをそのまま公開の場に貼らないでください。
 
 ### プログラムからのコメント投稿
@@ -382,7 +387,7 @@ crit config                                    # 解決後の設定を表示（�
 | `no_update_check`      | bool     | `false`                    | 起動時に新バージョンを確認しない。                                                                                                                                                      |
 | `no_integration_check` | bool     | `false`                    | 起動時の連携設定の鮮度チェックをスキップする。                                                                                                                                          |
 | `vcs`                  | string   | 自動検出                   | 使用する VCS バックエンド: `"git"`、`"sl"`、`"jj"`。設定した場合、自動検出の代わりにこれを使います。指定した VCS が利用できない場合は git にフォールバックします。`--vcs` CLI フラグでも指定でき、フラグが設定より優先されます。 |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Go・TypeScript / JavaScript・Python・Terraform・PHP ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。各言語のサーバー（`gopls`、`typescript-language-server`、`pyright-langserver`、`terraform-ls`、`intelephense`）が PATH にある場合に言語ごとに有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Go・TypeScript / JavaScript・Python・Terraform・PHP・Dart ファイル向けの言語サーバー機能（ホバー・定義ジャンプ・参照検索）。各言語のサーバー（`gopls`、`typescript-language-server`、`pyright-langserver`、`terraform-ls`、`intelephense`、`dart`）が PATH にある場合に言語ごとに有効になります。[diff 内のコードインテリジェンス](#lsp-fork-only) を参照。 |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** 範囲 / PR レビューを対象 SHA 時点で解決するために LSP がチェックアウトする、スパースな git worktree のサイズ上限（MB）。推定サイズがこれを超えるコミットはチェックアウトせずスキップされます（そのレビューでは LSP が無効のままになります）。 |
 | `live_cookie`          | string   | `""`                       | ライブモードで上流アプリへ転送する Cookie ヘッダの値（例: `"_crit_key=..."`）。グローバル / プロジェクトどちらでも可。秘密情報は `live_cookie_file` を推奨。                            |
 | `live_cookie_file`     | string   | `""`                       | ライブモード用の上流 Cookie を記載したファイルのパス（生のヘッダ行、または Netscape 形式の cookie jar）。グローバル / プロジェクトどちらでも可。相対パスはリポジトリルートから解決されます。 |
