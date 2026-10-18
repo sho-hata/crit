@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -535,6 +536,64 @@ func TestManagerNoResultIsAnEmptyResult(t *testing.T) {
 			refs, err := m.References(file, 0, 0)
 			if (err != nil) != tc.wantErr || len(refs) != 0 {
 				t.Errorf("References = %v, %v; want none, error %v", refs, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A ContentModified reply means the server dropped an answer it judged stale.
+// The manager re-syncs the document and asks again, a bounded number of times;
+// past that the error surfaces.
+func TestManagerRetriesContentModified(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		failures int
+		wantErr  bool
+	}{
+		{"once", 1, false},
+		{"up to the retry budget", len(contentModifiedBackoff), false},
+		{"beyond the retry budget", len(contentModifiedBackoff) + 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var file string
+			var hovers atomic.Int32
+			m, h := newManagerHarness(t, func(method string, params json.RawMessage) any {
+				if method != "textDocument/hover" {
+					return nil
+				}
+				if int(hovers.Add(1)) > tc.failures {
+					return hoverOK(method, params)
+				}
+				// The edit that made the server bail: the retry must send it.
+				_ = os.WriteFile(file, []byte("package main\n\nfunc F() {}\n"), 0o644)
+				return &ResponseError{Code: contentModifiedCode, Message: "content modified"}
+			})
+			file = writeGoFile(t, m.root, "main.go", "package main\n")
+
+			hover, err := m.Hover(file, 0, 0)
+			if tc.wantErr {
+				var respErr *ResponseError
+				if !errors.As(err, &respErr) || respErr.Code != contentModifiedCode {
+					t.Fatalf("Hover = %q, %v; want the ContentModified error", hover, err)
+				}
+			} else if err != nil || hover != "doc" {
+				t.Fatalf("Hover = %q, %v; want \"doc\"", hover, err)
+			}
+			if got, want := int(hovers.Load()), min(tc.failures, len(contentModifiedBackoff))+1; got != want {
+				t.Errorf("hover requests = %d, want %d", got, want)
+			}
+			changes := 0
+			for _, method := range h.server(0).notificationMethods() {
+				if method == "textDocument/didChange" {
+					changes++
+				}
+			}
+			if changes != 1 {
+				t.Errorf("didChange = %d, want 1 (the retry re-syncs the edited file)", changes)
 			}
 		})
 	}

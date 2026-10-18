@@ -122,6 +122,14 @@ func (m *Manager) References(absPath string, line, character int) ([]Location, e
 // view is built. On a large module this can take a few seconds.
 const warmupTimeout = 15 * time.Second
 
+// contentModifiedCode is LSP's ContentModified: the server's state changed
+// under the request, so it dropped an answer that would have been stale. The
+// spec leaves the retry to the client; contentModifiedBackoff bounds it to a
+// couple of quick tries.
+const contentModifiedCode = -32801
+
+var contentModifiedBackoff = []time.Duration{40 * time.Millisecond, 120 * time.Millisecond}
+
 // withClient runs fn against a live, file-synced client for absPath's
 // language. Only srv.mu is held across the spawn, the request, and the
 // warm-up retries — never m.mu — so a slow cold start for one language cannot
@@ -137,6 +145,7 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 
 	deadline := time.Now().Add(warmupTimeout)
 	restarted := false
+	modified := 0
 	for {
 		if err := m.ensureClient(srv, lang, absPath); err != nil {
 			return err
@@ -164,15 +173,31 @@ func (m *Manager) withClient(absPath string, fn func(*Client) error) error {
 			debugf(debugEnabled(), lang.Name, "nothing at this position: %v", reqErr)
 			return nil
 		}
-		// "no views" means gopls's workspace view isn't built yet — transient
-		// during startup, so retry briefly instead of surfacing an error.
-		if strings.Contains(reqErr.Error(), "no views") && time.Now().Before(deadline) {
-			debugf(debugEnabled(), lang.Name, "workspace not ready (no views), retrying")
-			time.Sleep(200 * time.Millisecond)
-			continue
+		if wait, ok := retryDelay(lang, reqErr, &modified, deadline); ok {
+			time.Sleep(wait)
+			continue // syncFile re-reads the document before the retry
 		}
 		return reqErr
 	}
+}
+
+// retryDelay reports whether withClient should ask again after reqErr, and
+// how long to wait first. modified counts the ContentModified retries spent.
+func retryDelay(lang *Language, reqErr error, modified *int, deadline time.Time) (time.Duration, bool) {
+	var respErr *ResponseError
+	if errors.As(reqErr, &respErr) && respErr.Code == contentModifiedCode && *modified < len(contentModifiedBackoff) {
+		debugf(debugEnabled(), lang.Name, "content modified during the request, retrying")
+		wait := contentModifiedBackoff[*modified]
+		*modified++
+		return wait, true
+	}
+	// "no views" means gopls's workspace view isn't built yet — transient
+	// during startup, so retry briefly instead of surfacing an error.
+	if strings.Contains(reqErr.Error(), "no views") && time.Now().Before(deadline) {
+		debugf(debugEnabled(), lang.Name, "workspace not ready (no views), retrying")
+		return 200 * time.Millisecond, true
+	}
+	return 0, false
 }
 
 // lockServer returns lang's serverState locked, re-fetching when an idle
