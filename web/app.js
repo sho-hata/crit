@@ -339,12 +339,15 @@
   let autoViewedPatterns = [];  // config auto_viewed_patterns; applied once per launch (issue #658)
   let defaultMarkdownView = '';  // config default_markdown_view; 'document' inits markdown to document view in git mode (issue #926)
 
-  // Initial viewMode for a file. File mode always opens document view.
+  // Initial viewMode for a file. File mode always opens document view, or the
+  // rendered view for a file a pluggable renderer claims (*.mmd -> Diagram).
   // In git mode only files with a Document/Diff toggle (markdown) honor the
   // default_markdown_view config; everything else stays diff. Anything other
   // than 'document' (unset, empty, 'diff') keeps the historical default.
-  function initialViewMode(fileType) {
-    if (session.mode !== 'git') return 'document';
+  function initialViewMode(fileType, path) {
+    if (session.mode !== 'git') {
+      return fileType === 'code' && window.crit.renderers.forFile(path) ? 'rendered' : 'document';
+    }
     if (fileType === 'markdown' && defaultMarkdownView === 'document') return 'document';
     return 'diff';
   }
@@ -614,7 +617,7 @@
         previousLineBlocks: null,
         tocItems: [],
         collapsed: false,
-        viewMode: initialViewMode(fi.file_type),
+        viewMode: initialViewMode(fi.file_type, fi.path),
         additions: fi.additions || 0,
         deletions: fi.deletions || 0,
         lazy: true,
@@ -717,7 +720,7 @@
       tocItems: [],
       collapsed: fi.status === 'deleted' || fi.generated === true ||
         (fi.status === 'renamed' && !fi.additions && !fi.deletions),
-      viewMode: initialViewMode(fi.file_type),
+      viewMode: initialViewMode(fi.file_type, fi.path),
       additions: fi.additions || 0,
       deletions: fi.deletions || 0,
       lazy: false,
@@ -741,8 +744,31 @@
         f.previousLineBlocks = buildMarkdown(previous, f.previousContent).blocks;
       }
     }
+    const fileRenderer = fileRendererFor(f);
+    if (fileRenderer) f.lineBlocks = renderedFileBlocks(f, fileRenderer);
 
     return f;
+  }
+
+  // Pluggable file renderer (issue #989) claiming this code file, or null.
+  // A deleted file has nothing to render; it keeps the deleted-file diff.
+  function fileRendererFor(file) {
+    return file && file.fileType === 'code' && !file.orphaned && file.status !== 'deleted'
+      ? window.crit.renderers.forFile(file.path)
+      : null;
+  }
+
+  // The rendered view of a file renderer's file: one block spanning the whole
+  // file, so comments on any line sit below the rendering, and the gutter
+  // comments on the whole file's lines.
+  function renderedFileBlocks(file, renderer) {
+    const content = file.content || '';
+    const lines = window.crit.renderers.lineCount(content);
+    if (!lines) return [];
+    return [{
+      startLine: 1, endLine: lines, isEmpty: false, cssClass: 'render-block',
+      html: window.crit.renderers.targetHTML(renderer.name, 'file', content, { startLine: 1, endLine: lines }),
+    }];
   }
 
   // Git mode only: can this markdown file show the Rendered (Before/After)
@@ -839,6 +865,7 @@
     if (pierreView && pierreViewActive()) {
       // Header is rebuilt by the item update (checkbox state included).
       pierreView.setCollapsed(file, file.viewed ? true : file.collapsed);
+      critFind.filesChanged();
       return;
     }
     // Update the checkbox in the file header
@@ -901,6 +928,7 @@
   // ===== Init =====
   async function init() {
     watchCodeBlocks();
+    installRenderAnchorComments();
     initTheme();
     initWidth();
     // Code font is a pure CSS-variable override; no mode-specific work here,
@@ -1189,7 +1217,7 @@
   function fencesIn(tokens) {
     return tokens.filter(function(t) { return t.type === 'fence'; }).map(function(t) {
       return { code: t.content, lang: t.info.trim().split(/\s+/)[0] };
-    }).filter(function(f) { return f.lang && f.lang !== 'mermaid'; });
+    }).filter(function(f) { return f.lang && !window.crit.renderers.forFence(f.lang); });
   }
 
   // Heading slugs are assigned while rendering, so the counter resets here,
@@ -1285,6 +1313,16 @@
   // ===== File Tree Sidebar =====
   let activeTreePath = null;
   let ignoreTreeObserverUntil = 0;
+  // A jump that centers a line (find, comment navigation) leaves another file
+  // at the top of the list, and the scroll can keep settling after the
+  // ignore window on a slow machine. Keep the target active while it is on
+  // screen; the pin holds for the first 2s while the list is still moving.
+  let treePin = null; // { path, until }
+  function pinTreeActive(path) {
+    treePin = { path: path, until: Date.now() + 2000 };
+    ignoreTreeObserverUntil = Date.now() + 400;
+    updateTreeActive(path);
+  }
   const treeFolderState = {}; // { 'src': true, 'src/components': false } — true = collapsed
 
   function buildFileTree(fileList) {
@@ -1363,6 +1401,7 @@
         const anyExpanded = files.some(function(f) { return !f.collapsed; });
         if (pierreViewActive() && pierreView) {
           pierreView.setAllCollapsed(files, anyExpanded);
+          critFind.filesChanged();
         } else {
           for (let i = 0; i < files.length; i++) {
             files[i].collapsed = anyExpanded;
@@ -1568,6 +1607,8 @@
   }
 
   function updateTreeActive(filePath) {
+    // Anything else that moves the active file (j/k, a click) ends the pin.
+    if (treePin && treePin.path !== filePath) treePin = null;
     if (filePath === activeTreePath) return;
     activeTreePath = filePath;
     const allRows = document.querySelectorAll('.tree-file, .tree-conversation-row');
@@ -1714,6 +1755,7 @@
   }
 
   function pierreIsDocumentView(file) {
+    if (file.viewMode === 'rendered') return !!fileRendererFor(file);
     return file.fileType === 'markdown' && (file.viewMode === 'document' || file.viewMode === 'rendered-diff');
   }
 
@@ -1723,7 +1765,7 @@
     if (file.lazy) return null;
     if (file.orphaned) return 'This file is no longer part of the review.';
     const noHunks = !file.diffHunks || file.diffHunks.length === 0;
-    if (file.viewMode === 'document' || file.viewMode === 'rendered-diff' || !noHunks) return null;
+    if (file.viewMode === 'document' || file.viewMode === 'rendered-diff' || file.viewMode === 'rendered' || !noHunks) return null;
     if (file.status === 'deleted') return 'This file was deleted.';
     if (file.status === 'renamed') return 'File renamed without changes.';
     return null;
@@ -1926,7 +1968,7 @@
     const body = section.querySelector(':scope > .file-body');
     populateDocumentBody(body, file);
     highlightQuotesInSection(section, file);
-    if (section.isConnected) renderMermaidBlocks();
+    if (section.isConnected) renderPluggableBlocks();
   }
 
   function buildPierreThread(filePath, commentId) {
@@ -2003,6 +2045,7 @@
     function toggle() {
       const refocus = document.activeElement === chevron;
       pierreView.setCollapsed(file, !file.collapsed);
+      critFind.filesChanged();
       header.classList.toggle('collapsed', !!file.collapsed);
       chevron.setAttribute('aria-expanded', String(!file.collapsed));
       if (refocus) keepChevronFocus(filePath);
@@ -2160,6 +2203,7 @@
     if (pierreUnsubscribeTree) pierreUnsubscribeTree();
     let treeSyncQueued = false;
     pierreUnsubscribeTree = pierreView.viewer.subscribeToScroll(function() {
+      critFind.rowsChanged();
       if (treeSyncQueued) return;
       treeSyncQueued = true;
       requestAnimationFrame(function() { treeSyncQueued = false; syncTreeActiveFromPierre(); });
@@ -2376,8 +2420,11 @@
       const comment = (file.comments || []).find(function(c) { return c.id === commentId; });
       const inDocument = pierreIsDocumentView(file) && comment && comment.scope !== 'file';
       const anchored = comment && comment.scope !== 'file' && !inDocument && pierreAnchorTest(file)(comment);
-      ignoreTreeObserverUntil = Date.now() + 400;
-      updateTreeActive(filePath);
+      if (anchored) pinTreeActive(filePath);
+      else {
+        ignoreTreeObserverUntil = Date.now() + 400;
+        updateTreeActive(filePath);
+      }
       const scrolled = anchored
         ? pierreView.scrollToLine(filePath, comment.end_line, comment.side, 'center')
         : pierreView.scrollToFile(filePath);
@@ -2448,12 +2495,96 @@
     return container;
   }
 
+  // ----- Find in diff (Cmd/Ctrl+F) -----
+  // Pierre only mounts rows near the viewport, so the browser's find misses
+  // the rest. crit-find.js searches the model and jumps with Pierre's scroll
+  // API. Rows match what Pierre shows: the prepared hunks for diffs, the
+  // whole file in files mode. Collapsed (and viewed) files, rendered
+  // documents and placeholders show no code rows and are skipped.
+  // Rows are cached per file while what they are built from is unchanged,
+  // so re-searching (as lazy files land) does not rebuild every file. Hunks
+  // are compared one by one: comment and small-gap expansion splice merged
+  // hunks into the same array.
+  const pierreFindRowCache = new WeakMap();
+  function pierreFindRows(file) {
+    if (!file || file.lazy || file.orphaned || file.collapsed) return [];
+    if (pierreIsDocumentView(file) || pierrePlaceholderText(file)) return [];
+    const fileView = pierreIsFileView(file);
+    const hunks = fileView ? [] : pierrePreparedHunks(file);
+    const cached = pierreFindRowCache.get(file);
+    if (cached && cached.fileView === fileView && cached.content === file.content &&
+        cached.hunks.length === hunks.length && cached.hunks.every(function(h, i) { return h === hunks[i]; })) {
+      return cached.rows;
+    }
+    const rows = fileView ? pierreFileFindRows(file) : pierreDiffFindRows(hunks);
+    pierreFindRowCache.set(file, { fileView: fileView, content: file.content, hunks: hunks.slice(), rows: rows });
+    return rows;
+  }
+
+  function pierreFileFindRows(file) {
+    const lines = (file.content || '').split('\n');
+    return lines.map(function(text, i) { return { side: '', line: i + 1, text: text }; });
+  }
+
+  function pierreDiffFindRows(hunks) {
+    const rows = [];
+    for (let h = 0; h < hunks.length; h++) {
+      const lines = hunks[h].Lines || [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (l.Type === 'del') rows.push({ side: 'old', line: l.OldNum, text: l.Content || '' });
+        else rows.push({ side: '', line: l.NewNum, text: l.Content || '' });
+      }
+    }
+    return rows;
+  }
+
+  const critFind = window.crit.find.createFind({
+    // Story chapters are Pierre hosts too; only the review list is searched.
+    hostSelector: '#filesContainer diffs-container',
+    // Esc from here (or the page body) closes the bar.
+    scopeSelector: '#filesContainer',
+    files: function() { return files; },
+    linesFor: pierreFindRows,
+    // With only rendered documents (a plan review) there is nothing to
+    // search; leave Cmd+F to the browser.
+    isActive: function() {
+      // The diagram overlay (z-index 500) covers the bar (300).
+      return !!pierreView && pierreViewActive() && !settingsPanelOpen &&
+        !document.querySelector('.diagram-overlay.active') &&
+        files.some(function(f) { return !f.orphaned && !pierreIsDocumentView(f) && !pierrePlaceholderText(f); });
+    },
+    isPending: function(file) { return !!file.lazy && !file.collapsed; },
+    // Start from the file at the top of the list, like the browser's find
+    // starts from the viewport.
+    startFile: function() {
+      const viewer = pierreView && pierreView.viewer;
+      const paths = pierreView ? pierreView.renderedPaths() : [];
+      if (!viewer || paths.length === 0) return null;
+      const top = viewer.getScrollTop();
+      let topPath = paths[0];
+      for (let i = 0; i < paths.length; i++) {
+        if (viewer.getTopForItem(paths[i]) <= top + 60) topPath = paths[i];
+      }
+      return topPath;
+    },
+    load: function(path) { return pierreView ? pierreView.ensureLoaded(path) : null; },
+    reveal: function(match, isCurrent) {
+      if (!pierreView) return null;
+      return pierreView.ensureLoaded(match.path).then(function() {
+        if (!pierreView || !isCurrent()) return null;
+        pinTreeActive(match.path);
+        return pierreView.scrollToLine(match.path, match.line, match.side, 'center');
+      });
+    },
+  });
+
   // ----- Quote highlights inside Pierre (CSS Custom Highlight API) -----
   // Comments created from a text selection carry `quote` (+ quote_offset).
   // Pierre owns the code DOM (shadow roots, virtualized), so instead of
   // wrapping text in <mark> we register Ranges with CSS.highlights; the
   // ::highlight(crit-quote) rule is injected into Pierre via unsafeCSS.
-  const PIERRE_UNSAFE_CSS = window.crit.pierreDOM.unsafeCSS;
+  const PIERRE_UNSAFE_CSS = window.crit.pierreDOM.unsafeCSS + window.crit.find.unsafeCSS;
   const pierreDecorations = window.crit.pierreDOM.createDecorations();
 
   function pierreQuotedComments(file) {
@@ -2520,12 +2651,15 @@
   function onPierrePostRender(filePath, node, phase) {
     const host = window.crit.pierreDOM.hostFor(node);
     if (!host) return;
+    critFind.rowsChanged();
     if (phase === 'unmount') { pierreDecorations.unmount(host); return; }
     host.toggleAttribute('data-crit-file-view', session.mode === 'files' && pierreIsFileView(getFileByPath(filePath)));
     pierreDecorations.mount(host, filePath, pierreQuotedComments(getFileByPath(filePath)));
     if (host.querySelector('.pierre-document')) {
       if (pierreStaleDocuments.has(filePath)) refreshPierreDocument(filePath);
-      if (host.querySelector('.pierre-document code.language-mermaid')) renderMermaidBlocks();
+      // Render new targets, and re-render ones Pierre kept detached while
+      // the theme changed (they remount in the old theme otherwise).
+      if (window.crit.renderers.needsRender(host)) renderPluggableBlocks();
     }
   }
 
@@ -2600,12 +2734,28 @@
     pierreSelectionShown = false;
   }
 
+  function pinnedOnScreen(paths, viewer, top) {
+    if (Date.now() < treePin.until) return true;
+    const i = paths.indexOf(treePin.path);
+    if (i < 0) return false;
+    const root = document.getElementById('filesContainer');
+    const bottom = top + (root ? root.clientHeight : 0);
+    const itemTop = viewer.getTopForItem(treePin.path);
+    const itemBottom = i + 1 < paths.length ? viewer.getTopForItem(paths[i + 1]) : Infinity;
+    return itemBottom > top && itemTop < bottom;
+  }
+
   function syncTreeActiveFromPierre() {
     if (Date.now() < ignoreTreeObserverUntil) return;
     const paths = pierreView ? pierreView.renderedPaths() : [];
     const viewer = pierreView && pierreView.viewer;
     if (!viewer || paths.length === 0) return;
     const top = viewer.getScrollTop();
+    if (treePin && pinnedOnScreen(paths, viewer, top)) {
+      updateTreeActive(treePin.path);
+      return;
+    }
+    treePin = null;
     // Above the first file sits the review conversation (the list header).
     const conversation = document.getElementById('reviewConversation');
     let best = conversation && !conversation.hidden && top + 60 < viewer.getTopForItem(paths[0])
@@ -2657,6 +2807,7 @@
     files.forEach(function(f) { if (pierreIsDocumentView(f)) refreshPierreDocument(f.path); });
     rebuildNavList();
     applyHideResolved();
+    critFind.filesChanged();
   }
 
   // Re-publish one file after a comment/form change. Thread cards are
@@ -2669,6 +2820,7 @@
     for (let i = 0; i < file.comments.length; i++) keys.push(pierreThreadKey(file.comments[i].id));
     keys.push('outdated:' + filePath, 'placeholder:' + filePath);
     pierreView.refreshFile(file, keys);
+    critFind.filesChanged();
     // The document keeps its element; its contents (line comments, forms,
     // typed text via saveOpenFormContent) are rebuilt in place.
     refreshPierreDocument(filePath);
@@ -3158,6 +3310,37 @@
         });
         header.appendChild(changeNav);
       }
+    }
+
+    // <label> / Source toggle for a file a pluggable renderer claims. Source
+    // is the file's usual view: the diff in git mode, the file in files mode.
+    const fileRenderer = fileRendererFor(file);
+    if (fileRenderer) {
+      const sourceMode = session.mode === 'git' ? 'diff' : 'document';
+      const toggle = document.createElement('div');
+      toggle.className = 'file-header-toggle';
+      toggle.setAttribute('role', 'group');
+      toggle.setAttribute('aria-label', 'View for ' + file.path);
+      const toggleBtn = function(mode, label) {
+        const on = file.viewMode === mode;
+        return '<button type="button" class="toggle-btn' + (on ? ' active' : '') + '" data-mode="' + mode +
+          '" aria-pressed="' + on + '">' + escapeHtml(label) + '</button>';
+      };
+      toggle.innerHTML = toggleBtn('rendered', fileRenderer.label) + toggleBtn(sourceMode, 'Source');
+      toggle.addEventListener('click', function(e) {
+        const btn = e.target.closest('.toggle-btn');
+        if (!btn) return;
+        e.preventDefault();
+        if (btn.dataset.mode === file.viewMode) return;
+        getFormsForFile(file.path).forEach(function(f) { removeForm(f.formKey); });
+        if (activeFilePath === file.path) {
+          selectionStart = null;
+          selectionEnd = null;
+        }
+        file.viewMode = btn.dataset.mode;
+        renderFileByPath(file.path);
+      });
+      header.appendChild(toggle);
     }
 
     // File comment button — not for orphaned files (no point adding comments to removed files)
@@ -7040,10 +7223,16 @@
           if (prev) {
             const contentChanged = prev.fileHash && files[fi].fileHash && prev.fileHash !== files[fi].fileHash;
             // Rendered needs base content; a loaded file without it falls
-            // back to Document. Lazy files are checked once they load.
-            files[fi].viewMode = prev.viewMode === 'rendered-diff' && !files[fi].lazy && !hasRenderedDiff(files[fi])
-              ? 'document'
-              : prev.viewMode;
+            // back to Document. Lazy files are checked once they load. A
+            // renderer's view needs a renderer that still applies (the file
+            // may have been deleted); without one the mode default applies.
+            if (prev.viewMode === 'rendered-diff' && !files[fi].lazy && !hasRenderedDiff(files[fi])) {
+              files[fi].viewMode = 'document';
+            } else if (prev.viewMode === 'rendered' && !fileRendererFor(files[fi])) {
+              files[fi].viewMode = session.mode === 'git' ? 'diff' : 'document';
+            } else {
+              files[fi].viewMode = prev.viewMode;
+            }
             // Lazy files must stay collapsed — they have no content to render
             if (!files[fi].lazy && !contentChanged) files[fi].collapsed = prev.collapsed;
             if (prev.viewed && !contentChanged) files[fi].viewed = true;
@@ -7125,16 +7314,21 @@
         } catch {}
         // Save form drafts and focused element before re-render
         let focusedFormKey = null;
+        let focusedReplyCommentId = null;
         let focusedSelStart = 0;
         let focusedSelEnd = 0;
         const activeEl = document.activeElement;
         if (activeEl && activeEl.tagName === 'TEXTAREA') {
           const formEl = activeEl.closest('.comment-form');
+          // A reply draft lives in .reply-form, outside any .comment-form, so it is keyed by its comment card.
+          const replyCard = activeEl.classList.contains('reply-textarea') ? activeEl.closest('.comment-card') : null;
           if (formEl) {
             focusedFormKey = formEl.dataset.formKey;
-            focusedSelStart = activeEl.selectionStart;
-            focusedSelEnd = activeEl.selectionEnd;
+          } else if (replyCard && replyCard.dataset.commentId) {
+            focusedReplyCommentId = replyCard.dataset.commentId;
           }
+          focusedSelStart = activeEl.selectionStart;
+          focusedSelEnd = activeEl.selectionEnd;
         }
         for (let i = 0; i < files.length; i++) {
           checkAgentReplies(files[i].comments);
@@ -7156,14 +7350,18 @@
         updateCommentCount();
         updateTreeCommentBadges();
         renderCommentsPanel();
-        // Restore focus
+        // Restore focus. Without it, keys typed after the re-render land on the page and fire
+        // single-key shortcuts (d deletes a comment, Shift+F finishes the review).
+        let focusTarget = null;
         if (focusedFormKey) {
-          const ta = document.querySelector('.comment-form[data-form-key="' + focusedFormKey + '"] textarea');
-          if (ta) {
-            ta.focus();
-            ta.selectionStart = focusedSelStart;
-            ta.selectionEnd = focusedSelEnd;
-          }
+          focusTarget = document.querySelector('.comment-form[data-form-key="' + focusedFormKey + '"] textarea');
+        } else if (focusedReplyCommentId) {
+          focusTarget = document.querySelector('.comment-card[data-comment-id="' + focusedReplyCommentId + '"] .reply-textarea');
+        }
+        if (focusTarget) {
+          focusTarget.focus();
+          focusTarget.selectionStart = focusedSelStart;
+          focusTarget.selectionEnd = focusedSelEnd;
         }
       } catch (err) {
         console.error('Error handling comments-changed:', err);
@@ -7422,30 +7620,6 @@
     }).catch(function() { return; });
   });
 
-  // ===== Mermaid =====
-  function getMermaidTheme() {
-    const dataTheme = document.documentElement.getAttribute('data-theme');
-    if (dataTheme === 'light') return 'default';
-    if (dataTheme === 'dark') return 'dark';
-    // System theme: check prefers-color-scheme
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'default' : 'dark';
-  }
-
-  function mermaidOptions() {
-    // securityLevel 'strict' (mermaid's default, pinned here) sanitizes
-    // diagram labels: the source comes from the reviewed file.
-    if (!document.documentElement.dataset.critPalette) return { startOnLoad: false, securityLevel: 'strict', theme: getMermaidTheme() };
-    const css = getComputedStyle(document.documentElement);
-    const role = function(name) { return css.getPropertyValue('--crit-palette-' + name).trim(); };
-    return { startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: {
-      darkMode: getMermaidTheme() === 'dark', background: role('bg'),
-      primaryColor: role('surface'), primaryTextColor: role('fg'), primaryBorderColor: role('border'),
-      secondaryColor: role('elevated'), tertiaryColor: role('bg'), lineColor: role('muted'),
-      textColor: role('fg'), mainBkg: role('surface'), nodeBorder: role('border'),
-      edgeLabelBackground: role('bg'), fontFamily: css.getPropertyValue('--crit-font-body').trim(),
-    } };
-  }
-
   // Fenced code outside rendered documents (comment cards, replies, the
   // comments panel, PR description, story text) renders plain and is
   // highlighted once its grammar has loaded. One observer covers every place
@@ -7464,309 +7638,33 @@
     }).observe(document.body, { childList: true, subtree: true });
   }
 
-  function renderMermaidBlocks() {
-    // Any document rebuild invalidates the detached overlay clone (and its
-    // theme) — close the overlay rather than show a stale diagram.
-    closeMermaidOverlay();
-    if (typeof mermaid === 'undefined') return;
-    mermaid.initialize(mermaidOptions());
-    const codes = document.querySelectorAll('code.language-mermaid');
-    codes.forEach(function(code) {
-      const pre = code.parentElement;
-      if (!pre || pre.tagName !== 'PRE') return;
-      const container = document.createElement('div');
-      container.className = 'mermaid';
-      container.textContent = code.textContent;
-      pre.replaceWith(container);
-    });
-    try { mermaid.run(); } catch {}
-    decorateMermaidBlocks();
-  }
-
-  // ===== Mermaid fullscreen overlay (GitHub-style pan/zoom) =====
-  // Expand button on each rendered diagram opens #mermaidOverlay with a
-  // detached SVG clone. Pan via drag, zoom via wheel / pinch / buttons.
-  // Pure CSS transform — no new dependencies. The clone is detached, so
-  // inline re-renders never disturb the overlay; a theme change closes it
-  // because the clone keeps the old theme's colors.
-  const mermaidOverlayState = {
-    open: false,
-    trigger: null,
-    scale: 1,
-    x: 0,
-    y: 0,
-    installed: false
-  };
-  const MERMAID_ZOOM_MIN = 0.1;
-  const MERMAID_ZOOM_MAX = 8;
-
-  function mermaidOverlayNodes() {
-    return {
-      overlay: document.getElementById('mermaidOverlay'),
-      viewport: document.getElementById('mermaidOverlayViewport'),
-      canvas: document.getElementById('mermaidOverlayCanvas'),
-      label: document.getElementById('mermaidZoomLabel'),
-      closeBtn: document.getElementById('mermaidOverlayClose'),
-      zoomIn: document.getElementById('mermaidZoomIn'),
-      zoomOut: document.getElementById('mermaidZoomOut'),
-      zoomReset: document.getElementById('mermaidZoomReset')
-    };
-  }
-
-  function mermaidOverlayApply() {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.canvas) return;
-    nodes.canvas.style.transform = 'translate(' + mermaidOverlayState.x + 'px, ' + mermaidOverlayState.y + 'px) scale(' + mermaidOverlayState.scale + ')';
-    if (nodes.label) nodes.label.textContent = Math.round(mermaidOverlayState.scale * 100) + '%';
-  }
-
-  function mermaidOverlayZoomAt(factor, clientX, clientY) {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.viewport) return;
-    const rect = nodes.viewport.getBoundingClientRect();
-    const px = clientX - rect.left;
-    const py = clientY - rect.top;
-    const next = Math.min(MERMAID_ZOOM_MAX, Math.max(MERMAID_ZOOM_MIN, mermaidOverlayState.scale * factor));
-    if (next === mermaidOverlayState.scale) return;
-    const ratio = next / mermaidOverlayState.scale;
-    mermaidOverlayState.x = px - (px - mermaidOverlayState.x) * ratio;
-    mermaidOverlayState.y = py - (py - mermaidOverlayState.y) * ratio;
-    mermaidOverlayState.scale = next;
-    mermaidOverlayApply();
-  }
-
-  function mermaidOverlayZoomCenter(factor) {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.viewport) return;
-    const rect = nodes.viewport.getBoundingClientRect();
-    mermaidOverlayZoomAt(factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
-  }
-
-  // Fit the cloned SVG into the viewport (capped so tiny diagrams don't blow up).
-  function mermaidOverlayFit() {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.viewport || !nodes.canvas) return;
-    const svg = nodes.canvas.querySelector('svg');
-    mermaidOverlayState.scale = 1;
-    mermaidOverlayState.x = 0;
-    mermaidOverlayState.y = 0;
-    if (svg) {
-      let w = 0;
-      let h = 0;
-      const vb = svg.getAttribute('viewBox');
-      if (vb) {
-        const parts = vb.trim().split(/[\s,]+/);
-        w = parseFloat(parts[2]);
-        h = parseFloat(parts[3]);
-      }
-      if (!(w > 0) || !(h > 0)) {
-        const r = svg.getBoundingClientRect();
-        w = r.width;
-        h = r.height;
-      }
-      if (w > 0 && h > 0) {
-        const vw = nodes.viewport.clientWidth - 48;
-        const vh = nodes.viewport.clientHeight - 48;
-        if (vw > 0 && vh > 0) {
-          mermaidOverlayState.scale = Math.min(vw / w, vh / h, 2);
-          mermaidOverlayState.x = (nodes.viewport.clientWidth - w * mermaidOverlayState.scale) / 2;
-          mermaidOverlayState.y = (nodes.viewport.clientHeight - h * mermaidOverlayState.scale) / 2;
-        }
-      }
-    }
-    mermaidOverlayApply();
-  }
-
-  function openMermaidOverlay(sourceSvg, trigger) {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.overlay || !sourceSvg || !nodes.canvas) return;
-    nodes.canvas.innerHTML = '';
-    const clone = sourceSvg.cloneNode(true);
-    // Mermaid emits width="100%" + a max-width cap. Inside the overlay the
-    // canvas sizes to content (width: max-content), which makes a percentage
-    // width resolve circularly and the diagram collapse. Pin the clone to its
-    // natural size so fit/center math holds. Prefer the viewBox; fall back to
-    // the live source rect (the clone itself may already be collapsed).
-    let natW = 0;
-    let natH = 0;
-    const vb = clone.getAttribute('viewBox');
-    if (vb) {
-      const parts = vb.trim().split(/[\s,]+/);
-      natW = parseFloat(parts[2]);
-      natH = parseFloat(parts[3]);
-    }
-    if (!(natW > 0) || !(natH > 0)) {
-      const srcRect = sourceSvg.getBoundingClientRect();
-      natW = srcRect.width;
-      natH = srcRect.height;
-    }
-    if (natW > 0 && natH > 0) {
-      clone.setAttribute('width', String(natW));
-      clone.setAttribute('height', String(natH));
-      if (clone.style) clone.style.removeProperty('max-width');
-    }
-    nodes.canvas.appendChild(clone);
-    mermaidOverlayState.open = true;
-    mermaidOverlayState.trigger = trigger || null;
-    installMermaidOverlay();
-    nodes.overlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
-    mermaidOverlayFit();
-    if (nodes.closeBtn && nodes.closeBtn.focus) nodes.closeBtn.focus();
-  }
-
-  function closeMermaidOverlay() {
-    const nodes = mermaidOverlayNodes();
-    if (!mermaidOverlayState.open) return;
-    mermaidOverlayState.open = false;
-    if (nodes.overlay) nodes.overlay.classList.remove('active');
-    if (nodes.canvas) nodes.canvas.innerHTML = '';
-    document.body.style.overflow = '';
-    const trigger = mermaidOverlayState.trigger;
-    mermaidOverlayState.trigger = null;
-    // The trigger stays rendered (transparent until hover/focus), so focus()
-    // lands even outside hover — e.g. the keyboard flow.
-    if (trigger && document.contains(trigger) && trigger.focus) trigger.focus();
-  }
-
-  function mermaidOverlayTrapTab(e) {
-    if (e.key !== 'Tab') return;
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.overlay) return;
-    const focusables = nodes.overlay.querySelectorAll('button:not([disabled])');
-    if (!focusables || focusables.length === 0) return;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
-  // One-pointer drag pans; two-pointer pinch zooms. Installed once — the
-  // overlay shell lives in index.html and survives document re-renders.
-  function installMermaidOverlay() {
-    if (mermaidOverlayState.installed) return;
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.overlay || !nodes.viewport) return;
-    mermaidOverlayState.installed = true;
-
-    const activePointers = new Map();
-    let panAnchor = null;
-    let pinchStart = 0;
-    let pinchScale = 1;
-
-    // Re-anchor the pinch baseline on every pointer-count change so adding
-    // or lifting a finger mid-gesture never causes a zoom jump.
-    function capturePinchBaseline() {
-      const pts = Array.from(activePointers.values());
-      if (pts.length < 2) return;
-      pinchStart = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      pinchScale = mermaidOverlayState.scale;
-    }
-
-    if (nodes.zoomIn) nodes.zoomIn.addEventListener('click', function () { mermaidOverlayZoomCenter(1.25); });
-    if (nodes.zoomOut) nodes.zoomOut.addEventListener('click', function () { mermaidOverlayZoomCenter(1 / 1.25); });
-    if (nodes.zoomReset) nodes.zoomReset.addEventListener('click', function () { mermaidOverlayFit(); });
-    if (nodes.closeBtn) nodes.closeBtn.addEventListener('click', function () { closeMermaidOverlay(); });
-    nodes.overlay.addEventListener('click', function (e) {
-      if (e.target === nodes.overlay) closeMermaidOverlay();
-    });
-    nodes.overlay.addEventListener('keydown', mermaidOverlayTrapTab);
-    document.addEventListener('keydown', function (e) {
-      // Note: no defaultPrevented check — the app-wide keymap (below)
-      // unconditionally preventDefaults Escape, so honoring it would break
-      // Esc-to-close entirely. Esc dismissing both the overlay and any
-      // background form matches the existing "cancel whatever" convention.
-      if (e.key !== 'Escape') return;
-      if (mermaidOverlayState.open) {
-        e.preventDefault();
-        closeMermaidOverlay();
-      }
-    });
-
-    nodes.viewport.addEventListener('wheel', function (e) {
-      if (!mermaidOverlayState.open) return;
-      e.preventDefault();
-      mermaidOverlayZoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY);
-    }, { passive: false });
-
-    nodes.viewport.addEventListener('pointerdown', function (e) {
-      if (!mermaidOverlayState.open) return;
-      try { nodes.viewport.setPointerCapture(e.pointerId); } catch { /* noop */ }
-      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (activePointers.size === 1) {
-        panAnchor = { x: e.clientX - mermaidOverlayState.x, y: e.clientY - mermaidOverlayState.y };
-        nodes.viewport.classList.add('panning');
-      } else {
-        panAnchor = null;
-        capturePinchBaseline();
-      }
-    });
-    nodes.viewport.addEventListener('pointermove', function (e) {
-      if (!activePointers.has(e.pointerId)) return;
-      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (activePointers.size === 2) {
-        const pts = Array.from(activePointers.values());
-        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        if (pinchStart > 0 && dist > 0) {
-          const midX = (pts[0].x + pts[1].x) / 2;
-          const midY = (pts[0].y + pts[1].y) / 2;
-          // Zoom relative to the scale captured when the second pointer
-          // landed, anchored at the gesture midpoint.
-          const rel = (pinchScale * dist / pinchStart) / mermaidOverlayState.scale;
-          mermaidOverlayZoomAt(rel, midX, midY);
-        }
-        return;
-      }
-      if (panAnchor) {
-        mermaidOverlayState.x = e.clientX - panAnchor.x;
-        mermaidOverlayState.y = e.clientY - panAnchor.y;
-        mermaidOverlayApply();
-      }
-    });
-    function endMermaidPointer(e) {
-      activePointers.delete(e.pointerId);
-      if (activePointers.size === 1) {
-        const remaining = Array.from(activePointers.values())[0];
-        panAnchor = { x: remaining.x - mermaidOverlayState.x, y: remaining.y - mermaidOverlayState.y };
-      } else if (activePointers.size >= 2) {
-        capturePinchBaseline();
-      } else {
-        panAnchor = null;
-        nodes.viewport.classList.remove('panning');
-      }
-    }
-    nodes.viewport.addEventListener('pointerup', endMermaidPointer);
-    nodes.viewport.addEventListener('pointercancel', endMermaidPointer);
-  }
-
-  // Expand affordance on each rendered diagram. Idempotent — safe to run
-  // after every renderMermaidBlocks() call. The button lives on the
-  // .mermaid-block (not inside .mermaid) so mermaid re-renders never wipe
-  // it, and clicks stopPropagation so comment gestures are unaffected.
-  function decorateMermaidBlocks() {
-    installMermaidOverlay();
-    const blocks = document.querySelectorAll('.line-content.mermaid-block');
-    blocks.forEach(function (block) {
-      if (block.querySelector('.mermaid-expand')) return;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'mermaid-expand';
-      btn.setAttribute('aria-label', 'Open diagram fullscreen');
-      btn.setAttribute('title', 'Open fullscreen');
-      btn.textContent = '⛶ Expand';
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        const svg = block.querySelector('.mermaid svg');
-        if (!svg) return;
-        openMermaidOverlay(svg, btn);
+  // ===== Pluggable renderers (issue #989) =====
+  // A click on a rendered diagram part that its renderer maps to source lines
+  // opens a comment on those lines. Before-side blocks of a rendered diff are
+  // the old content, so only the current document reacts.
+  function installRenderAnchorComments() {
+    document.addEventListener('crit:render-anchor', function(e) {
+      const d = e.detail || {};
+      const lineBlock = e.target.closest('.document-wrapper .line-block');
+      if (!lineBlock || !d.path || !getFileByPath(d.path)) return;
+      openForm({
+        filePath: d.path,
+        afterBlockIndex: parseInt(lineBlock.dataset.blockIndex, 10),
+        startLine: d.startLine,
+        endLine: d.endLine,
+        editingId: null,
+        quote: d.quote || null,
+        quoteOffset: null,
       });
-      block.appendChild(btn);
     });
+  }
+
+  // Render every fence/file target a renderer claims (crit-renderers.js).
+  // Any document rebuild invalidates the detached fullscreen clone — close it
+  // rather than show a stale diagram.
+  function renderPluggableBlocks() {
+    window.crit.diagramOverlay.close();
+    window.crit.renderers.renderAll(document);
   }
 
   // ===== Theme =====
@@ -7791,13 +7689,10 @@
     if (pierreView) pierreView.setThemeType(window.crit.pierreAdapter.themeTypeFor(choice));
     if (storyActive() && window.PierreDiffs) renderStory();
 
-    // The fullscreen clone keeps the old theme's colors — close it.
-    closeMermaidOverlay();
-    // Re-initialize mermaid diagrams with updated theme
-    if (typeof mermaid !== 'undefined') {
-      mermaid.initialize(mermaidOptions());
-      try { mermaid.run(); } catch {}
-    }
+    // The fullscreen clone keeps the old theme's colors — close it, then
+    // re-render diagrams in the new theme.
+    window.crit.diagramOverlay.close();
+    window.crit.renderers.rerenderAll(document);
   };
 
   // ===== Width =====
@@ -9314,6 +9209,9 @@
       }
       case 'Escape': {
         e.preventDefault();
+        // The find bar is the top layer, unless the diagram overlay or the
+        // stack chip popover (their own Esc handlers run after this one) is.
+        if (!document.querySelector('.diagram-overlay.active') && !isStackChipOpen() && critFind.closeFromEscape(e)) break;
         if (reviewCommentFormActive) {
           if (confirmDiscardReviewCommentForm()) cancelReviewCommentForm();
         }
@@ -10815,7 +10713,7 @@
         replacement.open = section.open;
         cleanUpStoryDiffs(section);
         section.replaceWith(replacement);
-        renderMermaidBlocks();
+        renderPluggableBlocks();
         rebuildNavList();
         applyHideResolved();
         renderStoryRail();
@@ -10853,7 +10751,7 @@
     const replacement = renderStoryFileGroup(page, filePath, page.refsByFile.get(filePath), storySupportReasonForFile(page, filePath));
     cleanUpStoryDiffs(oldSection);
     oldSection.replaceWith(replacement);
-    renderMermaidBlocks();
+    renderPluggableBlocks();
     rebuildNavList();
     applyHideResolved();
     renderStoryRail();
@@ -10891,7 +10789,7 @@
       renderStoryPage(storyPageById(storyView));
     }
     renderStoryRail();
-    renderMermaidBlocks();
+    renderPluggableBlocks();
     rebuildNavList();
     applyHideResolved();
     // Keep active rail row visible. Instant: a smooth scroll here outlives the

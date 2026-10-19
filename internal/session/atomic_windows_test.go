@@ -66,3 +66,7 @@ func TestReadFileSharedMissingFileReturnsQuickly(t *testing.T) {
 		t.Errorf("took %s, want the short not-exist budget", elapsed)
 	}
 }
+
+// transientIOErr reports errors a stress test may see when ReadFileShared or
+// renameAtomic exhaust their retry budget under artificial contention.
+func transientIOErr(err error) bool { return isWindowsTransientIOErr(err) }

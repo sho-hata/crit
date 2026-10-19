@@ -2,12 +2,13 @@ package session
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sho-hata/crit/internal/testutil"
 )
 
 // mustMkdirAll ensures the parent directory of path exists, then returns path.
@@ -41,54 +42,15 @@ func init() {
 // The repo has an initial commit on the "main" branch.
 func initTestRepo(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	gitT(t, dir, "init")
-	gitT(t, dir, "config", "user.email", "test@test.com")
-	gitT(t, dir, "config", "user.name", "Test")
-	// Create initial commit
-	writeFile(t, filepath.Join(dir, "README.md"), "# Test")
-	gitT(t, dir, "add", "README.md")
-	gitT(t, dir, "commit", "-m", "initial")
-	// Ensure default branch is "main"
-	gitT(t, dir, "branch", "-M", "main")
-	return dir
+	return testutil.InitTestRepo(t)
 }
 
+// gitT runs git in dir via testutil.Git, which strips the inherited GIT_*
+// and HOME vars (git hooks set GIT_DIR / GIT_INDEX_FILE) and turns off
+// auto-maintenance.
 func gitT(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	// Strip GIT_* and HOME from the inherited env. When tests run inside a
-	// git hook (e.g. pre-commit's `go test ./...`), git sets GIT_DIR /
-	// GIT_INDEX_FILE / GIT_WORK_TREE for the hook subprocess; without this
-	// filter, every git op below would target the parent repo instead of
-	// the test's tempdir. HOME is filtered so our explicit override below
-	// is unambiguous (exec.Cmd treats duplicate env entries as platform-
-	// dependent).
-	src := os.Environ()
-	env := make([]string, 0, len(src)+4)
-	for _, kv := range src {
-		if strings.HasPrefix(kv, "GIT_") || strings.HasPrefix(kv, "HOME=") {
-			continue
-		}
-		// On Windows git also picks up USERPROFILE / HOMEDRIVE / HOMEPATH;
-		// strip them so our explicit HOME override is unambiguous.
-		if runtime.GOOS == "windows" && (strings.HasPrefix(kv, "USERPROFILE=") ||
-			strings.HasPrefix(kv, "HOMEDRIVE=") || strings.HasPrefix(kv, "HOMEPATH=")) {
-			continue
-		}
-		env = append(env, kv)
-	}
-	env = append(env, "GIT_CONFIG_NOSYSTEM=1", "HOME="+dir)
-	if runtime.GOOS == "windows" {
-		env = append(env, "USERPROFILE="+dir)
-	}
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return testutil.Git(t, dir, args...)
 }
 
 // setHome sets HOME to dir for the duration of the test. On Windows

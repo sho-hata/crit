@@ -18,7 +18,18 @@ import (
 // Avoid shelling out to `gh` during tests. Tests that want to exercise
 // display-name resolution should pre-populate userNameCache directly.
 func init() {
-	fetchGHUserName = func(login string) (string, error) { return "", nil }
+	SetFetchGHUserNameForTest(func(string) (string, error) { return "", nil })
+}
+
+func TestSetFetchGHUserNameForTestRestores(t *testing.T) {
+	restore := SetFetchGHUserNameForTest(func(login string) (string, error) { return "Name of " + login, nil })
+	if got, _ := fetchGHUserName("ada"); got != "Name of ada" {
+		t.Fatalf("swapped lookup = %q, want %q", got, "Name of ada")
+	}
+	restore()
+	if got, _ := fetchGHUserName("ada"); got != "" {
+		t.Fatalf("restored lookup = %q, want the init stub's empty name", got)
+	}
 }
 
 // outputDataRootIdentity returns the review identity folder under dataRoot,
@@ -753,9 +764,7 @@ func TestAddCommentToCritJSON_RejectsPathTraversal(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("../../../etc/passwd", 1, 1, "bad", "", "", "", inheritedScope{})
 	if err == nil {
@@ -771,9 +780,7 @@ func TestAddCommentToCritJSON_RejectsAbsolutePath(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("/etc/passwd", 1, 1, "bad", "", "", "", inheritedScope{})
 	if err == nil {
@@ -788,9 +795,7 @@ func TestAddCommentToCritJSON_CreatesNewFile(t *testing.T) {
 		t.Fatalf("git init: %v", err)
 	}
 
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("main.go", 10, 15, "Fix this bug", "", "", dir, inheritedScope{})
 	if err != nil {
@@ -829,9 +834,7 @@ func TestAddCommentToCritJSON_AppendsToExisting(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	if err := addCommentToCritJSONScoped("main.go", 1, 1, "First", "", "", dir, inheritedScope{}); err != nil {
 		t.Fatalf("first add: %v", err)
@@ -858,9 +861,7 @@ func TestAddCommentToCritJSON_MultipleFiles(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	addCommentToCritJSONScoped("main.go", 1, 1, "Comment on main", "", "", dir, inheritedScope{})
 	addCommentToCritJSONScoped("auth.go", 5, 10, "Comment on auth", "", "", dir, inheritedScope{})
@@ -882,9 +883,7 @@ func TestAddCommentToCritJSON_MultipleFiles(t *testing.T) {
 
 func TestAddCommentToCritJSON_FileMode_NoGitRepo(t *testing.T) {
 	dir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("main.go", 5, 5, "File mode comment", "", "", dir, inheritedScope{})
 	if err != nil {
@@ -914,9 +913,7 @@ func TestAddCommentToCritJSON_FileMode_NoGitRepo(t *testing.T) {
 
 func TestAddCommentToCritJSON_FileMode_PathRelativeToCWD(t *testing.T) {
 	dir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	// Path should be stored as given (relative to CWD), not resolved to anything else
 	addCommentToCritJSONScoped("src/auth.go", 10, 10, "comment", "", "", dir, inheritedScope{})
@@ -937,9 +934,7 @@ func TestAddCommentToCritJSON_OutputDir(t *testing.T) {
 	}
 	outputDir := t.TempDir() // separate from repo
 
-	origDir, _ := os.Getwd()
-	os.Chdir(repoDir)
-	defer os.Chdir(origDir)
+	t.Chdir(repoDir)
 
 	if err := addCommentToCritJSONScoped("main.go", 1, 1, "custom output dir", "", "", outputDir, inheritedScope{}); err != nil {
 		t.Fatalf("addCommentToCritJSON: %v", err)
@@ -1005,9 +1000,7 @@ func TestAddCommentToCritJSON_RespectsBaseBranchConfig(t *testing.T) {
 	// Write config declaring "base" as the base branch
 	testutil.WriteFile(t, dir+"/.crit.config.json", `{"base_branch": "base"}`)
 
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	if err := addCommentToCritJSONScoped("feature.go", 1, 1, "test comment", "", "", dir, inheritedScope{}); err != nil {
 		t.Fatalf("addCommentToCritJSON: %v", err)
@@ -1380,9 +1373,7 @@ func readCritJSON(t *testing.T, dir string) CritJSON {
 
 func TestBulkAddCommentsToCritJSON_MixedCommentsAndReplies(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n")
 
@@ -1637,9 +1628,7 @@ func TestBulkAddCommentsToCritJSON_RejectsRepliesAcrossTwoAltFiles(t *testing.T)
 
 func TestBulkAddCommentsToCritJSON_PerEntryAuthor(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main\n")
 	entries := []BulkCommentEntry{
 		{File: "main.go", Line: 1, Body: "from global author"},
@@ -1660,9 +1649,7 @@ func TestBulkAddCommentsToCritJSON_PerEntryAuthor(t *testing.T) {
 
 func TestBulkAddCommentsToCritJSON_MultipleFiles(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 	testutil.WriteFile(t, filepath.Join(dir, "a.go"), "package a\n")
 	testutil.WriteFile(t, filepath.Join(dir, "b.go"), "package b\n")
 	entries := []BulkCommentEntry{
@@ -1710,9 +1697,7 @@ func TestBuildReviewPayload_ApproveNoComments(t *testing.T) {
 
 func TestBulkAddCommentsToCritJSON_EndLineDefaultsToLine(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main\nline2\nline3\nline4\nline5\n")
 	entries := []BulkCommentEntry{
 		{File: "main.go", Line: 2, Body: "single line - no end_line"},
@@ -2180,9 +2165,7 @@ func TestAppendComment_IDIncrementsGlobally(t *testing.T) {
 
 func TestAddCommentToCritJSON_RoundTrip(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	// Add a comment via the CLI function
 	err := addCommentToCritJSONScoped("README.md", 1, 1, "fix typo", "reviewer", "", dir, inheritedScope{})
@@ -2229,9 +2212,7 @@ func TestAddCommentToCritJSON_RoundTrip(t *testing.T) {
 
 func TestAddReplyToCritJSON_RoundTrip(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	// Add a comment first
 	err := addCommentToCritJSONScoped("README.md", 1, 1, "fix this", "reviewer", "", dir, inheritedScope{})
@@ -2264,9 +2245,7 @@ func TestAddReplyToCritJSON_RoundTrip(t *testing.T) {
 
 func TestAddReplyToCritJSON_WithResolve_ViaFile(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	addCommentToCritJSONScoped("README.md", 1, 1, "fix this", "reviewer", "", dir, inheritedScope{})
 
@@ -2349,9 +2328,7 @@ func TestParsePushEvent(t *testing.T) {
 
 func TestAddFileCommentToCritJSON_RejectsAbsolutePath(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addFileCommentToCritJSONScoped("/etc/passwd", "test", "author", "", "", inheritedScope{})
 	if err == nil {
@@ -2361,9 +2338,7 @@ func TestAddFileCommentToCritJSON_RejectsAbsolutePath(t *testing.T) {
 
 func TestAddFileCommentToCritJSON_RejectsTraversal(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addFileCommentToCritJSONScoped("../outside", "test", "author", "", "", inheritedScope{})
 	if err == nil {
@@ -2373,9 +2348,7 @@ func TestAddFileCommentToCritJSON_RejectsTraversal(t *testing.T) {
 
 func TestAddReviewCommentToCritJSON_RoundTrip(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addReviewCommentToCritJSONScoped("overall the code is good", "reviewer", "", dir, inheritedScope{})
 	if err != nil {
@@ -2399,9 +2372,7 @@ func TestAddReviewCommentToCritJSON_RoundTrip(t *testing.T) {
 
 func TestClearCritJSON(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	addCommentToCritJSONScoped("README.md", 1, 1, "test", "author", "", dir, inheritedScope{})
 
@@ -2609,9 +2580,7 @@ func TestAppendReply_AmbiguousID(t *testing.T) {
 
 func TestAddCommentToCritJSON_PopulatesAnchor(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 
 	// Write a file with known content.
 	testutil.WriteFile(t, filepath.Join(dir, "hello.go"), "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n")
@@ -2644,9 +2613,7 @@ func TestAddCommentToCritJSON_PopulatesAnchor(t *testing.T) {
 
 func TestBulkAddCommentsToCritJSON_PopulatesAnchor(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 
 	testutil.WriteFile(t, filepath.Join(dir, "server.go"), "package main\n\nimport \"net/http\"\n\nfunc handler() {}\n")
 
@@ -3796,5 +3763,34 @@ func TestPRListCache_CacheHit(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Number != 1 {
 		t.Errorf("got %+v, want seeded summary", got)
+	}
+}
+
+func TestGHAPIErrorDetail(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout string
+		want   string
+	}{
+		{
+			name:   "string errors from a 422 review create",
+			stdout: `{"message":"Unprocessable Entity","errors":["Line could not be resolved"],"documentation_url":"https://docs.github.com/rest/pulls/reviews#create-a-review-for-a-pull-request","status":"422"}`,
+			want:   "Line could not be resolved",
+		},
+		{
+			name:   "object errors with message and with field+code",
+			stdout: `{"message":"Validation Failed","errors":[{"resource":"PullRequestReviewComment","message":"commit_id is not part of the pull request"},{"resource":"PullRequestReviewComment","field":"path","code":"invalid"}]}`,
+			want:   "commit_id is not part of the pull request; path invalid",
+		},
+		{name: "no errors list", stdout: `{"message":"Not Found"}`, want: ""},
+		{name: "not json", stdout: "plain text", want: ""},
+		{name: "empty", stdout: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ghAPIErrorDetail([]byte(tt.stdout)); got != tt.want {
+				t.Errorf("ghAPIErrorDetail() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

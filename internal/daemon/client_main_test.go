@@ -22,8 +22,9 @@ import (
 // review-cycle was called immediately after daemon start, got 503, and
 // allowed through on error.
 func TestRunReviewClientRaw_WaitsForReadiness(t *testing.T) {
-	t.Parallel()
-
+	oldInterval := readinessPollInterval
+	readinessPollInterval = 10 * time.Millisecond
+	t.Cleanup(func() { readinessPollInterval = oldInterval })
 	var sessionCalls atomic.Int32
 	var reviewCycleCalled atomic.Bool
 
