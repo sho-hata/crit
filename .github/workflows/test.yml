@@ -385,9 +385,9 @@ jobs:
           ALL=$(go list ./... | grep -v /node_modules/ | sort)
           # Explicit groups, not NR%3: a new package must not reshuffle every
           # shard. Shard 2 is the complement, so nothing is ever left out.
-          M=github.com/tomasz-tomczyk/crit
+          M=github.com/sho-hata/crit
           G0="^$M/internal/session\$"
-          G1="^$M/internal/(server|comment|share|live|auth|review|focus|gitlab|preview)\$"
+          G1="^$M/internal/(server|comment|live|review|focus|preview)\$"
           case "$SHARD" in
             0) PKGS=$(echo "$ALL" | grep -E "$G0") ;;
             1) PKGS=$(echo "$ALL" | grep -E "$G1") ;;

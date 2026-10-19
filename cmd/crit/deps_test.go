@@ -18,7 +18,7 @@ func TestBinaryDoesNotImportTestutil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go list -deps: %v\n%s", err, out)
 	}
-	for _, pkg := range strings.Fields(string(out)) {
+	for pkg := range strings.FieldsSeq(string(out)) {
 		if strings.HasSuffix(pkg, "/internal/testutil") {
 			t.Fatalf("cmd/crit depends on %s; move the import into a _test.go file", pkg)
 		}

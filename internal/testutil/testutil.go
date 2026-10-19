@@ -153,7 +153,7 @@ func PinGoEnvBeforeHomeChange() {
 	// GOENV=off means the go command reads no env file.
 	if goenv := os.Getenv("GOENV"); goenv != "off" {
 		data, _ := os.ReadFile(goenv)
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			if k, _, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
 				fileSet[k] = true
 			}

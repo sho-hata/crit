@@ -504,7 +504,7 @@ func TestGetFileSnapshot_RangeLazy_Deleted(t *testing.T) {
 	gitT(t, dir, "commit", "-m", "add doomed doc")
 	base := gitT(t, dir, "rev-parse", "HEAD")
 
-	for i := 0; i < lazyFileThreshold+1; i++ {
+	for i := range lazyFileThreshold + 1 {
 		writeFile(t, filepath.Join(dir, fmt.Sprintf("doc%03d.md", i)), fmt.Sprintf("# doc %d\n", i))
 	}
 	if err := os.Remove(filepath.Join(dir, lazyPath)); err != nil {
