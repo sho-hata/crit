@@ -8,7 +8,8 @@ CRIT_SRC="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 DIR=$(e2e_native_tempdir)
 BIN_DIR=$(mktemp -d)
-trap 'rm -rf "$DIR" "$BIN_DIR"' EXIT
+e2e_cleanup_install
+e2e_cleanup_add "$DIR" "$BIN_DIR"
 
 cd "$DIR"
 
@@ -146,6 +147,15 @@ defmodule MyApp.Config do
 end
 EXFILE
 
+# Mermaid file (.mmd, mermaid.js.org's recommended extension): rendered by the
+# built-in pluggable renderer with a Diagram / Source toggle.
+cat > flow.mmd << 'MMDFILE'
+flowchart TD
+  Start[Receive request] --> Auth{Authorized?}
+  Auth -->|yes| Handle[Handle request]
+  Auth -->|no| Reject[Reject]
+MMDFILE
+
 git add -A && git commit -q -m "initial commit"
 
 # Build crit binary outside the fixture dir (skip if CRIT_BIN is set)
@@ -158,4 +168,4 @@ fi
 e2e_export_fake_home "$DIR"
 
 # Run crit in file mode with explicit files AND a directory
-exec "$CRIT_BIN" _serve --no-open --port "$PORT" plan.md main.go handler.ex lib/
+e2e_serve "$CRIT_BIN" _serve --no-open --port "$PORT" plan.md main.go handler.ex flow.mmd lib/

@@ -123,6 +123,10 @@ func RunReviewClientRaw(entry SessionEntry, sessionKey, planHook string) (approv
 	return result.Approved, result.Prompt
 }
 
+// readinessPollInterval is the delay between /api/session polls while the
+// daemon is still initializing (503); tests shorten it.
+var readinessPollInterval = 500 * time.Millisecond
+
 func waitForDaemonReady(client *http.Client, host string, port int, sessionKey, daemonGeneration string) (statusCode int, body []byte, err error) {
 	connHost := host
 	if connHost == "" {
@@ -151,7 +155,7 @@ func waitForDaemonReady(client *http.Client, host string, port int, sessionKey, 
 		if time.Now().After(deadline) {
 			return 0, nil, fmt.Errorf("daemon did not become ready within 5 minutes")
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(readinessPollInterval)
 	}
 }
 
