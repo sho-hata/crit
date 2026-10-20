@@ -8,6 +8,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Windows has no process group to kill here: isolate is a no-op and
+// killTree ends the leader alone, so a child a server forked can outlive
+// Close there. A per-server job object (internal/daemon has the pattern)
+// would close that gap.
 func isolate(*exec.Cmd) {}
 
 func killTree(cmd *exec.Cmd) { _ = cmd.Process.Kill() }
