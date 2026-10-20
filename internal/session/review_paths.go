@@ -21,3 +21,8 @@ func ReviewPathsFor(identity string) ReviewPaths {
 		LSPWorktree: filepath.Join(identity, "lsp-worktree"),
 	}
 }
+
+// LSPScratch is where the sandbox lets the review's language servers write.
+// Derived on demand: ReviewPathsFor runs on every save and load, which
+// never need it.
+func (p ReviewPaths) LSPScratch() string { return filepath.Join(p.Folder, "lsp-scratch") }

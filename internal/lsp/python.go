@@ -106,12 +106,12 @@ const pythonEnvScript = `import sysconfig; p = sysconfig.get_paths(); print(p["s
 //     both the .pyi there and the real .py
 //
 // Each source is optional; only a lookup that finds nothing at all is nil.
-func pyExtraRoots(root string) []PeekRoot {
+func pyExtraRoots(root string, run Run) []PeekRoot {
 	var roots []PeekRoot
 	if sp := venvSitePackages(root); sp != "" {
 		roots = append(roots, PeekRoot{Path: sp, Label: "$SITE_PACKAGES", LocalEnv: true})
 	}
-	roots = append(roots, pythonEnvRoots()...)
+	roots = append(roots, pythonEnvRoots(run)...)
 	if dir := pyrightTypeshed(); dir != "" {
 		roots = append(roots, PeekRoot{Path: dir, Label: "$TYPESHED"})
 	}
@@ -123,12 +123,10 @@ func pyExtraRoots(root string) []PeekRoot {
 
 // pythonEnvRoots asks the PATH interpreter — the one pyright itself falls
 // back to, never a repo-local one.
-func pythonEnvRoots() []PeekRoot {
+func pythonEnvRoots(run Run) []PeekRoot {
 	for _, bin := range []string{"python3", "python"} {
-		// -I (isolated mode) is required: without it the interpreter puts the
-		// working directory first on sys.path, and the daemon runs inside the
-		// repo under review, so a committed sysconfig.py would run.
-		out, err := exec.Command(bin, "-I", "-c", pythonEnvScript).Output()
+		// -I (isolated mode) keeps the working directory off sys.path.
+		out, err := run(bin, "-I", "-c", pythonEnvScript)
 		if err != nil {
 			continue
 		}
