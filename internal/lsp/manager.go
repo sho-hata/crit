@@ -534,6 +534,9 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	} else {
 		cmd.Stderr = io.Discard
 	}
+	isolate(cmd)
+	// Wait would otherwise block on a stderr pipe a forked child still holds.
+	cmd.WaitDelay = time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -546,20 +549,17 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 		return nil, fmt.Errorf("lsp: starting %s: %w", lang.Command[0], err)
 	}
 	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(lang.Command, " "), cmd.Process.Pid, rootDir)
-	// Reap the process so it never zombies.
-	waitDone := make(chan struct{})
-	go func() {
-		err := cmd.Wait()
-		debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
-		close(waitDone)
-	}()
-	// Close calls kill after the shutdown handshake's grace period, so don't
-	// wait again.
+	// The server is reaped only here, after the group kill: a zombie leader
+	// keeps the group id reserved, so the kill cannot land on a reused pid.
 	kill := func() {
+		killTree(cmd)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
 		select {
-		case <-waitDone: // already exited
-		default:
-			_ = cmd.Process.Kill()
+		case err := <-done:
+			debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
+		case <-time.After(5 * time.Second):
+			debugf(debug, lang.Name, "process (pid %d) still running after the kill", cmd.Process.Pid)
 		}
 	}
 	client := newClient(lang.Name, stdin, stdout, kill, settings)
