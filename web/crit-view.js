@@ -251,12 +251,6 @@
         });
     }
 
-    const md = typeof window.markdownit === 'function' ? window.markdownit({ html: true, linkify: true }) : null;
-    function renderMarkdown(text) {
-      const html = md ? md.render(text || '') : '<pre>' + shared.escapeHTML(text || '') + '</pre>';
-      return window.crit.commentHtml ? window.crit.commentHtml.sanitize(html) : html;
-    }
-
     function jumpToLocation(loc) {
       if (!loc || !loc.in_repo) return Promise.resolve(false);
       if (file && loc.path === file.path) {
@@ -295,7 +289,6 @@
       if (lspReady || !config.lsp_available || !window.crit.lsp) return;
       lspReady = true;
       window.crit.lsp.init({
-        renderMarkdown: renderMarkdown,
         canJump: function (loc) { return !!loc.in_repo; },
         jumpToLocation: jumpToLocation,
         mountLineWidget: mountLineWidget,

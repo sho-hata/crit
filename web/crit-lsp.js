@@ -19,8 +19,9 @@
 // Dependencies (window.crit.* namespaces read):
 //   - crit.shared (escapeHTML)
 //   - crit.codeHighlight (Shiki via Pierre's worker pool — peek highlighting)
+//   - crit.commentHtml (sanitize, when loaded) and window.markdownit, for
+//     hover documentation (renderHoverMarkdown)
 // UI adapters are injected via init(opts) so pure logic stays testable:
-//   - opts.renderMarkdown(text) -> safe HTML for hover markdown
 //   - opts.jumpToLocation(loc)  -> Promise<boolean>; true when the app
 //     revealed the location inside the review UI
 //   - opts.canJump(loc)         -> whether jumpToLocation is worth asking for
@@ -217,6 +218,22 @@
 
   function esc(s) {
     return window.crit.shared.escapeHTML(s);
+  }
+
+  // Hover documentation comes from a language server, which under range
+  // focus analyzes code the reviewer has not vetted, so it is rendered with
+  // raw HTML escaped and images off: an <img src> pointing off the machine
+  // would make the reviewer's browser carry out whatever the server could
+  // read, past the sandbox that keeps the server itself offline.
+  const hoverMd = typeof window !== 'undefined' && typeof window.markdownit === 'function'
+    ? window.markdownit({ html: false, linkify: true }).disable('image')
+    : null;
+
+  function renderHoverMarkdown(text) {
+    if (!hoverMd) return '<pre>' + esc(text || '') + '</pre>';
+    const html = hoverMd.render(text || '');
+    const commentHtml = typeof window !== 'undefined' && window.crit && window.crit.commentHtml;
+    return commentHtml ? commentHtml.sanitize(html) : html;
   }
 
   // Every rendering of a code file is Pierre's: split and unified diffs and
@@ -439,7 +456,7 @@
           hideTooltip();
           return;
         }
-        showTooltip(st.renderMarkdown(data.contents), x, y, data.local_env ? st.localEnvText : '');
+        showTooltip(renderHoverMarkdown(data.contents), x, y, data.local_env ? st.localEnvText : '');
       })
       .catch(function (err) {
         clearTimeout(loadingTimer);
@@ -1028,7 +1045,6 @@
   function init(opts) {
     if (st) return;
     st = {
-      renderMarkdown: opts.renderMarkdown,
       jumpToLocation: opts.jumpToLocation,
       canJump: opts.canJump || function (loc) { return !!loc.in_session; },
       mountLineWidget: opts.mountLineWidget || null,
@@ -1094,6 +1110,7 @@
     viewURL: viewURL,
     composeTooltip: composeTooltip,
     peekNoteHTML: peekNoteHTML,
+    renderHoverMarkdown: renderHoverMarkdown,
   };
   if (typeof window !== 'undefined') {
     window.crit = window.crit || {};
