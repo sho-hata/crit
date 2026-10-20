@@ -5,14 +5,12 @@ package lsp
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -156,8 +154,10 @@ func TestCloseKillsWhatTheServerForked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A reaper is nobody's job in a container without one, so a killed
+	// child may stay a zombie: dead all the same.
 	deadline := time.Now().Add(5 * time.Second)
-	for !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+	for !processDead(pid) {
 		if time.Now().After(deadline) {
 			t.Fatalf("child %d outlived Close", pid)
 		}
