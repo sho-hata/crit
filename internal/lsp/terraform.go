@@ -52,6 +52,6 @@ func tfNoResult(e *ResponseError) bool {
 // providers, at their latest version). Providers missing from that set get no
 // resource schema: references inside their blocks don't resolve. Pointing at
 // a path that does not exist instead makes initialize fail.
-func tfInitOptions(_, _ string) map[string]any {
+func tfInitOptions(Workspace, string) map[string]any {
 	return map[string]any{"terraform": map[string]any{"path": os.DevNull}}
 }

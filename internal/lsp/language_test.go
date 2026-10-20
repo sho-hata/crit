@@ -65,8 +65,8 @@ func TestManagerSpawnsOneServerPerLanguage(t *testing.T) {
 
 	var langs []string
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, lang *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, lang *Language, _, _ map[string]any) (*Client, error) {
 		langs = append(langs, lang.Name)
 		fs := startFake(h.handler)
 		h.mu.Lock()
@@ -208,12 +208,12 @@ func TestTSInitOptions(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "frontend", "src", "App.tsx")
 
-	if opts := tsInitOptions(root, src); opts != nil {
+	if opts := tsInitOptions(Workspace{Root: root}, src); opts != nil {
 		t.Errorf("tsInitOptions without a local install = %v, want nil", opts)
 	}
 
 	tsserver := writeTSInstall(t, filepath.Join(root, "frontend"))
-	opts := tsInitOptions(root, src)
+	opts := tsInitOptions(Workspace{Root: root}, src)
 	ts, ok := opts["tsserver"].(map[string]any)
 	if !ok {
 		t.Fatalf("tsInitOptions = %v, want a tsserver entry", opts)
@@ -234,11 +234,13 @@ func TestTypeScriptLanguageSendsInitOptions(t *testing.T) {
 	}
 	root := t.TempDir()
 	writeTSInstall(t, root)
-	if lang.InitOptions(root, filepath.Join(root, "src", "App.tsx")) == nil {
+	if lang.InitOptions(Workspace{Root: root}, filepath.Join(root, "src", "App.tsx")) == nil {
 		t.Error("InitOptions returned nil with an install present")
 	}
 }
 
+// A language joins this list only with a measurement that its server never
+// executes code from the tree, written next to its registry entry.
 func TestAvailableCachesLookupPerPath(t *testing.T) {
 	// Its own binary name, so no other test's lookups share the cache keys.
 	lang := &Language{Name: "fake", Command: []string{"crit-fake-lsp-for-cache-test"}}

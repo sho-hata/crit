@@ -157,7 +157,7 @@ func TestRealPHPResolvesVendorFromDepRoot(t *testing.T) {
 	app := writePHPProject(t, worktree, false)
 	writePHPProject(t, depRoot, true)
 
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	got, err := m.Hover(app, phpSpinUseLine, phpSpinUseChar)
@@ -192,7 +192,7 @@ func TestRealPHPWithoutVendorCannotResolveThirdParty(t *testing.T) {
 	dir := t.TempDir()
 	app := writePHPProject(t, dir, false)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	got, err := m.Hover(app, phpSpinUseLine, phpSpinUseChar)
@@ -212,7 +212,7 @@ func TestRealPHPBuiltinDefinitionIsPeekable(t *testing.T) {
 	dir := t.TempDir()
 	app := writePHPProject(t, dir, false)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	locs, err := m.Definition(app, phpStrlenLine, phpStrlenChar)
@@ -240,7 +240,7 @@ func TestRealPHPWritesNothingIntoTheRepo(t *testing.T) {
 	app := writePHPProject(t, dir, true)
 	before := listTree(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	t.Cleanup(m.Shutdown) // a failed Hover must not leak the server
 	if _, err := m.Hover(app, phpSpinUseLine, phpSpinUseChar); err != nil {
 		t.Fatalf("Hover: %v", err)

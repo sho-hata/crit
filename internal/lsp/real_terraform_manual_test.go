@@ -99,7 +99,7 @@ func TestRealTerraformLS(t *testing.T) {
 	dir := t.TempDir()
 	main := writeTFProject(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	// A reference inside a resource body only resolves once the provider's
@@ -167,19 +167,24 @@ func TestRealTerraformLS(t *testing.T) {
 
 // fakeTerraformOnPath puts a `terraform` first on PATH that only records that
 // it ran, and returns the marker file it creates.
-func fakeTerraformOnPath(t *testing.T) string {
+// fakeTerraformOnPath records each invocation under $TMPDIR, the scratch
+// the sandbox gives the server: the only place a confined terraform could
+// write. tfMarker says where that lands for a Manager.
+func fakeTerraformOnPath(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake terraform is a shell script")
 	}
 	bin := t.TempDir()
-	marker := filepath.Join(t.TempDir(), "terraform-ran")
-	script := "#!/bin/sh\necho \"$@\" >> '" + marker + "'\nexit 1\n"
+	script := "#!/bin/sh\necho \"$@\" >> \"${TMPDIR:?}/terraform-ran\"\nexit 1\n"
 	if err := os.WriteFile(filepath.Join(bin, "terraform"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return marker
+}
+
+func tfMarker(m *Manager) string {
+	return filepath.Join(m.jail.Workspace("terraform").Scratch, "tmp", "terraform-ran")
 }
 
 // writeInitedTFProject is writeTFProject plus the .terraform/ that
@@ -200,13 +205,14 @@ func writeInitedTFProject(t *testing.T, dir string) string {
 // it changes PATH.
 func TestRealTerraformLSNeverRunsTerraform(t *testing.T) {
 	requireRealTerraformLS(t)
-	marker := fakeTerraformOnPath(t)
+	fakeTerraformOnPath(t)
 
 	dir := t.TempDir()
 	main := writeInitedTFProject(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
+	marker := tfMarker(m)
 
 	got, err := m.Hover(main, tfRegionUseLine, tfRegionUseChar)
 	if err != nil {
@@ -244,12 +250,14 @@ func waitForMarker(marker string, d time.Duration) ([]byte, bool) {
 // PATH terraform, so the test above is not passing vacuously.
 func TestRealTerraformLSRunsTerraformByDefault(t *testing.T) {
 	requireRealTerraformLS(t)
-	marker := fakeTerraformOnPath(t)
+	fakeTerraformOnPath(t)
 
 	dir := t.TempDir()
 	main := writeInitedTFProject(t, dir)
 
-	c, err := startServer(context.Background(), dir, LanguageForPath(main), nil, nil)
+	m := NewManager(dir, "", t.TempDir(), context.Background())
+	marker := tfMarker(m)
+	c, err := m.startServer(context.Background(), LanguageForPath(main), nil, nil)
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}

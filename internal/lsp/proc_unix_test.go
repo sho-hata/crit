@@ -76,12 +76,14 @@ func TestServerExitHelper(t *testing.T) {
 func TestServerExitLifecycle(t *testing.T) {
 	for _, mode := range []string{"crash", "graceful", "ignore"} {
 		t.Run(mode, func(t *testing.T) {
-			marker := filepath.Join(t.TempDir(), "exit")
+			m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+			defer m.Shutdown()
+			marker := filepath.Join(m.jail.Workspace("exit-helper").Scratch, "exit")
 			lang := &Language{
 				Name:    "exit-helper",
 				Command: []string{os.Args[0], "-test.run=^TestServerExitHelper$", "lsp-exit-helper", mode, marker},
 			}
-			client, err := startServer(context.Background(), t.TempDir(), lang, nil, nil)
+			client, err := m.startServer(context.Background(), lang, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,13 +108,15 @@ func TestServerExitLifecycle(t *testing.T) {
 // The daemon's context is cancelled before it shuts the servers down, so
 // cancellation must reach the server as stdin EOF, which it exits on.
 func TestContextCancelLetsTheServerExit(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "exit")
+	ctx, cancel := context.WithCancel(context.Background())
+	m := NewManager(t.TempDir(), "", t.TempDir(), ctx)
+	defer m.Shutdown()
+	marker := filepath.Join(m.jail.Workspace("exit-helper").Scratch, "exit")
 	lang := &Language{
 		Name:    "exit-helper",
 		Command: []string{os.Args[0], "-test.run=^TestServerExitHelper$", "lsp-exit-helper", "graceful", marker},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	client, err := startServer(ctx, t.TempDir(), lang, nil, nil)
+	client, err := m.startServer(ctx, lang, nil, nil)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -134,19 +138,21 @@ func TestContextCancelLetsTheServerExit(t *testing.T) {
 	}
 }
 
-// A server's children die with it: typescript-language-server forks
-// tsserver, which otherwise outlives Close and keeps writing.
+// A server's children die with it: the TMPDIR a server writes into is torn
+// down right after Close, and typescript-language-server's tsserver flushes
+// its compile cache there while exiting.
 func TestCloseKillsWhatTheServerForked(t *testing.T) {
-	pidFile := filepath.Join(t.TempDir(), "child")
+	m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+	defer m.Shutdown()
 	lang := &Language{
 		Name:    "forking",
-		Command: []string{"sh", "-c", `sleep 60 >/dev/null 2>&1 & echo $! >"$0"`, pidFile},
+		Command: []string{"sh", "-c", `sleep 60 >/dev/null 2>&1 & echo $! >"$TMPDIR/child"`},
 	}
-	_, err := startServer(context.Background(), t.TempDir(), lang, nil, nil)
+	_, err := m.startServer(context.Background(), lang, nil, nil)
 	if err == nil {
 		t.Fatal("startServer succeeded against a server that exits at once")
 	}
-	raw, err := os.ReadFile(pidFile)
+	raw, err := os.ReadFile(filepath.Join(m.jail.Workspace(lang.Name).Scratch, "tmp", "child"))
 	if err != nil {
 		t.Fatal(err)
 	}

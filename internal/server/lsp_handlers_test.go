@@ -16,6 +16,7 @@ import (
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/lsp"
+	"github.com/sho-hata/crit/internal/sandbox"
 	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -955,6 +956,47 @@ func TestLSPConfigExposesAvailability(t *testing.T) {
 	}
 	if resp["lsp_available"] != true {
 		t.Errorf("lsp_available = %v, want true", resp["lsp_available"])
+	}
+	if _, ok := resp["lsp_sandbox"].(string); !ok {
+		t.Errorf("lsp_sandbox = %#v, want the backend name as a string", resp["lsp_sandbox"])
+	}
+}
+
+func TestPRFocusNeedsSandbox(t *testing.T) {
+	t.Parallel()
+	pr := &Session{Focus: Focus{Kind: FocusRange, PRNumber: 42}}
+	rng := &Session{Focus: Focus{Kind: FocusRange}}
+	if !prFocusNeedsSandbox(pr, sandbox.Backend{}) {
+		t.Error("a PR review without a backend must offer no server")
+	}
+	if prFocusNeedsSandbox(pr, sandbox.Backend{Name: "seatbelt"}) {
+		t.Error("a confined PR review keeps its servers")
+	}
+	if prFocusNeedsSandbox(rng, sandbox.Backend{}) {
+		t.Error("a --range review is the reviewer's own commits and runs as before")
+	}
+}
+
+// A review folder inside the repository would put the servers' scratch
+// under the tree they analyze; it moves to ~/.crit/reviews instead.
+func TestLSPScratchDirLeavesTheRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := t.TempDir()
+
+	outside := filepath.Join(t.TempDir(), "reviews", "k1")
+	if got, want := lspScratchDir(outside, repo), session.ReviewPathsFor(outside).LSPScratch(); got != want {
+		t.Errorf("review folder outside the repo: scratch = %s, want %s", got, want)
+	}
+	if got, want := lspScratchDir(outside, ""), session.ReviewPathsFor(outside).LSPScratch(); got != want {
+		t.Errorf("no repo root: scratch = %s, want %s", got, want)
+	}
+
+	inside := filepath.Join(repo, ".crit-data", "reviews", "k2")
+	want := filepath.Join(home, ".crit", "reviews", "k2", "lsp-scratch")
+	if got := lspScratchDir(inside, repo); got != want {
+		t.Errorf("review folder inside the repo: scratch = %s, want %s", got, want)
 	}
 }
 

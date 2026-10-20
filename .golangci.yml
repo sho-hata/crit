@@ -14,11 +14,28 @@ linters:
     - unparam
     - perfsprint
     - modernize
+    - forbidigo
   settings:
     gocyclo:
       min-complexity: 15
+    forbidigo:
+      forbid:
+        - pattern: '^exec\.Command(Context)?$'
+          msg: "spawn language servers and their helpers through sandbox.Jail (see internal/lsp/manager.go)"
+        - pattern: '^os\.StartProcess$'
+          msg: "spawn language servers and their helpers through sandbox.Jail (see internal/lsp/manager.go)"
+        - pattern: '^syscall\.(Exec|ForkExec|StartProcess)$'
+          msg: "spawn language servers and their helpers through sandbox.Jail (see internal/lsp/manager.go)"
   exclusions:
     rules:
+      # Only internal/lsp is held to the single spawn door; the rest of the
+      # tree runs git, gh and the like directly.
+      - linters: [forbidigo]
+        path-except: '^internal/lsp/'
+      # Its tests spawn helpers of their own (a fake server, a child meant
+      # to outlive it); only the product code must go through the Jail.
+      - linters: [forbidigo]
+        path: '_test\.go$'
       - linters: [staticcheck]
         text: "QF"
       # perfsprint's error-format (fmt.Errorf → errors.New on static strings)

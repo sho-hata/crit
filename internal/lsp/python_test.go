@@ -1,11 +1,16 @@
 package lsp
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+// noRun stands in for the confined helper runner where a test wants only
+// the filesystem-derived roots.
+func noRun(...string) ([]byte, error) { return nil, errors.New("no helper commands in this test") }
 
 // writeVenv returns the site-packages path it creates.
 func writeVenv(t *testing.T, dir, name string) string {
@@ -164,7 +169,7 @@ func TestPyExtraRootsIncludesTheVenvOfRoot(t *testing.T) {
 	root := t.TempDir()
 	sp := writeVenv(t, root, ".venv")
 	found := false
-	for _, r := range pyExtraRoots(root) {
+	for _, r := range pyExtraRoots(root, noRun) {
 		if r.Path == sp {
 			found = true
 			if r.Label != "$SITE_PACKAGES" {

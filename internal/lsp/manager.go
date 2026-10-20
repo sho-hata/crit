@@ -9,9 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sho-hata/crit/internal/sandbox"
 )
 
 // DefaultIdleTimeout is how long the manager keeps a language server alive
@@ -22,7 +25,7 @@ const DefaultIdleTimeout = 3 * time.Minute
 
 // startFunc spawns an initialized client; tests override it to avoid spawning
 // a real server.
-type startFunc func(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error)
+type startFunc func(ctx context.Context, lang *Language, initOpts, settings map[string]any) (*Client, error)
 
 type fileState struct {
 	version int
@@ -61,7 +64,11 @@ type Manager struct {
 	// only — node_modules and .venv are absent — so a language whose handshake
 	// needs a dependency resolves it from depRoot at the same repo-relative
 	// path.
-	depRoot     string
+	depRoot string
+	// jail is the only way a server or helper process gets started. jailErr
+	// is Open's failure, surfaced on every spawn rather than worked around.
+	jail        *sandbox.Jail
+	jailErr     error
 	baseCtx     context.Context
 	idleTimeout time.Duration
 	start       startFunc
@@ -84,21 +91,27 @@ type Manager struct {
 const maxSessionDocuments = 100
 
 // NewManager creates a manager for root. depRoot is the working tree behind a
-// range/PR focus worktree, "" when root is the working tree itself. baseCtx
-// bounds the server subprocess lifetimes (daemon shutdown kills them).
-func NewManager(root, depRoot string, baseCtx context.Context) *Manager {
+// range/PR focus worktree, "" when root is the working tree itself.
+// scratchBase is where the servers may write (one directory per language
+// under it). baseCtx bounds the server subprocess lifetimes (daemon shutdown
+// kills them).
+func NewManager(root, depRoot, scratchBase string, baseCtx context.Context) *Manager {
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	return &Manager{
+	jail, err := sandbox.Open(sandbox.Trees{Root: root, DepRoot: depRoot}, scratchBase)
+	m := &Manager{
 		root:        root,
 		depRoot:     depRoot,
+		jail:        jail,
+		jailErr:     err,
 		baseCtx:     baseCtx,
 		idleTimeout: DefaultIdleTimeout,
-		start:       startServer,
 		servers:     make(map[string]*serverState),
 		extraRoots:  make(map[string][]PeekRoot),
 	}
+	m.start = m.startServer
+	return m
 }
 
 // SetSessionFiles makes every request also open the review's files of its
@@ -278,9 +291,20 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 		srv.files = make(map[string]fileState)
 		srv.reviewDocs = make(map[string]bool)
 	}
-	initOpts := m.handshake(lang.InitOptions, absPath)
+	if m.jailErr != nil {
+		return fmt.Errorf("lsp: %w", m.jailErr)
+	}
+	// The scratch is named before the spawn so an InitOptions hook can point
+	// the server's own writes at it; Command creates it.
+	scratch := m.jail.Workspace(lang.Name).Scratch
+	var initOpts map[string]any
+	if lang.InitOptions != nil {
+		initOpts = m.handshake(func(root, absPath string) map[string]any {
+			return lang.InitOptions(Workspace{Root: root, Scratch: scratch}, absPath)
+		}, absPath)
+	}
 	settings := m.handshake(lang.ConfigSettings, absPath)
-	client, err := m.start(m.baseCtx, m.root, lang, initOpts, settings)
+	client, err := m.start(m.baseCtx, lang, initOpts, settings)
 	if err != nil {
 		return err
 	}
@@ -511,7 +535,7 @@ func (m *Manager) PeekRoots() []PeekRoot {
 		}
 		cached, ok := m.extraRoots[l.Name]
 		if !ok {
-			cached = l.ExtraRoots(m.depBase())
+			cached = l.ExtraRoots(m.depBase(), m.run(l))
 			if cached == nil {
 				continue
 			}
@@ -520,6 +544,34 @@ func (m *Manager) PeekRoots() []PeekRoot {
 		roots = append(roots, cached...)
 	}
 	return roots
+}
+
+// run confines a language's helper commands (go env, npm root -g, python3)
+// like its server, with cwd in its scratch rather than the tree.
+func (m *Manager) run(lang *Language) Run {
+	return func(argv ...string) ([]byte, error) {
+		if m.jailErr != nil {
+			return nil, m.jailErr
+		}
+		return m.jail.Output(m.baseCtx, lang.Name, func(Workspace) sandbox.Process {
+			return sandbox.Process{Argv: argv}
+		})
+	}
+}
+
+// confinement describes, for the debug log and errors, what the server
+// runs under.
+func (m *Manager) confinement(scratch string) string {
+	b := sandbox.Detect()
+	if b.Name == "" {
+		return "unconfined (" + b.Reason + ")"
+	}
+	trees := []string{m.root}
+	if m.depRoot != "" && m.depRoot != m.root {
+		trees = append(trees, m.depRoot)
+	}
+	return fmt.Sprintf("confined by %s: no network, writes only under %s, no exec under %s or the scratch, secrets unreadable",
+		b.Name, scratch, strings.Join(trees, " and "))
 }
 
 // exitGrace is how long a server may take to exit after "exit" before it
@@ -554,7 +606,7 @@ func supervise(cmd *exec.Cmd, name string, debug bool) func() {
 			debugf(debug, name, "monitoring process (pid %d): %v", cmd.Process.Pid, monitorErr)
 		}
 		err := cmd.Wait()
-		debugf(debug, name, "process exited (pid %d): %v", cmd.Process.Pid, err)
+		debugf(debug, name, "process exited (pid %d): %v; denials: %s", cmd.Process.Pid, err, sandbox.DenialHint)
 		close(done)
 	}()
 	var stopOnce sync.Once
@@ -576,17 +628,27 @@ func supervise(cmd *exec.Cmd, name string, debug bool) func() {
 	}
 }
 
-func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
+func (m *Manager) startServer(ctx context.Context, lang *Language, initOpts, settings map[string]any) (*Client, error) {
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
 	}
-	cmd := exec.CommandContext(ctx, lang.Command[0], lang.Command[1:]...) //nolint:gosec // argv is fixed in the registry, never user input
-	cmd.Dir = rootDir
 	debug := debugEnabled()
-	if debug {
-		cmd.Stderr = &stderrLogger{name: lang.Name}
-	} else {
-		cmd.Stderr = io.Discard
+	ws := m.jail.Workspace(lang.Name)
+	cmd, err := m.jail.Command(ctx, lang.Name, func(Workspace) sandbox.Process {
+		p := sandbox.Process{Argv: slices.Clone(lang.Command), Stderr: io.Discard}
+		if lang.Args != nil {
+			p.Argv = append(p.Argv, lang.Args(ws)...)
+		}
+		if lang.Env != nil {
+			p.Env = lang.Env(ws)
+		}
+		if debug {
+			p.Stderr = &stderrLogger{name: lang.Name}
+		}
+		return p
+	})
+	if err != nil {
+		return nil, fmt.Errorf("lsp: %s: %w", lang.Command[0], err)
 	}
 	isolate(cmd)
 	// Wait would otherwise block on a stderr pipe a forked child still holds.
@@ -606,13 +668,14 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("lsp: starting %s: %w", lang.Command[0], err)
 	}
-	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(lang.Command, " "), cmd.Process.Pid, rootDir)
+	under := m.confinement(ws.Scratch)
+	debugf(debug, lang.Name, "started %s (pid %d) in %s, %s", strings.Join(lang.Command, " "), cmd.Process.Pid, m.root, under)
 	kill := supervise(cmd, lang.Name, debug)
 	client := newClient(lang.Name, stdin, stdout, kill, settings)
 	initStart := time.Now()
-	if err := client.Initialize(rootDir, initOpts); err != nil {
+	if err := client.Initialize(m.root, initOpts); err != nil {
 		client.Close()
-		return nil, fmt.Errorf("lsp: initializing %s: %w", lang.Command[0], err)
+		return nil, fmt.Errorf("lsp: initializing %s (%s): %w", lang.Command[0], under, err)
 	}
 	debugf(debug, lang.Name, "initialized in %s", roundDuration(time.Since(initStart)))
 	return client, nil
