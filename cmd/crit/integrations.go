@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sho-hata/crit/internal/lsp"
 )
 
 // computeFileHash returns the hex-encoded SHA256 hash of data.
@@ -693,6 +695,7 @@ func runCheck() {
 	}
 
 	fmt.Fprintf(os.Stderr, "crit %s — checking installed integrations...\n\n", version)
+	fmt.Fprintf(os.Stderr, "LSP sandbox: %s\n\n", lsp.SandboxStatus())
 
 	stale := checkInstalledIntegrations(cwd, home)
 	missing := checkMissingIntegrations(cwd, home)
