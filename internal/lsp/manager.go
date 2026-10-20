@@ -522,6 +522,10 @@ func (m *Manager) PeekRoots() []PeekRoot {
 	return roots
 }
 
+// exitGrace is how long a server may take to exit after "exit" before it
+// is killed; the servers crit ships leave within milliseconds.
+const exitGrace = 2 * time.Second
+
 func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
@@ -549,16 +553,30 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 		return nil, fmt.Errorf("lsp: starting %s: %w", lang.Command[0], err)
 	}
 	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(lang.Command, " "), cmd.Process.Pid, rootDir)
-	// The server is reaped only here, after the group kill: a zombie leader
-	// keeps the group id reserved, so the kill cannot land on a reused pid.
+	// Close has sent "exit" by the time kill runs. The server gets exitGrace
+	// to leave on its own, because that is when node writes its compile
+	// cache and intelephense its index; a kill straight after "exit" threw
+	// both away on every shutdown, so every start was cold. The process is
+	// reaped only here: a zombie leader keeps the group id reserved, so the
+	// group kill cannot land on a reused pid.
 	kill := func() {
-		killTree(cmd)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		select {
-		case err := <-done:
-			debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
-		case <-time.After(5 * time.Second):
+		exited := func(within time.Duration) bool {
+			select {
+			case err := <-done:
+				debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
+				return true
+			case <-time.After(within):
+				return false
+			}
+		}
+		left := exited(exitGrace)
+		if !left {
+			debugf(debug, lang.Name, "process (pid %d) ignored exit, killing", cmd.Process.Pid)
+		}
+		killTree(cmd)
+		if !left && !exited(5*time.Second) {
 			debugf(debug, lang.Name, "process (pid %d) still running after the kill", cmd.Process.Pid)
 		}
 	}
