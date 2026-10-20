@@ -557,26 +557,45 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	// to leave on its own, because that is when node writes its compile
 	// cache and intelephense its index; a kill straight after "exit" threw
 	// both away on every shutdown, so every start was cold. The process is
-	// reaped only here: a zombie leader keeps the group id reserved, so the
-	// group kill cannot land on a reused pid.
+	// observed without reaping: a zombie leader keeps the group id reserved
+	// until the sole cleanup goroutine has killed the group. Monitor from
+	// startup, since children may keep stdout open after the leader crashes.
+	exit := make(chan error, 1)
+	go func() { exit <- waitProcessExit(cmd) }()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		var monitorErr error
+		select {
+		case monitorErr = <-exit:
+			killTree(cmd)
+		case <-stop:
+			killTree(cmd)
+			// Finish monitoring before Wait can release the PID, even if
+			// the monitor goroutine was slow to start.
+			monitorErr = <-exit
+		}
+		if monitorErr != nil {
+			debugf(debug, lang.Name, "monitoring process (pid %d): %v", cmd.Process.Pid, monitorErr)
+		}
+		err := cmd.Wait()
+		debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
+		close(done)
+	}()
+	var stopOnce sync.Once
 	kill := func() {
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-		exited := func(within time.Duration) bool {
-			select {
-			case err := <-done:
-				debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
-				return true
-			case <-time.After(within):
-				return false
-			}
-		}
-		left := exited(exitGrace)
-		if !left {
+		timer := time.NewTimer(exitGrace)
+		defer timer.Stop()
+		select {
+		case <-done:
+			return
+		case <-timer.C:
 			debugf(debug, lang.Name, "process (pid %d) ignored exit, killing", cmd.Process.Pid)
+			stopOnce.Do(func() { close(stop) })
 		}
-		killTree(cmd)
-		if !left && !exited(5*time.Second) {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
 			debugf(debug, lang.Name, "process (pid %d) still running after the kill", cmd.Process.Pid)
 		}
 	}
