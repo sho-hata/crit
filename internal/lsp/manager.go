@@ -540,11 +540,15 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	}
 	isolate(cmd)
 	// Wait would otherwise block on a stderr pipe a forked child still holds.
-	cmd.WaitDelay = time.Second
+	cmd.WaitDelay = exitGrace
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+	// The daemon's context ends before ShutdownLSP runs, so cancellation
+	// asks the server to leave (stdin EOF) rather than killing it; the
+	// monitor below and WaitDelay still bound a server that stays.
+	cmd.Cancel = stdin.Close
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

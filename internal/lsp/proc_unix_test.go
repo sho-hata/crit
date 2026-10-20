@@ -47,6 +47,7 @@ func TestServerExitHelper(t *testing.T) {
 			if mode == "ignore" {
 				time.Sleep(time.Hour)
 			}
+			_ = os.WriteFile(marker, []byte("eof"), 0o600)
 			os.Exit(0)
 		}
 		switch msg.Method {
@@ -101,6 +102,37 @@ func TestServerExitLifecycle(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The daemon's context is cancelled before it shuts the servers down, so
+// cancellation must reach the server as stdin EOF, which it exits on.
+func TestContextCancelLetsTheServerExit(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "exit")
+	lang := &Language{
+		Name:    "exit-helper",
+		Command: []string{os.Args[0], "-test.run=^TestServerExitHelper$", "lsp-exit-helper", "graceful", marker},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	client, err := startServer(ctx, t.TempDir(), lang, nil, nil)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	cancel()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if raw, err := os.ReadFile(marker); err == nil {
+			if string(raw) != "eof" {
+				t.Fatalf("marker = %q, want the EOF exit path", raw)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cancellation killed the server before it could exit on its own")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
