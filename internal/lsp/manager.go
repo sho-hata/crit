@@ -522,6 +522,60 @@ func (m *Manager) PeekRoots() []PeekRoot {
 	return roots
 }
 
+// exitGrace is how long a server may take to exit after "exit" before it
+// is killed; the servers crit ships leave within milliseconds.
+const exitGrace = 2 * time.Second
+
+// supervise watches the server from the moment it starts and returns the
+// kill that Close calls once it has sent "exit". The server gets exitGrace
+// to leave on its own, because that is when node writes its compile cache
+// and intelephense its index; a kill straight after "exit" threw both away
+// on every shutdown, so every start was cold. Exit is observed without
+// reaping: a zombie leader keeps the group id reserved until the one
+// cleanup goroutine has killed the group. Monitoring starts at once, since
+// children may keep stdout open after the leader crashes.
+func supervise(cmd *exec.Cmd, name string, debug bool) func() {
+	exit := make(chan error, 1)
+	go func() { exit <- waitProcessExit(cmd) }()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		var monitorErr error
+		select {
+		case monitorErr = <-exit:
+			killTree(cmd)
+		case <-stop:
+			killTree(cmd)
+			// Finish monitoring before Wait can release the PID, even if
+			// the monitor goroutine was slow to start.
+			monitorErr = <-exit
+		}
+		if monitorErr != nil {
+			debugf(debug, name, "monitoring process (pid %d): %v", cmd.Process.Pid, monitorErr)
+		}
+		err := cmd.Wait()
+		debugf(debug, name, "process exited (pid %d): %v", cmd.Process.Pid, err)
+		close(done)
+	}()
+	var stopOnce sync.Once
+	return func() {
+		timer := time.NewTimer(exitGrace)
+		defer timer.Stop()
+		select {
+		case <-done:
+			return
+		case <-timer.C:
+			debugf(debug, name, "process (pid %d) ignored exit, killing", cmd.Process.Pid)
+			stopOnce.Do(func() { close(stop) })
+		}
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			debugf(debug, name, "process (pid %d) still running after the kill", cmd.Process.Pid)
+		}
+	}
+}
+
 func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
@@ -534,10 +588,17 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	} else {
 		cmd.Stderr = io.Discard
 	}
+	isolate(cmd)
+	// Wait would otherwise block on a stderr pipe a forked child still holds.
+	cmd.WaitDelay = exitGrace
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
+	// The daemon's context ends before ShutdownLSP runs, so cancellation
+	// asks the server to leave (stdin EOF) rather than killing it; the
+	// monitor below and WaitDelay still bound a server that stays.
+	cmd.Cancel = stdin.Close
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -546,22 +607,7 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 		return nil, fmt.Errorf("lsp: starting %s: %w", lang.Command[0], err)
 	}
 	debugf(debug, lang.Name, "started %s (pid %d) in %s", strings.Join(lang.Command, " "), cmd.Process.Pid, rootDir)
-	// Reap the process so it never zombies.
-	waitDone := make(chan struct{})
-	go func() {
-		err := cmd.Wait()
-		debugf(debug, lang.Name, "process exited (pid %d): %v", cmd.Process.Pid, err)
-		close(waitDone)
-	}()
-	// Close calls kill after the shutdown handshake's grace period, so don't
-	// wait again.
-	kill := func() {
-		select {
-		case <-waitDone: // already exited
-		default:
-			_ = cmd.Process.Kill()
-		}
-	}
+	kill := supervise(cmd, lang.Name, debug)
 	client := newClient(lang.Name, stdin, stdout, kill, settings)
 	initStart := time.Now()
 	if err := client.Initialize(rootDir, initOpts); err != nil {
