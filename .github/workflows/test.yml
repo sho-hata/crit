@@ -334,6 +334,26 @@ jobs:
       - name: Run live CDP integration tests
         run: go test -tags integration -run TestLiveCDPIntegration -v -count=1 ./internal/live/...
 
+  # The seatbelt profile is parsed by macOS at spawn time, so an OS release
+  # that rejects it would break every language server there. No other job
+  # runs on macOS; this one keeps the canary honest.
+  sandbox-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run the sandbox tests under seatbelt
+        # go test's own timeout fires first: a hung test then fails with its
+        # goroutine dump, where a cancelled step leaves no log at all.
+        timeout-minutes: 5
+        run: go test ./internal/sandbox/... ./internal/lsp/ -count=1 -v -timeout 4m
+        env:
+          CRIT_REQUIRE_SANDBOX: 1
+
   unit-windows:
     runs-on: windows-2025-vs2026
     # Windows pays a per-process tax (git, go build, crit.exe spawns) on every
