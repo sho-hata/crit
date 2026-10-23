@@ -16,8 +16,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/sho-hata/crit/internal/daemon"
 	"github.com/sho-hata/crit/internal/lsp"
 	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/sandbox"
 	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -92,7 +94,18 @@ func (s *Server) lspAvailable() bool {
 	if sess.Focus.Kind == FocusRange && !rangeLSPSupported(sess) {
 		return false
 	}
+	if prFocusNeedsSandbox(sess, sandbox.Detect()) {
+		return false
+	}
 	return lsp.Any(s.lspLangAvailable())
+}
+
+// prFocusNeedsSandbox: a PR review runs language servers on a branch the
+// reviewer did not write, so where no backend can confine them crit offers
+// none. Working-tree and --range reviews are the reviewer's own commits and
+// run as before.
+func prFocusNeedsSandbox(sess *Session, b sandbox.Backend) bool {
+	return sess.Focus.PRNumber > 0 && b.Name == ""
 }
 
 func (s *Server) lspLangAvailable() func(*lsp.Language) bool {
@@ -264,7 +277,7 @@ func (s *Server) lspManager() lspProvider {
 			if sess := s.session.Load(); sess != nil {
 				repoRoot = sess.RepoRoot
 			}
-			mgr := lsp.NewManager(s.lspRootLocked(), repoRoot, s.shutdownCtx)
+			mgr := lsp.NewManager(s.lspRootLocked(), repoRoot, lspScratchDir(s.reviewPath, repoRoot), s.shutdownCtx)
 			mgr.SetSessionFiles(s.lspSessionFiles)
 			s.lsp.prov = mgr
 		}
@@ -287,6 +300,24 @@ func (s *Server) lspSessionFiles() []string {
 		paths = append(paths, f.Path)
 	}
 	return paths
+}
+
+// lspScratchDir is the one directory the review's language servers may
+// write: the review folder's lsp-scratch, so it shares the review's cleanup.
+// When the review folder lies inside the repository (a project `output`
+// pointing into the tree) a server could write into the code under review
+// and sandbox.Open refuses, so the scratch moves under crit's own reviews
+// directory instead, keyed by the review folder's name.
+func lspScratchDir(reviewPath, repoRoot string) string {
+	scratch := session.ReviewPathsFor(reviewPath).LSPScratch()
+	if repoRoot == "" || !sandbox.Beneath(scratch, repoRoot) {
+		return scratch
+	}
+	reviews, err := daemon.ReviewsDir()
+	if err != nil {
+		return scratch
+	}
+	return session.ReviewPathsFor(filepath.Join(reviews, filepath.Base(reviewPath))).LSPScratch()
 }
 
 // ShutdownLSP is called on daemon shutdown.

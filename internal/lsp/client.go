@@ -427,6 +427,9 @@ func (c *Client) Initialize(rootDir string, initOpts map[string]any) error {
 		caps["workspace"] = map[string]any{"configuration": true}
 	}
 	params := map[string]any{
+		// nil, never crit's pid: a node server given a processId watches it
+		// with kill(pid, 0), which the sandbox refuses, and exits a few
+		// seconds after initialize with no message.
 		"processId": nil,
 		"rootUri":   rootURI,
 		"workspaceFolders": []map[string]any{

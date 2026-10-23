@@ -80,7 +80,7 @@ func TestRealSessionFilesFindReferences(t *testing.T) {
 					rels = append(rels, name)
 				}
 			}
-			m := NewManager(dir, "", context.Background())
+			m := NewManager(dir, "", t.TempDir(), context.Background())
 			t.Cleanup(m.Shutdown)
 			m.SetSessionFiles(func() []string { return rels })
 

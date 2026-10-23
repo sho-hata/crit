@@ -31,6 +31,7 @@ import (
 	"github.com/sho-hata/crit/internal/pathsafe"
 	"github.com/sho-hata/crit/internal/prompt"
 	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/sandbox"
 	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -563,6 +564,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// those servers cover.
 		"lsp_available":  s.lspAvailable(),
 		"lsp_extensions": s.lspExtensions(),
+		// lsp_sandbox names the confinement every language server runs
+		// under ("seatbelt", "" for none; without one a --pr review has
+		// lsp_available false).
+		"lsp_sandbox": sandbox.Detect().Name,
 		// Initial view for files with a Document/Diff toggle (markdown) in
 		// git mode: "document" forces document view, anything else keeps the
 		// historical default (diff in git mode, document in file mode).

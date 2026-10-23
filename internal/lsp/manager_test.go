@@ -26,8 +26,8 @@ type managerHarness struct {
 func newManagerHarness(t *testing.T, handler func(method string, params json.RawMessage) any) (*Manager, *managerHarness) {
 	t.Helper()
 	h := &managerHarness{handler: handler}
-	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, _ *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, _ *Language, _, _ map[string]any) (*Client, error) {
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
 		h.mu.Lock()
@@ -188,8 +188,8 @@ func TestManagerColdStartDoesNotBlockOtherLanguage(t *testing.T) {
 	release := func() { releaseOnce.Do(func() { close(goRelease) }) }
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, lang *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, lang *Language, _, _ map[string]any) (*Client, error) {
 		if lang.Name == "go" {
 			close(goStarted)
 			<-goRelease // park the Go cold start
@@ -230,7 +230,7 @@ func TestManagerColdStartDoesNotBlockOtherLanguage(t *testing.T) {
 // startCapture builds a start hook that records the initializationOptions the
 // Manager resolved for each spawn.
 func startCapture(h *managerHarness, got *map[string]any) startFunc {
-	return func(_ context.Context, _ string, _ *Language, initOpts, _ map[string]any) (*Client, error) {
+	return func(_ context.Context, _ *Language, initOpts, _ map[string]any) (*Client, error) {
 		*got = initOpts
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
@@ -257,7 +257,7 @@ func TestManagerResolvesInitOptionsFromDepRootWhenWorktreeLacksDeps(t *testing.T
 	writeGoFile(t, filepath.Dir(file), "App.tsx", "export const App = () => null;\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCapture(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -285,7 +285,7 @@ func TestManagerPrefersWorkspaceInstallOverDepRoot(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.ts", "export const x = 1;\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCapture(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -308,7 +308,7 @@ func TestManagerSendsNoInitOptionsWithoutAnyInstall(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.ts", "export const x = 1;\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCapture(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -324,7 +324,7 @@ func TestManagerSendsNoInitOptionsWithoutAnyInstall(t *testing.T) {
 // startCaptureSettings builds a start hook that records the
 // workspace/configuration settings the Manager resolved for each spawn.
 func startCaptureSettings(h *managerHarness, got *map[string]any) startFunc {
-	return func(_ context.Context, _ string, _ *Language, _, settings map[string]any) (*Client, error) {
+	return func(_ context.Context, _ *Language, _, settings map[string]any) (*Client, error) {
 		*got = settings
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
@@ -359,7 +359,7 @@ func TestManagerResolvesSettingsFromDepRootWhenWorktreeLacksVenv(t *testing.T) {
 	writeGoFile(t, filepath.Dir(file), "app.py", "import mylib\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCaptureSettings(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -383,7 +383,7 @@ func TestManagerPrefersWorkspaceVenvOverDepRoot(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.py", "import mylib\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCaptureSettings(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -406,7 +406,7 @@ func TestManagerSendsNoSettingsWithoutAnyVenv(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.py", "import mylib\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	got := map[string]any{"sentinel": true}
 	m.start = startCaptureSettings(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -433,7 +433,7 @@ func TestManagerSendsNoSettingsToLanguagesWithoutThem(t *testing.T) {
 			file := writeGoFile(t, root, name, "\n")
 
 			h := &managerHarness{handler: hoverOK}
-			m := NewManager(root, "", context.Background())
+			m := NewManager(root, "", t.TempDir(), context.Background())
 			got := map[string]any{"sentinel": true}
 			m.start = startCaptureSettings(h, &got)
 			t.Cleanup(m.Shutdown)
@@ -460,7 +460,7 @@ func TestManagerDepBase(t *testing.T) {
 		{"range focus reads dependencies from the working tree", "/tmp/worktree", "/repo", "/repo"},
 	}
 	for _, tc := range cases {
-		m := NewManager(tc.root, tc.depRoot, context.Background())
+		m := NewManager(tc.root, tc.depRoot, t.TempDir(), context.Background())
 		if got := m.depBase(); got != tc.want {
 			t.Errorf("%s: depBase() = %q, want %q", tc.name, got, tc.want)
 		}
@@ -477,8 +477,8 @@ func TestManagerDoesNotWaitOnProgressForPython(t *testing.T) {
 	root := t.TempDir()
 	file := writeGoFile(t, root, "app.py", "x = 1\n")
 
-	m := NewManager(root, "", context.Background())
-	m.start = func(_ context.Context, _ string, _ *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(root, "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, _ *Language, _, _ map[string]any) (*Client, error) {
 		fs := startFake(hoverOK)
 		fs.send(map[string]any{
 			"jsonrpc": "2.0", "method": "$/progress",
@@ -806,8 +806,8 @@ func TestManagerWaitsForLateStartupProgress(t *testing.T) {
 				return hoverOK(method, params)
 			})
 			start := m.start
-			m.start = func(ctx context.Context, root string, lang *Language, initOpts, settings map[string]any) (*Client, error) {
-				c, err := start(ctx, root, lang, initOpts, settings)
+			m.start = func(ctx context.Context, lang *Language, initOpts, settings map[string]any) (*Client, error) {
+				c, err := start(ctx, lang, initOpts, settings)
 				fs := h.server(0)
 				time.AfterFunc(lateBy, func() {
 					fs.sendProgress("load", "begin")

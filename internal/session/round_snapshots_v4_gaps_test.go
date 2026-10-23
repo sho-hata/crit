@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -296,6 +297,39 @@ func TestFindStaleReviews_EmptyFolder_Skipped(t *testing.T) {
 		if s.path == empty {
 			t.Fatalf("empty folder must not be considered stale: %+v", s)
 		}
+	}
+}
+
+// A review that was only hovered writes no review.json, but its language
+// servers leave their scratch in the folder; it must age out like a
+// snapshots-only folder, or scratch dirs accumulate forever.
+func TestFindStaleReviews_LSPScratchOnlyFolder(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	mk := func(name string, age time.Duration) string {
+		folder := filepath.Join(dir, name)
+		if err := os.MkdirAll(ReviewPathsFor(folder).LSPScratch(), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Now().Add(-age)
+		if err := os.Chtimes(folder, at, at); err != nil {
+			t.Fatal(err)
+		}
+		return folder
+	}
+	old := mk("oldscratch", 60*24*time.Hour)
+	recent := mk("newscratch", 24*time.Hour)
+
+	var got []string
+	for _, s := range findStaleReviews(dir, 7) {
+		got = append(got, s.path)
+	}
+	if !slices.Contains(got, old) {
+		t.Errorf("old scratch-only folder not collected: %v", got)
+	}
+	if slices.Contains(got, recent) {
+		t.Errorf("recent scratch-only folder collected: %v", got)
 	}
 }
 

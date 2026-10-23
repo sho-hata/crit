@@ -98,7 +98,7 @@ func TestPHPExtraRootsVendor(t *testing.T) {
 	root := t.TempDir()
 	vendor := writeComposerVendor(t, root)
 	var got *PeekRoot
-	for _, r := range phpExtraRoots(root) {
+	for _, r := range phpExtraRoots(root, noRun) {
 		if r.Label == "$VENDOR" {
 			got = &r
 		}
