@@ -197,7 +197,7 @@ func (s *Server) checkoutLSPWorktree(sess *Session, patterns []string) (*lsp.Wor
 	if err != nil {
 		return nil, fmt.Errorf("locating lsp worktree pool: %w", err)
 	}
-	remove := func(dir string) error { return vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir) }
+	remove := func(dir string) error { return vcs.RemoveWorktree(sess.RepoRoot, dir) }
 	if err := pool.Sweep(remove); err != nil {
 		log.Printf("lsp: removing orphaned worktrees in %s: %v", pool.Dir, err)
 	}
@@ -251,7 +251,7 @@ func (s *Server) dropLSPRootLocked(sess *Session) {
 	if sess == nil || sess.RepoRoot == "" {
 		return
 	}
-	if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, wt.slot.Dir); err != nil {
+	if err := vcs.RemoveWorktree(sess.RepoRoot, wt.slot.Dir); err != nil {
 		log.Printf("lsp: removing stale worktree %s: %v", wt.slot.Dir, err)
 	}
 }

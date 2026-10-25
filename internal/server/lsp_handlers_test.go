@@ -348,6 +348,9 @@ func TestShutdownLSPRemovesRangeWorktree(t *testing.T) {
 	}
 	root := srv.lspRoot()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	srv.SetShutdownCtx(ctx)
 	srv.ShutdownLSP()
 
 	if _, err := os.Stat(root); err == nil {
