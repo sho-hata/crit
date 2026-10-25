@@ -18,7 +18,6 @@ import (
 
 	"github.com/sho-hata/crit/internal/lsp"
 	"github.com/sho-hata/crit/internal/pathsafe"
-	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -60,16 +59,18 @@ type lspProvider interface {
 	Shutdown()
 }
 
-type lspState struct {
-	mu   sync.Mutex
-	prov lspProvider
-	// worktreeDir is the range/PR focus sparse checkout prov is rooted at;
-	// empty when rooted at the working tree.
-	worktreeDir string
-	worktreeSHA string
+type lspWorktree struct {
+	slot *lsp.WorktreeSlot
+	sha  string
 	// Patterns depend on which servers are installed, which can change while
 	// a daemon runs, so SHA equality alone is not enough to reuse a checkout.
-	worktreePatterns []string
+	patterns []string
+}
+
+type lspState struct {
+	mu       sync.Mutex
+	prov     lspProvider
+	worktree *lspWorktree
 	// idleTimer drops the worktree (and prov) on the same idle timeout as the
 	// servers, so an abandoned range-focus review doesn't keep a checkout on
 	// disk.
@@ -136,8 +137,8 @@ func (s *Server) lspRootLocked() string {
 	if sess == nil {
 		return ""
 	}
-	if s.lsp.worktreeDir != "" {
-		return s.lsp.worktreeDir
+	if s.lsp.worktree != nil {
+		return s.lsp.worktree.slot.Dir
 	}
 	return sess.RepoRoot
 }
@@ -157,14 +158,13 @@ func (s *Server) syncLSPRoot() error {
 	defer s.lsp.mu.Unlock()
 
 	if sess.Focus.Kind != FocusRange {
-		if s.lsp.worktreeDir != "" {
+		if s.lsp.worktree != nil {
 			s.dropLSPRootLocked(sess)
 		}
 		return nil
 	}
 	patterns := s.lspSparsePatterns(sess)
-	if s.lsp.worktreeDir != "" && s.lsp.worktreeSHA == sess.Focus.HeadSHA &&
-		slices.Equal(s.lsp.worktreePatterns, patterns) {
+	if wt := s.lsp.worktree; wt != nil && wt.sha == sess.Focus.HeadSHA && slices.Equal(wt.patterns, patterns) {
 		s.touchLSPIdleLocked()
 		return nil
 	}
@@ -172,15 +172,6 @@ func (s *Server) syncLSPRoot() error {
 	// Rebuilt here rather than on focus change: a review may switch PRs
 	// several times before anyone hovers a symbol.
 	s.dropLSPRootLocked(sess)
-
-	dir := session.ReviewPathsFor(s.reviewPath).LSPWorktree
-	if _, err := os.Lstat(dir); err == nil {
-		// Left behind by a daemon that crashed before cleaning up;
-		// AddSparseWorktree refuses an existing dir.
-		if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir); err != nil {
-			return fmt.Errorf("clearing stale lsp worktree: %w", err)
-		}
-	}
 
 	if limitMB := s.cfg.LSPWorktreeSizeLimitMB(); limitMB > 0 {
 		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, patterns)
@@ -192,14 +183,33 @@ func (s *Server) syncLSPRoot() error {
 		}
 	}
 
-	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, dir, patterns); err != nil {
-		return fmt.Errorf("preparing lsp worktree: %w", err)
+	slot, err := s.checkoutLSPWorktree(sess, patterns)
+	if err != nil {
+		return err
 	}
-	s.lsp.worktreeDir = dir
-	s.lsp.worktreeSHA = sess.Focus.HeadSHA
-	s.lsp.worktreePatterns = patterns
+	s.lsp.worktree = &lspWorktree{slot: slot, sha: sess.Focus.HeadSHA, patterns: patterns}
 	s.touchLSPIdleLocked()
 	return nil
+}
+
+func (s *Server) checkoutLSPWorktree(sess *Session, patterns []string) (*lsp.WorktreeSlot, error) {
+	pool, err := lsp.WorktreePoolFor(sess.RepoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("locating lsp worktree pool: %w", err)
+	}
+	remove := func(dir string) error { return vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir) }
+	if err := pool.Sweep(remove); err != nil {
+		log.Printf("lsp: removing orphaned worktrees in %s: %v", pool.Dir, err)
+	}
+	slot, err := pool.Acquire()
+	if err != nil {
+		return nil, err
+	}
+	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, slot.Dir, patterns); err != nil {
+		slot.Release()
+		return nil, fmt.Errorf("preparing lsp worktree: %w", err)
+	}
+	return slot, nil
 }
 
 // Caller holds s.lsp.mu.
@@ -221,9 +231,8 @@ func (s *Server) dropIdleLSPRoot() {
 	s.dropLSPRootLocked(s.session.Load())
 }
 
-// dropLSPRootLocked shuts down the provider and removes its worktree, if
-// any. A failed removal is only logged: on the syncLSPRoot path the leftover
-// fails the following AddSparseWorktree anyway. Caller holds s.lsp.mu.
+// A failed removal is only logged: whoever takes the slot next clears the
+// leftover. Caller holds s.lsp.mu.
 func (s *Server) dropLSPRootLocked(sess *Session) {
 	if s.lsp.idleTimer != nil {
 		s.lsp.idleTimer.Stop()
@@ -233,18 +242,17 @@ func (s *Server) dropLSPRootLocked(sess *Session) {
 		s.lsp.prov.Shutdown()
 		s.lsp.prov = nil
 	}
-	if s.lsp.worktreeDir == "" {
+	wt := s.lsp.worktree
+	if wt == nil {
 		return
 	}
-	dir := s.lsp.worktreeDir
-	s.lsp.worktreeDir = ""
-	s.lsp.worktreeSHA = ""
-	s.lsp.worktreePatterns = nil
+	s.lsp.worktree = nil
+	defer wt.slot.Release()
 	if sess == nil || sess.RepoRoot == "" {
 		return
 	}
-	if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, dir); err != nil {
-		log.Printf("lsp: removing stale worktree %s: %v", dir, err)
+	if err := vcs.RemoveWorktree(s.shutdownCtx, sess.RepoRoot, wt.slot.Dir); err != nil {
+		log.Printf("lsp: removing stale worktree %s: %v", wt.slot.Dir, err)
 	}
 }
 

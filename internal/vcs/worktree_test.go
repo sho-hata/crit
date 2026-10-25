@@ -128,6 +128,25 @@ func TestAddSparseWorktreeRefusesExistingDir(t *testing.T) {
 	}
 }
 
+func TestAddSparseWorktreeReusesHandDeletedPath(t *testing.T) {
+	t.Parallel()
+	repo := InitTestRepo(t)
+	sha := CommitAtForTest(t, repo, "a.go", "package a\n", "add a.go")
+	dir := filepath.Join(t.TempDir(), "wt")
+	if err := AddSparseWorktree(context.Background(), repo, sha, dir, []string{"*.go"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddSparseWorktree(context.Background(), repo, sha, dir, []string{"*.go"}); err != nil {
+		t.Fatalf("re-adding at a hand-deleted worktree path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.go")); err != nil {
+		t.Fatalf("a.go missing after re-add: %v", err)
+	}
+}
+
 func TestAddSparseWorktreeRejectsBadInput(t *testing.T) {
 	t.Parallel()
 	repo := InitTestRepo(t)

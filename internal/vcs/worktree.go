@@ -44,8 +44,12 @@ func AddSparseWorktree(ctx context.Context, repoRoot, sha, dir string, patterns 
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return fmt.Errorf("worktree: %w", err)
 	}
+	// --force: callers reuse a fixed path, and a directory deleted by hand
+	// (without `git worktree prune`) stays registered as "missing", which
+	// makes git refuse that path. --force lifts only that safeguard here:
+	// a detached SHA never trips the branch-already-checked-out one.
 	steps := [][]string{
-		{"worktree", "add", "--detach", "--no-checkout", dir, fullSHA},
+		{"worktree", "add", "--force", "--detach", "--no-checkout", dir, fullSHA},
 		append([]string{"-C", dir, "sparse-checkout", "set", "--no-cone"}, patterns...),
 		{"-C", dir, "checkout", "--quiet"},
 	}

@@ -16,7 +16,6 @@ import (
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/lsp"
-	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -64,15 +63,17 @@ func newLSPTestServer(t *testing.T, fake *fakeLSPProvider) (*Server, *Session) {
 	return srv, sess
 }
 
-// newRangeLSPTestServer builds a test server backed by a real git repo, with
-// the session in range/PR focus at headSHA. reviewPath is a fresh temp dir
-// so syncLSPRoot has somewhere to put the sparse worktree.
 func newRangeLSPTestServer(t *testing.T, fake *fakeLSPProvider) (srv *Server, sess *Session, repo, headSHA string) {
 	t.Helper()
 	repo = vcs.InitTestRepo(t)
 	headSHA = vcs.CommitAtForTest(t, repo, "main.go", "package main\n\nfunc main() {}\n", "add main.go")
+	srv, sess = newRangeLSPTestServerAt(t, fake, repo, headSHA)
+	return srv, sess, repo, headSHA
+}
 
-	sess = &Session{
+func newRangeLSPTestServerAt(t *testing.T, fake *fakeLSPProvider, repo, headSHA string) (*Server, *Session) {
+	t.Helper()
+	sess := &Session{
 		Mode:        "git",
 		RepoRoot:    repo,
 		VCS:         &vcs.GitVCS{},
@@ -84,15 +85,15 @@ func newRangeLSPTestServer(t *testing.T, fake *fakeLSPProvider) (srv *Server, se
 	}
 	sess.InitTestChannels()
 
-	var err error
-	srv, err = NewServer(sess, FrontendFS, "", "test", 0, "")
+	srv, err := NewServer(sess, FrontendFS, "", "test", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv.reviewPath = t.TempDir()
 	srv.lsp.langAvailable = func(*lsp.Language) bool { return true }
 	srv.lsp.newProvider = func() lspProvider { return fake }
-	return srv, sess, repo, headSHA
+	t.Cleanup(srv.ShutdownLSP)
+	return srv, sess
 }
 
 func doLSPRequest(t *testing.T, srv *Server, url string) *httptest.ResponseRecorder {
@@ -411,28 +412,113 @@ func TestLSPWorktreeIdleCleanup(t *testing.T) {
 	}
 }
 
-// TestLSPWorktreeSelfHealsStaleLeftover covers restart-after-crash: a
-// worktree directory built by a prior (now-dead) daemon process, which this
-// process's in-memory lspState has no record of, must be cleared and
-// rebuilt rather than making every LSP request fail with "already exists".
+func lspWorktreePool(t *testing.T, repo string) lsp.WorktreePool {
+	t.Helper()
+	pool, err := lsp.WorktreePoolFor(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pool
+}
+
+func addDeadDaemonWorktree(t *testing.T, repo, headSHA, dir string) {
+	t.Helper()
+	allLangs := func(*lsp.Language) bool { return true }
+	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, lsp.SparsePatternsForFiles([]string{"main.go"}, allLangs)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func hoverOK(t *testing.T, srv *Server) {
+	t.Helper()
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0"); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 func TestLSPWorktreeSelfHealsStaleLeftover(t *testing.T) {
 	t.Parallel()
 
 	fake := &fakeLSPProvider{hoverContents: "doc"}
 	srv, _, repo, headSHA := newRangeLSPTestServer(t, fake)
+	dir := filepath.Join(lspWorktreePool(t, repo).Dir, "0")
+	addDeadDaemonWorktree(t, repo, headSHA, dir)
 
-	dir := session.ReviewPathsFor(srv.reviewPath).LSPWorktree
-	allLangs := func(*lsp.Language) bool { return true }
-	if err := vcs.AddSparseWorktree(context.Background(), repo, headSHA, dir, lsp.SparsePatternsForFiles([]string{"main.go"}, allLangs)); err != nil {
-		t.Fatal(err)
-	}
-
-	w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=1&char=0")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	hoverOK(t, srv)
+	if got := srv.lspRoot(); got != dir {
+		t.Errorf("lspRoot() = %q, want the reclaimed slot %q", got, dir)
 	}
 	if got := vcs.GitRun(t, srv.lspRoot(), "rev-parse", "HEAD"); got != headSHA {
 		t.Errorf("worktree HEAD = %s, want %s", got, headSHA)
+	}
+}
+
+func TestLSPWorktreePathIsStableAcrossReviews(t *testing.T) {
+	t.Parallel()
+
+	first, _, repo, headSHA := newRangeLSPTestServer(t, &fakeLSPProvider{hoverContents: "doc"})
+	hoverOK(t, first)
+	firstRoot := first.lspRoot()
+	first.ShutdownLSP()
+
+	second, _ := newRangeLSPTestServerAt(t, &fakeLSPProvider{hoverContents: "doc"}, repo, headSHA)
+	hoverOK(t, second)
+
+	pool := lspWorktreePool(t, repo)
+	if want := filepath.Join(pool.Dir, "0"); firstRoot != want || second.lspRoot() != want {
+		t.Errorf("roots = %q, %q; want both %q", firstRoot, second.lspRoot(), want)
+	}
+}
+
+func TestLSPWorktreeParallelDaemonsGetDistinctSlots(t *testing.T) {
+	t.Parallel()
+
+	first, _, repo, firstSHA := newRangeLSPTestServer(t, &fakeLSPProvider{hoverContents: "doc"})
+	secondSHA := vcs.CommitAtForTest(t, repo, "main.go", "package main\n\nfunc main() { println(1) }\n", "change main.go")
+	second, _ := newRangeLSPTestServerAt(t, &fakeLSPProvider{hoverContents: "doc"}, repo, secondSHA)
+	hoverOK(t, first)
+	hoverOK(t, second)
+
+	pool := lspWorktreePool(t, repo)
+	for _, tc := range []struct {
+		srv  *Server
+		slot string
+		sha  string
+	}{
+		{first, "0", firstSHA},
+		{second, "1", secondSHA},
+	} {
+		root := tc.srv.lspRoot()
+		if want := filepath.Join(pool.Dir, tc.slot); root != want {
+			t.Errorf("lspRoot() = %q, want %q", root, want)
+		}
+		if got := vcs.GitRun(t, root, "rev-parse", "HEAD"); got != tc.sha {
+			t.Errorf("%s HEAD = %s, want %s", root, got, tc.sha)
+		}
+	}
+
+	first.ShutdownLSP()
+	third, _ := newRangeLSPTestServerAt(t, &fakeLSPProvider{hoverContents: "doc"}, repo, firstSHA)
+	hoverOK(t, third)
+	if got, want := third.lspRoot(), filepath.Join(pool.Dir, "0"); got != want {
+		t.Errorf("third lspRoot() = %q, want the freed slot %q", got, want)
+	}
+}
+
+func TestLSPWorktreeSweepsOrphanedSlots(t *testing.T) {
+	t.Parallel()
+
+	srv, _, repo, headSHA := newRangeLSPTestServer(t, &fakeLSPProvider{hoverContents: "doc"})
+	pool := lspWorktreePool(t, repo)
+	orphan := filepath.Join(pool.Dir, "1")
+	addDeadDaemonWorktree(t, repo, headSHA, orphan)
+
+	hoverOK(t, srv)
+	if got, want := srv.lspRoot(), filepath.Join(pool.Dir, "0"); got != want {
+		t.Errorf("lspRoot() = %q, want %q", got, want)
+	}
+	if _, err := os.Lstat(orphan); !os.IsNotExist(err) {
+		t.Errorf("orphaned slot %s still exists (lstat err = %v)", orphan, err)
 	}
 }
 
