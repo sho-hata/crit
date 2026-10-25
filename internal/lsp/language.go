@@ -96,18 +96,18 @@ type Language struct {
 	ExtraRoots func(root string) []PeekRoot
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
-	// per crit process in the background after the server first spawns; nil
-	// for none.
-	CacheSweep func()
+	// per crit process in the background after the server first spawns, with
+	// the server's working directory; nil for none.
+	CacheSweep func(root string)
 
 	sweepOnce sync.Once
 }
 
 // sweepCacheOnce starts CacheSweep in the background the first time it is
 // called in this process.
-func (l *Language) sweepCacheOnce() {
+func (l *Language) sweepCacheOnce(root string) {
 	if l.CacheSweep != nil {
-		l.sweepOnce.Do(func() { go l.CacheSweep() })
+		l.sweepOnce.Do(func() { go l.CacheSweep(root) })
 	}
 }
 

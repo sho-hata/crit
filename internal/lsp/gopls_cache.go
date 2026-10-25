@@ -17,14 +17,17 @@ const goplsCacheMaxAge = 5 * 24 * time.Hour
 
 // sweepGoplsCache deletes gopls cache files older than goplsCacheMaxAge.
 // gopls does this itself, but its GC first runs 5 minutes after start and
-// crit's 3-minute idle shutdown kills the server before that.
-func sweepGoplsCache() {
+// crit's 3-minute idle shutdown kills the server before that. root is the
+// server's working directory, which a relative GOPLSCACHE is relative to.
+func sweepGoplsCache(root string) {
 	base := os.Getenv("GOPLSCACHE")
 	if base == "" {
 		var err error
 		if base, err = os.UserCacheDir(); err != nil {
 			return
 		}
+	} else if !filepath.IsAbs(base) {
+		base = filepath.Join(root, base)
 	}
 	dir := filepath.Join(base, "gopls")
 	if _, err := os.Stat(dir); err != nil {
