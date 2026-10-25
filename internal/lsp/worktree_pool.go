@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,21 +39,46 @@ type WorktreeSlot struct {
 	lock  *os.File
 }
 
-// Acquire creates the pool directory and takes the lowest-numbered free slot.
-func (p WorktreePool) Acquire() (*WorktreeSlot, error) {
+// Acquire creates the pool directory and takes the lowest-numbered free slot,
+// calling remove on a checkout left in it (a crashed daemon, a failed
+// removal) while holding its lock. A slot whose leftover remove fails on is
+// skipped: the checkout refuses an existing directory, so handing it out
+// would break range/PR focus LSP for the whole repository.
+func (p WorktreePool) Acquire(remove func(dir string) error) (*WorktreeSlot, error) {
 	if err := os.MkdirAll(p.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("lsp worktree pool: %w", err)
 	}
+	var errs []error
 	for i := range maxWorktreeSlots {
 		f, err := p.tryLockSlot(i)
 		if err != nil {
 			return nil, fmt.Errorf("lsp worktree pool %s: %w", p.Dir, err)
 		}
-		if f != nil {
-			return &WorktreeSlot{Dir: p.slotDir(i), Index: i, lock: f}, nil
+		if f == nil {
+			continue
 		}
+		dir := p.slotDir(i)
+		if err := removeLeftover(dir, remove); err != nil {
+			unlockSlot(f)
+			errs = append(errs, err)
+			continue
+		}
+		return &WorktreeSlot{Dir: dir, Index: i, lock: f}, nil
 	}
-	return nil, fmt.Errorf("lsp worktree pool %s: all %d slots are in use", p.Dir, maxWorktreeSlots)
+	return nil, fmt.Errorf("lsp worktree pool %s: no free slot among %d: %w", p.Dir, maxWorktreeSlots, errors.Join(errs...))
+}
+
+func removeLeftover(dir string, remove func(dir string) error) error {
+	if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err := remove(dir); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s still exists after removal", dir)
+	}
+	return nil
 }
 
 // Release frees the slot. Calling it again is a no-op.
@@ -60,8 +86,7 @@ func (s *WorktreeSlot) Release() {
 	if s.lock == nil {
 		return
 	}
-	_ = flock.Unlock(s.lock)
-	s.lock.Close()
+	unlockSlot(s.lock)
 	s.lock = nil
 }
 
@@ -82,8 +107,7 @@ func (p WorktreePool) Sweep(remove func(dir string) error) error {
 		if err := remove(dir); err != nil {
 			errs = append(errs, err)
 		}
-		_ = flock.Unlock(f)
-		f.Close()
+		unlockSlot(f)
 	}
 	return errors.Join(errs...)
 }
@@ -99,6 +123,11 @@ func (p WorktreePool) tryLockSlot(i int) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+func unlockSlot(f *os.File) {
+	_ = flock.Unlock(f)
+	f.Close()
 }
 
 func (p WorktreePool) slotDir(i int) string {

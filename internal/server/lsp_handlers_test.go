@@ -456,6 +456,31 @@ func TestLSPWorktreeSelfHealsStaleLeftover(t *testing.T) {
 	}
 }
 
+// A slot holding something RemoveWorktree refuses to delete (git doesn't list
+// it: a re-cloned repo, an interrupted `worktree add`) must not be handed out,
+// or every checkout in the repository fails on "already exists".
+func TestLSPWorktreeSkipsUnremovableSlot(t *testing.T) {
+	t.Parallel()
+
+	srv, _, repo, _ := newRangeLSPTestServer(t, &fakeLSPProvider{hoverContents: "doc"})
+	pool := lspWorktreePool(t, repo)
+	stuck := filepath.Join(pool.Dir, "0")
+	if err := os.MkdirAll(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stuck, "keep.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hoverOK(t, srv)
+	if got, want := srv.lspRoot(), filepath.Join(pool.Dir, "1"); got != want {
+		t.Errorf("lspRoot() = %q, want the next slot %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(stuck, "keep.txt")); err != nil {
+		t.Errorf("unregistered slot contents were deleted: %v", err)
+	}
+}
+
 func TestLSPWorktreePathIsStableAcrossReviews(t *testing.T) {
 	t.Parallel()
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -58,6 +59,14 @@ type lspProvider interface {
 	PeekRoots() []lsp.PeekRoot
 	Shutdown()
 }
+
+const (
+	lspWorktreeRemoveTimeout = 30 * time.Second
+	// Shutdown runs before the HTTP server stops, and `crit stop` falls back
+	// to signals after daemon.stopWait (3s). A checkout cut short here is
+	// cleared by whichever daemon takes the slot next.
+	lspShutdownRemoveTimeout = 2 * time.Second
+)
 
 type lspWorktree struct {
 	slot *lsp.WorktreeSlot
@@ -159,7 +168,7 @@ func (s *Server) syncLSPRoot() error {
 
 	if sess.Focus.Kind != FocusRange {
 		if s.lsp.worktree != nil {
-			s.dropLSPRootLocked(sess)
+			s.dropLSPRootLocked(sess, lspWorktreeRemoveTimeout)
 		}
 		return nil
 	}
@@ -171,7 +180,7 @@ func (s *Server) syncLSPRoot() error {
 
 	// Rebuilt here rather than on focus change: a review may switch PRs
 	// several times before anyone hovers a symbol.
-	s.dropLSPRootLocked(sess)
+	s.dropLSPRootLocked(sess, lspWorktreeRemoveTimeout)
 
 	if limitMB := s.cfg.LSPWorktreeSizeLimitMB(); limitMB > 0 {
 		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, patterns)
@@ -197,14 +206,22 @@ func (s *Server) checkoutLSPWorktree(sess *Session, patterns []string) (*lsp.Wor
 	if err != nil {
 		return nil, fmt.Errorf("locating lsp worktree pool: %w", err)
 	}
-	remove := func(dir string) error { return vcs.RemoveWorktree(sess.RepoRoot, dir) }
-	if err := pool.Sweep(remove); err != nil {
-		log.Printf("lsp: removing orphaned worktrees in %s: %v", pool.Dir, err)
+	// One budget for every leftover: this runs under s.lsp.mu, which each
+	// LSP request waits on.
+	ctx, cancel := context.WithTimeout(context.Background(), lspWorktreeRemoveTimeout)
+	defer cancel()
+	remove := func(dir string) error {
+		err := vcs.RemoveWorktree(ctx, sess.RepoRoot, dir)
+		if err != nil {
+			log.Printf("lsp: removing leftover worktree %s: %v", dir, err)
+		}
+		return err
 	}
-	slot, err := pool.Acquire()
+	slot, err := pool.Acquire(remove)
 	if err != nil {
 		return nil, err
 	}
+	_ = pool.Sweep(remove)
 	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, slot.Dir, patterns); err != nil {
 		slot.Release()
 		return nil, fmt.Errorf("preparing lsp worktree: %w", err)
@@ -228,12 +245,12 @@ func (s *Server) touchLSPIdleLocked() {
 func (s *Server) dropIdleLSPRoot() {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
-	s.dropLSPRootLocked(s.session.Load())
+	s.dropLSPRootLocked(s.session.Load(), lspWorktreeRemoveTimeout)
 }
 
 // A failed removal is only logged: whoever takes the slot next clears the
-// leftover. Caller holds s.lsp.mu.
-func (s *Server) dropLSPRootLocked(sess *Session) {
+// leftover. timeout bounds the removal. Caller holds s.lsp.mu.
+func (s *Server) dropLSPRootLocked(sess *Session, timeout time.Duration) {
 	if s.lsp.idleTimer != nil {
 		s.lsp.idleTimer.Stop()
 		s.lsp.idleTimer = nil
@@ -251,7 +268,9 @@ func (s *Server) dropLSPRootLocked(sess *Session) {
 	if sess == nil || sess.RepoRoot == "" {
 		return
 	}
-	if err := vcs.RemoveWorktree(sess.RepoRoot, wt.slot.Dir); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := vcs.RemoveWorktree(ctx, sess.RepoRoot, wt.slot.Dir); err != nil {
 		log.Printf("lsp: removing stale worktree %s: %v", wt.slot.Dir, err)
 	}
 }
@@ -301,7 +320,7 @@ func (s *Server) lspSessionFiles() []string {
 func (s *Server) ShutdownLSP() {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
-	s.dropLSPRootLocked(s.session.Load())
+	s.dropLSPRootLocked(s.session.Load(), lspShutdownRemoveTimeout)
 }
 
 // parseLSPParams: line is 1-based (the UI's NewNum); char is a 0-based

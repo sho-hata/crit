@@ -55,7 +55,10 @@ func AddSparseWorktree(ctx context.Context, repoRoot, sha, dir string, patterns 
 	}
 	for _, args := range steps {
 		if _, err := runGit(ctx, repoRoot, append(noEOLConversion(), args...)...); err != nil {
-			_ = removeWorktree(repoRoot, dir, true)
+			// Own timeout, not ctx: ctx may itself be why this step failed.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), gitOpTimeout)
+			_ = removeWorktree(cleanupCtx, repoRoot, dir, true)
+			cancel()
 			return fmt.Errorf("worktree: %w", err)
 		}
 	}
@@ -77,28 +80,29 @@ func noEOLConversion() []string {
 // list as a worktree of repoRoot. It prunes metadata only after falling back
 // to deleting the directory itself — a repo-wide prune would also drop the
 // user's other worktrees whose directories are temporarily missing
-// (unmounted volume). Each git step runs under its own timeout: a caller's
-// cancelled context (daemon shutdown) must not skip the cleanup.
-func RemoveWorktree(repoRoot, dir string) error {
+// (unmounted volume). ctx bounds the whole removal, so a caller holding a
+// lock caps how long it is held; a shutdown path passes a fresh context, not
+// its cancelled one.
+func RemoveWorktree(ctx context.Context, repoRoot, dir string) error {
 	dir, err := absWorktreeDir(dir)
 	if err != nil {
 		return err
 	}
-	return removeWorktree(repoRoot, dir, false)
+	return removeWorktree(ctx, repoRoot, dir, false)
 }
 
 // ownDir asserts the caller created dir (AddSparseWorktree's failure path),
 // which permits deleting it even when git has no record of it yet.
-func removeWorktree(repoRoot, dir string, ownDir bool) error {
+func removeWorktree(ctx context.Context, repoRoot, dir string, ownDir bool) error {
 	if _, err := os.Lstat(dir); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("worktree: %w", err)
 	}
-	if _, err := runCleanupGit(repoRoot, "worktree", "remove", "--force", dir); err == nil {
+	if _, err := runGit(ctx, repoRoot, "worktree", "remove", "--force", dir); err == nil {
 		return nil
-	} else if !ownDir && !isRegisteredWorktree(repoRoot, dir) {
+	} else if !ownDir && !isRegisteredWorktree(ctx, repoRoot, dir) {
 		return fmt.Errorf("worktree: %s is not a worktree of %s: %w", dir, repoRoot, err)
 	}
 	// git refused (metadata missing or inconsistent) but the directory is
@@ -106,18 +110,12 @@ func removeWorktree(repoRoot, dir string, ownDir bool) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("worktree: %w", err)
 	}
-	_, err := runCleanupGit(repoRoot, "worktree", "prune")
+	_, err := runGit(ctx, repoRoot, "worktree", "prune")
 	return err
 }
 
-func runCleanupGit(repoRoot string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitOpTimeout)
-	defer cancel()
-	return runGit(ctx, repoRoot, args...)
-}
-
-func isRegisteredWorktree(repoRoot, dir string) bool {
-	out, err := runCleanupGit(repoRoot, "worktree", "list", "--porcelain")
+func isRegisteredWorktree(ctx context.Context, repoRoot, dir string) bool {
+	out, err := runGit(ctx, repoRoot, "worktree", "list", "--porcelain")
 	if err != nil {
 		return false
 	}

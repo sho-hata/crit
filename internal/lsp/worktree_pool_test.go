@@ -12,7 +12,7 @@ import (
 
 func acquireSlot(t *testing.T, p WorktreePool) *WorktreeSlot {
 	t.Helper()
-	s, err := p.Acquire()
+	s, err := p.Acquire(func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,9 +47,73 @@ func TestWorktreePoolAcquireFailsWithoutPoolDir(t *testing.T) {
 	if err := os.WriteFile(parent, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if s, err := (WorktreePool{Dir: filepath.Join(parent, "pool")}).Acquire(); err == nil {
+	if s, err := (WorktreePool{Dir: filepath.Join(parent, "pool")}).Acquire(os.RemoveAll); err == nil {
 		s.Release()
 		t.Fatal("Acquire under a regular file succeeded")
+	}
+}
+
+func TestWorktreePoolAcquireRemovesLeftover(t *testing.T) {
+	p := WorktreePool{Dir: t.TempDir()}
+	leftover := filepath.Join(p.Dir, "0")
+	if err := os.Mkdir(leftover, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	var removed []string
+	s, err := p.Acquire(func(dir string) error {
+		removed = append(removed, dir)
+		return os.RemoveAll(dir)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Release)
+	if s.Index != 0 || !slices.Equal(removed, []string{leftover}) {
+		t.Errorf("slot %d, removed %v; want slot 0 with %s removed", s.Index, removed, leftover)
+	}
+}
+
+func TestWorktreePoolAcquireSkipsUnremovableSlot(t *testing.T) {
+	p := WorktreePool{Dir: t.TempDir()}
+	stuck := filepath.Join(p.Dir, "0")
+	if err := os.Mkdir(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		remove func(string) error
+	}{
+		{name: "remove fails", remove: func(string) error { return errors.New("boom") }},
+		{name: "remove leaves the directory", remove: func(string) error { return nil }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := p.Acquire(tt.remove)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Release()
+			if s.Index != 1 {
+				t.Errorf("Acquire = slot %d, want 1 (slot 0 still holds a leftover)", s.Index)
+			}
+		})
+	}
+
+	if _, err := os.Stat(stuck); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < maxWorktreeSlots; i++ {
+		if err := os.Mkdir(p.slotDir(i), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	boom := errors.New("boom")
+	if s, err := p.Acquire(func(string) error { return boom }); !errors.Is(err, boom) {
+		if s != nil {
+			s.Release()
+		}
+		t.Errorf("Acquire with every slot unremovable = %v, want an error wrapping %v", err, boom)
 	}
 }
 

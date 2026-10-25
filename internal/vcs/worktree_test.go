@@ -37,7 +37,7 @@ func TestAddSparseWorktreeChecksOutOnlyMatchingFiles(t *testing.T) {
 		t.Errorf("worktree content = %q, want content at %s", got, sha[:7])
 	}
 
-	if err := RemoveWorktree(repo, dir); err != nil {
+	if err := RemoveWorktree(context.Background(), repo, dir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dir); err == nil {
@@ -61,7 +61,7 @@ func TestAddSparseWorktreeKeepsBlobBytesUnderAutocrlf(t *testing.T) {
 	if err := AddSparseWorktree(context.Background(), repo, sha, dir, patterns); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = RemoveWorktree(repo, dir) }()
+	defer func() { _ = RemoveWorktree(context.Background(), repo, dir) }()
 
 	got, err := os.ReadFile(filepath.Join(dir, "a.go"))
 	if err != nil {
@@ -87,7 +87,7 @@ func TestAddSparseWorktreeResolvesAbbreviatedSHA(t *testing.T) {
 	if err := AddSparseWorktree(context.Background(), repo, sha[:10], dir, []string{"*.go"}); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = RemoveWorktree(repo, dir) }()
+	defer func() { _ = RemoveWorktree(context.Background(), repo, dir) }()
 	if got := GitRun(t, dir, "rev-parse", "HEAD"); got != sha {
 		t.Errorf("worktree HEAD = %s, want %s", got, sha)
 	}
@@ -105,7 +105,7 @@ func TestAddSparseWorktreeRejectsHexBranchName(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "wt")
 	if err := AddSparseWorktree(context.Background(), repo, "beef", dir, []string{"*.go"}); err == nil {
-		_ = RemoveWorktree(repo, dir)
+		_ = RemoveWorktree(context.Background(), repo, dir)
 		t.Fatal("expected error: hex-looking branch name must not be checked out as a SHA")
 	}
 	if _, err := os.Stat(dir); err == nil {
@@ -191,7 +191,7 @@ func TestAddSparseWorktreeRelativeDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "rel", "wt")); err == nil {
 		t.Error("worktree was created relative to repoRoot")
 	}
-	if err := RemoveWorktree(repo, "rel/wt"); err != nil {
+	if err := RemoveWorktree(context.Background(), repo, "rel/wt"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "rel", "wt")); err == nil {
@@ -203,7 +203,7 @@ func TestRemoveWorktreeIsIdempotent(t *testing.T) {
 	t.Parallel()
 	repo := InitTestRepo(t)
 	dir := filepath.Join(t.TempDir(), "never-created")
-	if err := RemoveWorktree(repo, dir); err != nil {
+	if err := RemoveWorktree(context.Background(), repo, dir); err != nil {
 		t.Fatalf("removing a non-existent worktree: %v", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestRemoveWorktreeRefusesForeignDir(t *testing.T) {
 	dir := t.TempDir()
 	keep := filepath.Join(dir, "precious.txt")
 	writeFileForTest(t, keep, "do not delete")
-	if err := RemoveWorktree(repo, dir); err == nil {
+	if err := RemoveWorktree(context.Background(), repo, dir); err == nil {
 		t.Error("expected error removing a directory that is not a worktree")
 	}
 	if _, err := os.Stat(keep); err != nil {
@@ -238,7 +238,7 @@ func TestRemoveWorktreeDoesNotPruneOtherWorktrees(t *testing.T) {
 	if err := AddSparseWorktree(context.Background(), repo, sha, ours, []string{"*.go"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveWorktree(repo, ours); err != nil {
+	if err := RemoveWorktree(context.Background(), repo, ours); err != nil {
 		t.Fatal(err)
 	}
 	if list := GitRun(t, repo, "worktree", "list", "--porcelain"); !strings.Contains(list, "other") {
@@ -270,7 +270,7 @@ func TestSparseTreeSizeMatchesCheckout(t *testing.T) {
 	if err := AddSparseWorktree(context.Background(), repo, sha, dir, patterns); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = RemoveWorktree(repo, dir) }()
+	defer func() { _ = RemoveWorktree(context.Background(), repo, dir) }()
 	var actual int64
 	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -292,5 +292,25 @@ func TestSparseTreeSizeMatchesCheckout(t *testing.T) {
 	})
 	if actual != est {
 		t.Errorf("checked-out bytes %d != estimate %d", actual, est)
+	}
+}
+
+func TestRemoveWorktreeStopsAtContextDeadline(t *testing.T) {
+	t.Parallel()
+	repo := InitTestRepo(t)
+	sha := CommitAtForTest(t, repo, "a.go", "package a\n", "add a.go")
+	dir := filepath.Join(t.TempDir(), "wt")
+	if err := AddSparseWorktree(context.Background(), repo, sha, dir, []string{"*.go"}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = RemoveWorktree(context.Background(), repo, dir) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := RemoveWorktree(ctx, repo, dir); err == nil {
+		t.Fatal("RemoveWorktree with a done context succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.go")); err != nil {
+		t.Errorf("worktree touched after the deadline: %v", err)
 	}
 }
