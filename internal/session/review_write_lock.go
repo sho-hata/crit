@@ -25,7 +25,7 @@ const lockReviewAttempts = 10
 
 // lockReview opens and locks the review's lock file.
 func lockReview(identity string) (*os.File, error) {
-	return lockIdentityFile(identity, ReviewPathsFor(identity).ReviewLock, "review lock")
+	return lockIdentityFile(identity, reviewLockPath(identity), "review lock")
 }
 
 // lockIdentityFile opens and locks lockPath, a lock file inside the review

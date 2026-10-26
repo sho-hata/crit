@@ -459,6 +459,16 @@ test.describe('Story mode', () => {
             file_path: 'routes.go', old_start: h.OldStart,
           })),
         })),
+        // The fork's fixture adds Terraform hunks; place them so the story
+        // stays above the ingestion floor (half of the diff's hunks).
+        support: [{
+          ...STORY.support[0],
+          hunk_refs: [
+            ...STORY.support[0].hunk_refs,
+            { file_path: 'main.tf', old_start: 0 },
+            { file_path: 'terraform.tfvars', old_start: 0 },
+          ],
+        }],
       });
       await loadPage(page);
       const group = (id: string) => storyView(page, id).locator('[data-story-file="routes.go"]');

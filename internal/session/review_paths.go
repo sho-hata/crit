@@ -9,7 +9,6 @@ type ReviewPaths struct {
 	Snapshots   string
 	Attachments string
 	LSPWorktree string
-	ReviewLock  string
 }
 
 // ReviewPathsFor returns the v4 folder-form paths for a review identity.
@@ -20,6 +19,12 @@ func ReviewPathsFor(identity string) ReviewPaths {
 		Snapshots:   filepath.Join(identity, "snapshots.json"),
 		Attachments: filepath.Join(identity, "attachments"),
 		LSPWorktree: filepath.Join(identity, "lsp-worktree"),
-		ReviewLock:  filepath.Join(identity, "review.lock"),
 	}
+}
+
+// reviewLockPath is the review write lock file for a review identity. It is
+// not a ReviewPaths field: ReviewPathsFor runs on every review save and load,
+// and only the lock code needs this path.
+func reviewLockPath(identity string) string {
+	return filepath.Join(identity, "review.lock")
 }

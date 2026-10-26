@@ -90,7 +90,7 @@ func ClearReviewFolder(identity string) error {
 	case !info.IsDir():
 		return os.Remove(identity)
 	}
-	lockPath := ReviewPathsFor(identity).ReviewLock
+	lockPath := reviewLockPath(identity)
 	lockGone := false
 	err = WithReviewWriteLock(identity, func() error {
 		entries, err := os.ReadDir(identity)

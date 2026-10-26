@@ -93,7 +93,11 @@ func (s *Session) SyncWorkingTree(paths ...string) {
 }
 
 type syncCandidate struct {
-	f          *FileEntry
+	f *FileEntry
+	// path and absPath are copied under the lock: RefreshFileList retargets
+	// the entry on a rename while readSyncUpdate runs without it.
+	path       string
+	absPath    string
 	oldHash    string
 	oldContent string
 	status     string
@@ -127,7 +131,7 @@ func (s *Session) syncCandidates(paths []string) (candidates []syncCandidate, ba
 		if len(want) > 0 && !want[f.Path] {
 			continue
 		}
-		candidates = append(candidates, syncCandidate{f, f.FileHash, f.Content, f.Status, f.OldPath})
+		candidates = append(candidates, syncCandidate{f, f.Path, f.AbsPath, f.FileHash, f.Content, f.Status, f.OldPath})
 	}
 	return candidates, s.BaseRef, s.RepoRoot, s.VCS
 }
@@ -135,7 +139,7 @@ func (s *Session) syncCandidates(paths []string) (candidates []syncCandidate, ba
 // readSyncUpdate reads c from disk and, when it changed, diffs it against
 // base. Runs without the session lock.
 func readSyncUpdate(c syncCandidate, baseRef, repoRoot string, vc vcs.VCS) (syncUpdate, bool) {
-	data, err := os.ReadFile(c.f.AbsPath)
+	data, err := os.ReadFile(c.absPath)
 	if err != nil {
 		return syncUpdate{}, false
 	}
@@ -146,7 +150,7 @@ func readSyncUpdate(c syncCandidate, baseRef, repoRoot string, vc vcs.VCS) (sync
 	u := syncUpdate{syncCandidate: c, content: string(data), hash: hash}
 	if c.status == "untracked" || c.status == "added" {
 		u.hunks, u.hunksOK = vcs.FileDiffUnifiedNewFile(u.content), true
-	} else if h, err := diffHunksForFile(c.f.Path, c.oldPath, c.status, baseRef, repoRoot, false, vc); err == nil {
+	} else if h, err := diffHunksForFile(c.path, c.oldPath, c.status, baseRef, repoRoot, false, vc); err == nil {
 		u.hunks, u.hunksOK = h, true
 	}
 	return u, true
@@ -154,7 +158,7 @@ func readSyncUpdate(c syncCandidate, baseRef, repoRoot string, vc vcs.VCS) (sync
 
 // applySyncUpdates stores the new content and moves comments with it, and
 // reports whether any comment moved. A file whose hash changed since it was
-// read (round complete, lazy load) is skipped.
+// read (round complete, lazy load), or that a rename retargeted, is skipped.
 func (s *Session) applySyncUpdates(updates []syncUpdate) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -163,7 +167,7 @@ func (s *Session) applySyncUpdates(updates []syncUpdate) bool {
 	}
 	moved := false
 	for _, u := range updates {
-		if u.f.FileHash != u.oldHash {
+		if u.f.FileHash != u.oldHash || u.f.Path != u.path {
 			continue
 		}
 		var changed bool
