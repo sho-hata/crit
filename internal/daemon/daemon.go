@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/flock"
 )
 
 type CommonDaemonFlags struct {
@@ -593,8 +594,7 @@ func acquireSessionLock(key string) (*os.File, error) {
 	deadline := time.Now().Add(5 * time.Second)
 	backoff := 100 * time.Millisecond
 	for time.Now().Before(deadline) {
-		err = flockExclusiveNB(f)
-		if err == nil {
+		if locked, _ := flock.TryLock(f); locked {
 			if isFileAt(f, lockPath) {
 				return f, nil
 			}
@@ -643,14 +643,14 @@ func removeLockIfFree(path string) {
 // removeOpenedLockIfFree also checks whether the file was replaced after it
 // was opened, before deleting the path.
 func removeOpenedLockIfFree(f *os.File, path string) {
-	if flockExclusiveNB(f) != nil {
+	if locked, _ := flock.TryLock(f); !locked {
 		f.Close()
 		return
 	}
 	// The file may have been replaced after OpenFile but before the lock was
 	// acquired. Never remove a newer session's lock by its pathname.
 	if !isFileAt(f, path) {
-		_ = Funlock(f)
+		_ = flock.Unlock(f)
 		f.Close()
 		return
 	}

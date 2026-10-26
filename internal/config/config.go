@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sho-hata/crit/internal/flock"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -583,7 +584,6 @@ func SaveGlobalConfig(apply func(m map[string]json.RawMessage) error) error {
 
 // lockGlobalConfig acquires an exclusive flock on `<path>.lock`, mirroring the
 // pattern in acquireSessionLock. Returns an unlock func the caller must defer.
-// Retries with exponential backoff up to a 5s deadline.
 func lockGlobalConfig(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("creating config dir: %w", err)
@@ -596,9 +596,14 @@ func lockGlobalConfig(path string) (func(), error) {
 	deadline := time.Now().Add(5 * time.Second)
 	backoff := 50 * time.Millisecond
 	for {
-		if err := flockExclusiveNB(f); err == nil {
+		locked, err := flock.TryLock(f)
+		if err != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("locking %s: %w", lockPath, err)
+		}
+		if locked {
 			return func() {
-				_ = funlock(f)
+				_ = flock.Unlock(f)
 				_ = f.Close()
 			}, nil
 		}
