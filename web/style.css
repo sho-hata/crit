@@ -539,8 +539,8 @@ body {
   from { opacity: 1; transform: translateY(0) scale(1); }
   to { opacity: 0; transform: translateY(8px) scale(0.98); }
 }
-.toast.error {
-  background: var(--crit-toast-error-bg);
+.toast.toast-error {
+  background: linear-gradient(var(--crit-toast-error-bg), var(--crit-toast-error-bg)), var(--crit-bg-elevated);
   border: 1px solid color-mix(in srgb, var(--crit-red) 30%, transparent);
   color: var(--crit-red);
 }
@@ -565,10 +565,10 @@ body {
 .toast-btn-filled {
   color: var(--crit-editor-bg);
 }
-.toast.error .toast-btn-filled {
+.toast.toast-error .toast-btn-filled {
   background: var(--crit-red);
 }
-.toast.error .toast-btn-filled:hover { filter: brightness(1.1); }
+.toast.toast-error .toast-btn-filled:hover { filter: brightness(1.1); }
 .toast-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 .btn-success {
@@ -1521,6 +1521,12 @@ body.dragging { user-select: none; cursor: grabbing; }
   border-bottom: 1.5px solid var(--crit-quote-highlight-border);
   border-radius: 1px;
   padding: 1px 0;
+}
+/* A diagram label in SVG <text> has no background; underline it instead. */
+tspan.quote-highlight {
+  text-decoration: underline;
+  text-decoration-color: var(--crit-quote-highlight-border);
+  text-decoration-thickness: 1.5px;
 }
 .comment-body {
   padding: 10px 14px;
@@ -4579,6 +4585,9 @@ html[data-theme="light"] .toggle-btn.active {
   padding: 0 10px;
 }
 .scope-toggle .toggle-btn:disabled { opacity: 0.4; cursor: default; }
+.scope-toggle.commit-pinned {
+  border-color: var(--crit-orange);
+}
 
 /* Commit picker (sidebar dropdown) */
 .commit-picker {

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/testutil"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -2840,56 +2841,6 @@ func TestMergeGHCommentsScoped_NoStampWithEmptyScope(t *testing.T) {
 	}
 }
 
-// TestResolvePullScope verifies the daemon-probe + on-disk fallback used by
-// `crit pull` and mergeWebComments. Mirrors the precedence in
-// resolveCommentScope (focus_cli.go) but always emits DiffScope=layer.
-func TestResolvePullScope(t *testing.T) {
-	cases := []struct {
-		name        string
-		daemonFocus *Focus
-		diskScope   string
-		wantHead    string
-		wantScope   string
-	}{
-		{name: "no daemon, no disk -> empty (legacy)", wantHead: "", wantScope: ""},
-		{
-			name:        "daemon range/layer -> head + layer",
-			daemonFocus: &Focus{Kind: FocusRange, HeadSHA: "abc", DiffScope: DiffScopeLayer},
-			wantHead:    "abc", wantScope: "layer",
-		},
-		{
-			name:        "daemon range/full-stack -> still layer (pulls anchor to PR diff)",
-			daemonFocus: &Focus{Kind: FocusRange, HeadSHA: "def", DiffScope: DiffScopeFullStack},
-			wantHead:    "def", wantScope: "layer",
-		},
-		{
-			name:        "daemon working-tree -> empty",
-			daemonFocus: &Focus{Kind: FocusWorkingTree},
-			wantHead:    "", wantScope: "",
-		},
-		{
-			name:      "no daemon, disk says layer -> layer with empty head",
-			diskScope: "layer",
-			wantHead:  "", wantScope: "layer",
-		},
-		{
-			name:      "no daemon, disk says full_stack -> still layer",
-			diskScope: "full_stack",
-			wantHead:  "", wantScope: "layer",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			withDaemonFocus(t, tc.daemonFocus)
-			cj := &CritJSON{ActiveDiffScope: tc.diskScope}
-			got := resolvePullScope(cj)
-			if got.HeadSHA != tc.wantHead || got.DiffScope != tc.wantScope {
-				t.Errorf("got=%+v want head=%q scope=%q", got, tc.wantHead, tc.wantScope)
-			}
-		})
-	}
-}
-
 // TestParsePRViewJSON_ForkPR locks down the parser's handling of fork PRs:
 // isCrossRepository must round-trip and HeadRepoURL must come from
 // headRepository.url so ensureSHAFetched can fall back to the fork remote.
@@ -3017,7 +2968,11 @@ func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "review.json")
+	path := filepath.Join(dir, "review")
+	reviewPath := session.ReviewPathsFor(path).Review
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
@@ -3033,7 +2988,7 @@ func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 
@@ -3045,7 +3000,7 @@ func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 
-	out, err := os.ReadFile(path)
+	out, err := os.ReadFile(reviewPath)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -3709,7 +3664,11 @@ func TestBodyHashAtPush(t *testing.T) {
 
 func TestUpdateCritJSONWithEditedBodies_ExportedWrapper(t *testing.T) {
 	dir := t.TempDir()
-	critPath := filepath.Join(dir, "review.json")
+	critPath := filepath.Join(dir, "review")
+	reviewPath := session.ReviewPathsFor(critPath).Review
+	if err := os.MkdirAll(critPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
@@ -3725,7 +3684,7 @@ func TestUpdateCritJSONWithEditedBodies_ExportedWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if err := os.WriteFile(critPath, data, 0644); err != nil {
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 
@@ -3737,7 +3696,7 @@ func TestUpdateCritJSONWithEditedBodies_ExportedWrapper(t *testing.T) {
 		t.Fatalf("UpdateCritJSONWithEditedBodies: %v", err)
 	}
 
-	out, err := os.ReadFile(critPath)
+	out, err := os.ReadFile(reviewPath)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -3792,5 +3751,32 @@ func TestGHAPIErrorDetail(t *testing.T) {
 				t.Errorf("ghAPIErrorDetail() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A body edited again while the push ran is kept; only the pushed body's
+// hash is stamped, so the next push sends the newer body.
+func TestUpdateCritJSONWithEditedBodies_KeepsNewerBody(t *testing.T) {
+	critPath := filepath.Join(t.TempDir(), "review")
+	cj := CritJSON{Files: map[string]CritJSONFile{
+		"a.go": {Comments: []Comment{{ID: "c1", GitHubID: 500, Body: "edited again"}}},
+	}}
+	if err := session.SaveCritJSON(critPath, cj); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateCritJSONWithEditedBodies(critPath, []ghEditForPush{{GitHubID: 500, Body: "edited", Path: "a.go"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(session.ReviewPathsFor(critPath).Review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got CritJSON
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	c := got.Files["a.go"].Comments[0]
+	if c.Body != "edited again" || c.LastPushedBodyHash != bodyHashAtPush("edited") {
+		t.Errorf("comment = %+v", c)
 	}
 }

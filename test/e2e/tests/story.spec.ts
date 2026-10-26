@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
-  clearAllComments, loadPage, goSection, addComment, diffLine, diffLineNumber, hoverLine, revealFile,
+  clearAllComments, loadPage, fileHeader, goSection, addComment, diffLine, diffLineNumber, hoverLine, revealFile,
   submitFileLevelComment, expectPaintedQuote, selectInLineAndPressC, readFixtureState, roundComplete,
 } from './helpers';
 
@@ -438,6 +438,87 @@ test.describe('Story mode', () => {
     await expect(storyView(page, 'ch1').locator('.crit-story-file-group[data-story-file="routes.go"]')).toHaveClass(/viewed/);
   });
 
+  test('Viewed tracks chapter hunks independently and derives whole-file progress', async ({ page, request }) => {
+    const routesPath = path.join(fixtureDir, 'routes.go');
+    const original = fs.readFileSync(routesPath, 'utf8');
+    try {
+      fs.writeFileSync(routesPath, original.replace(
+        'func handleCategories(w http.ResponseWriter, r *http.Request) {\n\tw.WriteHeader(http.StatusOK)',
+        'func handleCategories(w http.ResponseWriter, r *http.Request) {\n\tw.WriteHeader(http.StatusAccepted)'));
+      await roundComplete(request);
+      await expect.poll(async () => {
+        const diff = await (await request.get('/api/file/diff?path=routes.go')).json();
+        return diff.hunks.length;
+      }).toBe(3);
+      const { hunks } = await (await request.get('/api/file/diff?path=routes.go')).json();
+      await postStory(request, {
+        ...STORY,
+        chapters: STORY.chapters.map((chapter, i) => ({
+          ...chapter,
+          hunk_refs: (i === 0 ? hunks.slice(0, 2) : hunks.slice(2)).map((h: { OldStart: number }) => ({
+            file_path: 'routes.go', old_start: h.OldStart,
+          })),
+        })),
+      });
+      await loadPage(page);
+      const group = (id: string) => storyView(page, id).locator('[data-story-file="routes.go"]');
+      const tree = page.locator('.tree-file[data-tree-path="routes.go"]');
+      await tocItem(page, 'ch1').click();
+      await group('ch1').locator('.file-header-viewed').click();
+      await expect(group('ch1')).toHaveClass(/viewed/);
+      await expect(railRow(page, 'ch1').locator('.crit-story-status')).toHaveClass(/done/);
+      await expect(railRow(page, 'ch2').locator('.crit-story-status')).not.toHaveClass(/done|partial/);
+      await expect(page.locator('#viewedCount')).toContainText('0 /');
+      await expect(tree.locator('.tree-viewed-check')).toHaveCount(0);
+
+      await page.reload();
+      await expect(group('ch1')).toHaveClass(/viewed/);
+      await railRow(page, 'ch2').click();
+      await expect(group('ch2').locator('input[type="checkbox"]')).not.toBeChecked();
+      await group('ch2').locator('.file-header-viewed').click();
+      await expect(page.locator('#viewedCount')).toContainText('1 /');
+      await expect(tree).toHaveClass(/viewed/);
+      await expect(tree.locator('.tree-viewed-check')).toHaveCount(1);
+
+      // The flat checkbox still clears or marks the whole file.
+      await page.locator('#storyViewToggle [data-story-view="diff"]').click();
+      await revealFile(page, 'routes.go');
+      const flat = fileHeader(page, 'routes.go').locator('.file-header-viewed input');
+      await expect(flat).toBeChecked();
+      await flat.click();
+      await flat.click();
+      await page.locator('#storyViewToggle [data-story-view="story"]').click();
+      await railRow(page, 'ch1').click();
+      await expect(group('ch1')).toHaveClass(/viewed/);
+      await group('ch1').locator('.file-header-viewed').click();
+      await expect(page.locator('#viewedCount')).toContainText('0 /');
+      await railRow(page, 'ch2').click();
+      await expect(group('ch2')).toHaveClass(/viewed/);
+      await page.reload();
+      await expect(group('ch2')).toHaveClass(/viewed/);
+      await railRow(page, 'ch1').click();
+      await expect(group('ch1').locator('input[type="checkbox"]')).not.toBeChecked();
+
+      await storyView(page, 'ch1').locator('.crit-story-chapter__mark').click();
+      await expect(page.locator('#viewedCount')).toContainText('1 /');
+      fs.writeFileSync(routesPath, fs.readFileSync(routesPath, 'utf8')
+        .replace('http.StatusAccepted', 'http.StatusCreated'));
+      await roundComplete(request);
+      await expect(group('ch1')).not.toHaveClass(/viewed/);
+      await expect(page.locator('#viewedCount')).toContainText('0 /');
+      await railRow(page, 'ch2').click();
+      await expect(group('ch2')).toHaveClass(/viewed/);
+      await page.reload();
+      await expect(group('ch2')).toHaveClass(/viewed/);
+      await railRow(page, 'ch1').click();
+      await expect(group('ch1')).not.toHaveClass(/viewed/);
+    } finally {
+      await clearStory(request);
+      fs.writeFileSync(routesPath, original);
+      await roundComplete(request);
+    }
+  });
+
   test('marking every file in a chapter viewed updates the chapter mark button in place', async ({ page, request }) => {
     await postStory(request);
     await loadPage(page);
@@ -462,6 +543,86 @@ test.describe('Story mode', () => {
     await markBtn.scrollIntoViewIfNeeded();
     await markBtn.click();
     await expect(markBtn).toHaveText('Mark chapter viewed');
+    await expect(group).not.toHaveClass(/viewed/);
+  });
+
+  test('Mark chapter viewed collapses every group in the chapter', async ({ page, request }) => {
+    await postStory(request);
+    await loadPage(page);
+
+    await tocItem(page, 'ch2').scrollIntoViewIfNeeded();
+    await tocItem(page, 'ch2').click();
+    const view = storyView(page, 'ch2');
+    const groups = view.locator('.crit-story-file-group');
+    await expect(groups).toHaveCount(2);
+    await expect(view.locator('.crit-story-file-group[open]')).toHaveCount(2);
+
+    const markBtn = view.locator('.crit-story-chapter__mark-row .crit-story-chapter__mark');
+    await markBtn.scrollIntoViewIfNeeded();
+    await markBtn.click();
+    await expect(markBtn).toHaveText('Chapter viewed');
+    await expect(view.locator('.crit-story-file-group.viewed')).toHaveCount(2);
+    await expect(view.locator('.crit-story-file-group[open]')).toHaveCount(0);
+  });
+
+  test('a group whose hunks left the diff cannot be marked and does not block chapter progress', async ({ page, request }) => {
+    const story = structuredClone(STORY);
+    story.chapters[0].hunk_refs.push({ file_path: 'server.go', old_start: 9000 });
+    await postStory(request, story);
+    await loadPage(page);
+
+    await tocItem(page, 'ch1').scrollIntoViewIfNeeded();
+    await tocItem(page, 'ch1').click();
+    const view = storyView(page, 'ch1');
+    const stale = view.locator('.crit-story-file-group[data-story-file="server.go"]');
+    await expect(stale.locator('.file-header-viewed input')).toBeDisabled();
+
+    const group = view.locator('.crit-story-file-group[data-story-file="routes.go"]');
+    await group.locator('.file-header-viewed').scrollIntoViewIfNeeded();
+    await group.locator('.file-header-viewed').click();
+    const markBtn = view.locator('.crit-story-chapter__mark-row .crit-story-chapter__mark');
+    await expect(markBtn).toHaveText('Chapter viewed');
+
+    await markBtn.scrollIntoViewIfNeeded();
+    await markBtn.click();
+    await expect(markBtn).toHaveText('Mark chapter viewed');
+    await expect(group).not.toHaveClass(/viewed/);
+  });
+
+  test('a and o act on the story file group under the mouse, else the one filling the pane', async ({ page, request }) => {
+    await postStory(request);
+    await loadPage(page);
+
+    await tocItem(page, 'ch1').scrollIntoViewIfNeeded();
+    await tocItem(page, 'ch1').click();
+    await expect(storyView(page, 'ch1')).toBeVisible();
+
+    const group = storyView(page, 'ch1').locator('.crit-story-file-group[data-story-file="routes.go"]');
+    const markBtn = storyView(page, 'ch1').locator('.crit-story-chapter__mark-row .crit-story-chapter__mark');
+    const header = group.locator('.crit-story-file-header');
+    await header.scrollIntoViewIfNeeded();
+    await expect(group.locator('.file-header-viewed')).toHaveAttribute('title', 'Viewed (a)');
+
+    // Under the mouse: same effects as clicking the checkbox.
+    await header.locator('.filename').hover();
+    await page.keyboard.press('a');
+    await expect(group).toHaveClass(/viewed/);
+    await expect(markBtn).toHaveText('Chapter viewed');
+
+    // Pointer off every file group: the first group on screen.
+    await markBtn.hover();
+    await page.keyboard.press('a');
+    await expect(group).not.toHaveClass(/viewed/);
+    await expect(markBtn).toHaveText('Mark chapter viewed');
+
+    // Marking it viewed collapsed the group; o expands and collapses it
+    // again without touching viewed.
+    await expect(group).not.toHaveAttribute('open', '');
+    await header.locator('.filename').hover();
+    await page.keyboard.press('o');
+    await expect(group).toHaveAttribute('open', '');
+    await page.keyboard.press('o');
+    await expect(group).not.toHaveAttribute('open', '');
     await expect(group).not.toHaveClass(/viewed/);
   });
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // readCritJSONFromDisk reads review.json for a review identity folder.
@@ -73,11 +74,54 @@ func loadSnapshotsFromDisk(snapshotsPath string) (SnapshotsFile, error) {
 	return sf, nil
 }
 
-// ClearReviewFolder removes the entire review identity folder.
+// ClearReviewFolder removes the entire review identity folder under the
+// review write lock, so a writer that already read review.json saves before
+// the removal instead of restoring it after. Writers waiting for the lock
+// notice their lock file was removed and lock a new one. Windows cannot
+// delete the open lock file, so there the empty folder and lock file go once
+// the lock is released. Idempotent: a missing folder is fine.
 func ClearReviewFolder(identity string) error {
-	if err := os.RemoveAll(identity); err != nil && !os.IsNotExist(err) {
+	info, err := os.Stat(identity)
+	switch {
+	case os.IsNotExist(err):
+		return nil
+	case err != nil:
+		return err
+	case !info.IsDir():
+		return os.Remove(identity)
+	}
+	lockPath := ReviewPathsFor(identity).ReviewLock
+	lockGone := false
+	err = WithReviewWriteLock(identity, func() error {
+		entries, err := os.ReadDir(identity)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			path := filepath.Join(identity, e.Name())
+			if path == lockPath {
+				continue
+			}
+			if err := os.RemoveAll(path); err != nil {
+				return err
+			}
+		}
+		// Unix allows this while the lock is held; Windows does not.
+		if lockGone = os.Remove(lockPath) == nil; lockGone {
+			_ = os.Remove(identity)
+		}
+		return nil
+	})
+	if err != nil {
 		return err
 	}
+	if !lockGone {
+		// Windows: the open lock file could not go while we held it.
+		_ = os.Remove(lockPath)
+	}
+	// Not recursive: a writer that locked a new lock file after us may
+	// already have saved a new review here, and that one stays.
+	_ = os.Remove(identity)
 	return nil
 }
 

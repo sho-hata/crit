@@ -1167,5 +1167,7 @@ echo "Instance 7: enable Ignore whitespace in Settings, then reload. The Update 
 echo "            chapter must show the before/after diff, and Support the spacing change."
 echo "            Switch to Diff: only the result change should remain. Switch back to"
 echo "            Story: both chapter and support hunks should still render."
+echo "            Mark Update result Viewed: Support must stay unviewed. Mark Support"
+echo "            Viewed too: the whole file is now viewed. Reload to check persistence."
 echo "Press Enter to stop all servers."
 read -r

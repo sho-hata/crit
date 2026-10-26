@@ -297,7 +297,7 @@ func ChangedFilesScoped(scope, baseRef string) ([]FileChange, error) {
 
 // changedFilesStaged returns only staged (cached) changes.
 func changedFilesStaged() ([]FileChange, error) {
-	out, err := runGit(context.Background(), "", "diff", "--cached", "--name-status")
+	out, err := runGit(context.Background(), "", "diff", "--cached", "--name-status", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("git diff --cached failed: %w", err)
 	}
@@ -306,7 +306,7 @@ func changedFilesStaged() ([]FileChange, error) {
 
 // changedFilesUnstaged returns unstaged modifications plus untracked files.
 func changedFilesUnstaged() ([]FileChange, error) {
-	out, err := runGit(context.Background(), "", "diff", "--name-status")
+	out, err := runGit(context.Background(), "", "diff", "--name-status", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("git diff failed: %w", err)
 	}
@@ -328,7 +328,7 @@ func changedFilesBranch(baseRef string) ([]FileChange, error) {
 	if baseRef == "" {
 		return nil, nil
 	}
-	out, err := runGit(context.Background(), "", "diff", baseRef+"..HEAD", "--name-status")
+	out, err := runGit(context.Background(), "", "diff", baseRef+"..HEAD", "--name-status", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("git diff %s..HEAD failed: %w", baseRef, err)
 	}
@@ -452,7 +452,7 @@ func SplitCommitRange(commit string) (base, head string, ok bool) {
 // ChangedFilesForCommit returns the files changed in a single commit.
 // The dir parameter sets the working directory for the git command.
 func ChangedFilesForCommit(sha, dir string) ([]FileChange, error) {
-	cmd := exec.Command("git", "diff-tree", "--no-commit-id", "-r", "--name-status", sha)
+	cmd := exec.Command("git", "diff-tree", "--no-commit-id", "-r", "--name-status", "-z", sha)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -509,14 +509,14 @@ func changedFilesOnDefault() ([]FileChange, error) {
 
 func changedFilesOnDefaultInDir(dir string) ([]FileChange, error) {
 	// Staged + unstaged changes vs HEAD
-	cmd := exec.Command("git", "diff", "HEAD", "--name-status")
+	cmd := exec.Command("git", "diff", "HEAD", "--name-status", "-z")
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	out, err := cmd.Output()
 	if err != nil {
 		// If there's no HEAD (empty repo), try diff --cached + working tree
-		cmd = exec.Command("git", "diff", "--name-status")
+		cmd = exec.Command("git", "diff", "--name-status", "-z")
 		if dir != "" {
 			cmd.Dir = dir
 		}
@@ -556,7 +556,7 @@ func changedFilesFromBase(baseRef string) ([]FileChange, error) {
 // changedFilesFromBaseInDir is like changedFilesFromBase but runs git from the specified directory.
 func changedFilesFromBaseInDir(baseRef, dir string) ([]FileChange, error) {
 	// All changes from base ref to working tree
-	cmd := exec.Command("git", "diff", baseRef, "--name-status")
+	cmd := exec.Command("git", "diff", baseRef, "--name-status", "-z")
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -602,7 +602,7 @@ func initialGitChangesAndScopes(baseRef, dir string) ([]FileChange, []string, bo
 
 	var branch []FileChange
 	if baseRef != "" {
-		out, diffErr := runGit(context.Background(), dir, "diff", baseRef+"..HEAD", "--name-status")
+		out, diffErr := runGit(context.Background(), dir, "diff", baseRef+"..HEAD", "--name-status", "-z")
 		if diffErr != nil {
 			return nil, nil, true, fmt.Errorf("git diff %s..HEAD failed: %w", baseRef, diffErr)
 		}
@@ -718,7 +718,7 @@ func mergeGitChangeLayers(baseRef, dir string, layers ...[]FileChange) ([]FileCh
 	for _, layer := range layers {
 		for _, change := range layer {
 			if seenPaths[change.Path] || (change.OldPath != "" && seenPaths[change.OldPath]) {
-				out, err := runGit(context.Background(), dir, "diff", baseRef, "--name-status")
+				out, err := runGit(context.Background(), dir, "diff", baseRef, "--name-status", "-z")
 				if err != nil {
 					return nil, fmt.Errorf("git diff failed: %w", err)
 				}
@@ -1048,7 +1048,7 @@ func remoteBranchTipsSapling(repoRoot, defaultBranch string) ([]BranchEntry, err
 // and Path set to the new path.
 // Untracked working-tree files are NOT included — this is a pure git-history range.
 func ChangedFilesBetweenSHAs(baseSHA, headSHA, dir string) ([]FileChange, error) {
-	cmd := exec.Command("git", "diff", "--name-status", "-M", baseSHA+".."+headSHA)
+	cmd := exec.Command("git", "diff", "--name-status", "-z", "-M", baseSHA+".."+headSHA)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -1193,14 +1193,14 @@ func untrackedFilesFullScanInDir(dir string) ([]FileChange, error) {
 // Paths are relative to the repo root. dir should be the repo root.
 func AllTrackedFiles(dir string) ([]string, error) {
 	// Tracked files
-	out, err := runGit(context.Background(), dir, "ls-files")
+	out, err := runGit(context.Background(), dir, "ls-files", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("git ls-files failed: %w", err)
 	}
 
 	seen := make(map[string]bool)
 	var files []string
-	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(string(out), "\x00") {
 		if line == "" {
 			continue
 		}
@@ -1211,11 +1211,11 @@ func AllTrackedFiles(dir string) ([]string, error) {
 	}
 
 	// Untracked but not gitignored
-	out2, err := runGit(context.Background(), dir, "ls-files", "--others", "--exclude-standard")
+	out2, err := runGit(context.Background(), dir, "ls-files", "-z", "--others", "--exclude-standard")
 	if err != nil {
 		return files, nil //nolint:nilerr // non-fatal: return tracked files only
 	}
-	for line := range strings.SplitSeq(strings.TrimSpace(string(out2)), "\n") {
+	for line := range strings.SplitSeq(string(out2), "\x00") {
 		if line == "" {
 			continue
 		}
@@ -1272,25 +1272,30 @@ func WalkFiles(root string) ([]string, error) {
 	return files, err
 }
 
+// parseNameStatus parses `--name-status -z` output: NUL-terminated fields, a
+// status then a path. -z keeps paths verbatim; without it git C-quotes any
+// path with non-ASCII or other unusual bytes ("d\303\251but.md").
 func parseNameStatus(output string) []FileChange {
 	var changes []FileChange
-	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) < 2 {
-			continue
-		}
-		status := parts[0]
-		path := parts[1]
-		// For renames (R100\told\tnew), keep both paths
-		if strings.HasPrefix(status, "R") && len(parts) >= 3 {
-			changes = append(changes, FileChange{
-				Path:    parts[2],
-				OldPath: parts[1],
-				Status:  "renamed",
-			})
+	fields := strings.Split(output, "\x00")
+	for len(fields) >= 2 {
+		status, path := fields[0], fields[1]
+		fields = fields[2:]
+		// Renames (R100) and copies (C75) add the new path as a third field.
+		// A copy reports the new file as added; git lists a changed source
+		// as its own M record.
+		if (strings.HasPrefix(status, "R") || strings.HasPrefix(status, "C")) && len(fields) > 0 {
+			newPath := fields[0]
+			fields = fields[1:]
+			if strings.HasPrefix(status, "R") {
+				changes = append(changes, FileChange{
+					Path:    newPath,
+					OldPath: path,
+					Status:  "renamed",
+				})
+			} else {
+				changes = append(changes, FileChange{Path: newPath, Status: "added"})
+			}
 			continue
 		}
 		switch status {
@@ -1308,7 +1313,7 @@ func parseNameStatus(output string) []FileChange {
 }
 
 // fileStatusInRepo returns the git status of a single file relative to baseRef
-// by running `git diff --name-status <baseRef> -- <path>` from the repo root.
+// by running `git diff --name-status -z <baseRef> -- <path>` from the repo root.
 // This mirrors the same diff approach that ChangedFiles uses (merge-base diff),
 // so files committed on a branch are correctly reported as added/modified.
 // Falls back to checking whether the file is tracked when baseRef is empty.
@@ -1322,7 +1327,7 @@ func fileStatusInRepo(path, repoRoot, baseRef string) string {
 		}
 		return "modified"
 	}
-	cmd := exec.Command("git", "diff", "--name-status", baseRef, "--", path)
+	cmd := exec.Command("git", "diff", "--name-status", "-z", baseRef, "--", path)
 	cmd.Dir = repoRoot
 	out, err := cmd.Output()
 	if err != nil {
@@ -1464,7 +1469,7 @@ func DiffNumstatBetweenSHAs(baseSHA, headSHA, dir string) (map[string]NumstatEnt
 }
 
 func runDiffNumstat(dir string, refs ...string) (map[string]NumstatEntry, error) {
-	args := append([]string{"-c", "diff.external=", "diff", "--no-ext-diff", "--numstat"}, refs...)
+	args := append([]string{"-c", "diff.external=", "diff", "--no-ext-diff", "--numstat", "-z"}, refs...)
 	cmd := exec.Command("git", args...)
 	cmd.Env = stripExternalDiffEnv()
 	if dir != "" {
@@ -1482,28 +1487,32 @@ func runDiffNumstat(dir string, refs ...string) (map[string]NumstatEntry, error)
 	return parseNumstatOutput(out), nil
 }
 
+// parseNumstatOutput parses `--numstat -z` output: one NUL-terminated
+// "adds\tdels\tpath" record per file. A rename or copy record has an empty path,
+// followed by the old and the new path as their own fields.
 func parseNumstatOutput(out []byte) map[string]NumstatEntry {
 	stats := make(map[string]NumstatEntry)
-	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 3)
+	fields := strings.Split(string(out), "\x00")
+	for len(fields) > 0 {
+		parts := strings.SplitN(fields[0], "\t", 3)
+		fields = fields[1:]
 		if len(parts) != 3 {
 			continue
 		}
 		path := parts[2]
+		if path == "" {
+			if len(fields) < 2 {
+				continue
+			}
+			// Rename: index by the new path.
+			path, fields = fields[1], fields[2:]
+		}
 		adds, err1 := strconv.Atoi(parts[0])
 		dels, err2 := strconv.Atoi(parts[1])
 		if err1 != nil || err2 != nil {
 			adds, dels = 0, 0
 		}
-		entry := NumstatEntry{Additions: adds, Deletions: dels}
-		stats[path] = entry
-		// Rename lines look like "old.go => new.go" — index by new path too.
-		if _, after, ok := strings.Cut(path, " => "); ok {
-			stats[after] = entry
-		}
+		stats[path] = NumstatEntry{Additions: adds, Deletions: dels}
 	}
 	return stats
 }

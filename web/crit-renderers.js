@@ -295,6 +295,8 @@
     target.setAttribute('data-crit-state', 'rendered');
     if (renderer.anchorFor && ctx.endLine) target.setAttribute('data-crit-anchorable', '');
     addExpandButton(target, renderer, output);
+    // The page can now mark up the drawn output (quote highlights).
+    target.dispatchEvent(new CustomEvent('crit:rendered', { bubbles: true }));
   }
 
   // Render one target. Returns a Promise that settles when done; never rejects.
@@ -328,8 +330,10 @@
       if (typeof result === 'string') output.innerHTML = result;
       else if (result && result.nodeType) output.appendChild(result);
       if (old) old.replaceWith(output);
-      markRendered(target, renderer, ctx, output);
+      // Cache before markRendered: its crit:rendered listeners may mark up
+      // the output (quote highlights), and the cache must hold it clean.
       cachePut(key, output);
+      markRendered(target, renderer, ctx, output);
     }).catch(function (err) {
       if (target._critGen !== gen) return;
       console.warn('[crit] renderer ' + renderer.name + ' failed:', err);
