@@ -1275,7 +1275,13 @@ func (s *Session) liveFileContent(path string, f *FileEntry, fc vcs.FileChange, 
 			return f.Content, f.FileHash
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(repoRoot, path))
+	// path comes from the ?path= query: keep the read inside repoRoot,
+	// symlinks included.
+	resolved, err := pathsafe.ResolveUnder(filepath.Join(repoRoot, filepath.Clean(filepath.FromSlash(path))), repoRoot)
+	if err != nil {
+		return "", ""
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", ""
 	}

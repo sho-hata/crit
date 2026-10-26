@@ -9,7 +9,7 @@ test.describe('Document HTML sanitizing', () => {
 
     const html = await page.evaluate(() => {
       const md = (window as any).markdownit({ html: true, linkify: true });
-      (window as any).crit.documentHtml.install(md);
+      (window as any).crit.documentRawHtml.install(md);
       return md.render([
         '# Title',
         '',
@@ -41,7 +41,7 @@ test.describe('Document HTML sanitizing', () => {
     await loadPage(page);
 
     const out = await page.evaluate(() => {
-      const { sanitize, sanitizeRendered } = (window as any).crit.documentHtml;
+      const { sanitize, sanitizeRendered } = (window as any).crit.documentRawHtml;
       return {
         raw: sanitize('<div style="position:fixed;inset:0">x</div>'),
         rendered: sanitizeRendered('<span style="--diffs-token-light:#a00">x</span><img src=x onerror="window.__xss=1">'),
@@ -56,7 +56,7 @@ test.describe('Document HTML sanitizing', () => {
     await loadPage(page);
 
     const out = await page.evaluate(() => {
-      const { sanitize, sanitizeRendered } = (window as any).crit.documentHtml;
+      const { sanitize, sanitizeRendered } = (window as any).crit.documentRawHtml;
       return {
         raw: sanitize('<div class="share-overlay  comment-card" id="top" data-comment-id="c1" data-start-line="1">x</div>'),
         named: sanitize('<a name="spot">a</a>'),
@@ -83,7 +83,7 @@ test.describe('Document HTML sanitizing', () => {
 
     const html = await page.evaluate(() => {
       const md = (window as any).markdownit({ html: true });
-      (window as any).crit.documentHtml.install(md);
+      (window as any).crit.documentRawHtml.install(md);
       return md.render('<div class="x">raw</div>\n\n```js\nlet a = 1;\n```\n\ntext <b class="y">b</b>');
     });
 

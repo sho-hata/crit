@@ -67,7 +67,9 @@ test.describe('Document HTML — real render path', () => {
     await expectInert(page, section);
 
     const label = section.getByText('Label payload');
-    await expect(label).toHaveAttribute('for', 'user-content-commentCount');
+    // document-html.js prefixes `for`; the fork's crit-document-html.js then
+    // drops it. Either way it must not name crit's own control.
+    await expect(label).not.toHaveAttribute('for', 'commentCount');
     await expect(page.locator('#commentsPanel')).toHaveClass(/comments-panel-hidden/);
     await label.click();
     await expect(page.locator('#commentsPanel')).toHaveClass(/comments-panel-hidden/);
