@@ -35,7 +35,7 @@ func lockReview(identity string) (*os.File, error) {
 // file is at the path now. name labels errors.
 func lockIdentityFile(identity, lockPath, name string) (*os.File, error) {
 	paths := ReviewPathsFor(identity)
-	for attempt := 0; attempt < lockReviewAttempts; attempt++ {
+	for range lockReviewAttempts {
 		if err := ensureReviewFolder(identity); err != nil {
 			return nil, fmt.Errorf("ensuring review folder: %w", err)
 		}

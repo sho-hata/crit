@@ -617,14 +617,12 @@ func fetchChecksLockIsFree(t *testing.T, critPath string, lockFree *[]bool) func
 	old := readLivePageHTML
 	readLivePageHTML = func(origin, route string) ([]byte, error) {
 		got := make(chan struct{})
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = session.WithReviewWriteLock(critPath, func() error {
 				close(got)
 				return nil
 			})
-		}()
+		})
 		select {
 		case <-got:
 			*lockFree = append(*lockFree, true)
