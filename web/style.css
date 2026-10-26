@@ -683,10 +683,7 @@ body {
 .document-wrapper {
   max-width: var(--content-width);
   margin: 0 auto;
-  /* The end-of-page breathing room this used to carry (120px) now comes from
-     `#filesContainer`'s bottom padding — inside a bordered file card it read as
-     a large empty box under the last line. */
-  padding: 32px 0;
+  padding: 32px 0 120px 0;
 }
 
 /* ===== Line Blocks ===== */
@@ -4339,13 +4336,6 @@ body.file-tree-anim #fileTreeResizer { transition: flex-basis 0.22s ease; }
 /* ===== File Sections ===== */
 .file-section {
   scroll-margin-top: calc(var(--header-height, 49px) + 8px); /* accounts for sticky app header + gap */
-}
-
-/* Space above the first file and below the last. The sides come from
-   `padding-inline` on `body.pierre-review #filesContainer`, and each file's
-   card from its `diffs-container` rule. */
-#filesContainer {
-  padding: 16px 24px 96px;
 }
 .file-header {
   /* stylelint-disable-next-line declaration-block-no-duplicate-properties */
