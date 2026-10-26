@@ -107,11 +107,42 @@ func removeWorktree(ctx context.Context, repoRoot, dir string, ownDir bool) erro
 	}
 	// git refused (metadata missing or inconsistent) but the directory is
 	// ours: reclaim the disk directly, then drop the dangling metadata.
-	if err := os.RemoveAll(dir); err != nil {
+	if err := removeAllCtx(ctx, dir); err != nil {
 		return fmt.Errorf("worktree: %w", err)
 	}
 	_, err := runGit(ctx, repoRoot, "worktree", "prune")
 	return err
+}
+
+// removeAllCtx is os.RemoveAll that stops between entries once ctx is done,
+// so a caller's lock is not held past its budget on a large checkout. It
+// returns only after deletion has stopped; whatever is left stays registered
+// with git for the next removal to finish.
+func removeAllCtx(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		for _, e := range entries {
+			if err := removeAllCtx(ctx, filepath.Join(path, e.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func isRegisteredWorktree(ctx context.Context, repoRoot, dir string) bool {
