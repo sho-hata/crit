@@ -411,10 +411,18 @@ func (s *Server) requireReady(w http.ResponseWriter) bool {
 // runs. Routes that depend on an initialized session use this at registration.
 func (s *Server) withReady(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		dbgStart := time.Now()
+		if strings.Contains(r.URL.Path, "picker") || strings.Contains(r.URL.Path, "focus") {
+			fmt.Fprintf(os.Stderr, "DBGREQ start %s %s\n", r.Method, r.URL.String())
+		}
 		if !s.requireReady(w) {
+			fmt.Fprintf(os.Stderr, "DBGREQ notready %s %s\n", r.Method, r.URL.String())
 			return
 		}
 		next(w, r)
+		if d := time.Since(dbgStart); d > 300*time.Millisecond || strings.Contains(r.URL.Path, "picker") {
+			fmt.Fprintf(os.Stderr, "DBGREQ done %s %s %s\n", r.Method, r.URL.String(), d)
+		}
 	}
 }
 

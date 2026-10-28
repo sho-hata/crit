@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"time"
 	"sort"
 	"strings"
 
@@ -171,14 +173,19 @@ func (s *Server) handlePicker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := pickerResponse{}
+	t0 := time.Now()
+	lap := func(step string) { fmt.Fprintf(os.Stderr, "DBGPICK %s %s\n", step, time.Since(t0)) }
+	defer lap("total")
 	sess := s.session.Load()
 	v, repoRoot, focus := sess.PickerContext()
+	lap("PickerContext")
 	resp.Current = focus
 	if v != nil {
 		resp.DefaultBranchName = v.DefaultBranch()
 	}
 
 	openPRs, err := s.openPRsFromCache()
+	lap(fmt.Sprintf("openPRs err=%v", err))
 	if err != nil {
 		resp.PRListError = err.Error()
 		resp.Errors = append(resp.Errors, err.Error())
@@ -190,6 +197,7 @@ func (s *Server) handlePicker(w http.ResponseWriter, r *http.Request) {
 		resp.Errors = append(resp.Errors, sErr.Error())
 	}
 	resp.Stack = stack
+	lap(fmt.Sprintf("detectStack n=%d err=%v", len(stack), sErr))
 
 	covered := make(map[string]bool)
 	for _, e := range stack {
@@ -204,7 +212,9 @@ func (s *Server) handlePicker(w http.ResponseWriter, r *http.Request) {
 
 	if v != nil {
 		defaultBranch := v.DefaultBranch()
+		lap("DefaultBranch")
 		branches, bErr := vcs.RemoteBranchTips(v, repoRoot, defaultBranch)
+		lap("RemoteBranchTips")
 		if bErr != nil {
 			resp.BranchesError = bErr.Error()
 			resp.Errors = append(resp.Errors, bErr.Error())
