@@ -1232,21 +1232,41 @@ func (s *Session) liveAllFileDiff(path string, ignoreWhitespace bool) (map[strin
 		return nil, false
 	}
 
-	content, hash, loadedHunks := s.liveFileContent(path, f, fc, repoRoot)
+	content, hash := s.liveFileContent(path, f, fc, repoRoot)
 	result := map[string]any{"content": content, "file_hash": hash, "hunks": []vcs.DiffHunk{}}
 	if !found {
 		return result, true
 	}
-	if loadedHunks != nil && !ignoreWhitespace {
-		// The lazy load just diffed this file the same way; skip a second git diff.
-		result["hunks"] = loadedHunks
-	} else if hunks := liveAllHunks(fc, content, baseRef, repoRoot, ignoreWhitespace, vc); hunks != nil {
+	hunks, cached := s.cachedLiveHunks(f, fc, hash, ignoreWhitespace)
+	if !cached {
+		hunks = liveAllHunks(fc, content, baseRef, repoRoot, ignoreWhitespace, vc)
+	}
+	if hunks != nil {
 		result["hunks"] = hunks
 	}
 	if detectFileType(path) != "code" {
 		result["previous_content"] = gitBaseContentForMarkdown(s, focus, fc.Path, fc.OldPath, fc.Status, baseRef, repoRoot, vc)
 	}
 	return result, true
+}
+
+// cachedLiveHunks returns f's session hunks when they describe the content
+// liveFileContent just served: lazy loading and SyncWorkingTree store
+// DiffHunks together with FileHash, and both diff base vs working tree the
+// way liveAllHunks does. Re-diffing cost a git process per request; the
+// frontend fetches /api/file (which does the lazy load) alongside this diff,
+// so a lazy file was diffed twice, and on Windows runners loading a 300-file
+// review took over 30s.
+func (s *Session) cachedLiveHunks(f *FileEntry, fc vcs.FileChange, hash string, ignoreWhitespace bool) ([]vcs.DiffHunk, bool) {
+	if f == nil || hash == "" || ignoreWhitespace {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if f.Lazy || f.Orphaned || f.Path != fc.Path || f.FileHash != hash || f.Status != fc.Status || f.OldPath != fc.OldPath {
+		return nil, false
+	}
+	return f.DiffHunks, true
 }
 
 func findChange(changes []vcs.FileChange, path string) (vcs.FileChange, bool) {
@@ -1261,40 +1281,34 @@ func findChange(changes []vcs.FileChange, path string) (vcs.FileChange, bool) {
 // liveFileContent returns the working-tree content for a scope "all" diff.
 // Session files serve the synced session content, so the text matches the
 // lines comments anchor to; other files are read from disk. Deleted files
-// have no content. When this call lazily loads f and f describes the same
-// change as fc, loadedHunks are the hunks that load diffed (base vs working
-// tree, whitespace kept), so the caller need not diff again.
-func (s *Session) liveFileContent(path string, f *FileEntry, fc vcs.FileChange, repoRoot string) (content, hash string, loadedHunks []vcs.DiffHunk) {
+// have no content.
+func (s *Session) liveFileContent(path string, f *FileEntry, fc vcs.FileChange, repoRoot string) (content, hash string) {
 	if fc.Status == "deleted" {
-		return "", "", nil
+		return "", ""
 	}
 	if f != nil {
 		// Orphaned and deleted entries have no content; a file that came back
 		// is read from disk below.
 		s.mu.RLock()
 		live := !f.Orphaned && f.AbsPath != "" && f.Status != "deleted"
-		wasLazy := f.Lazy
 		s.mu.RUnlock()
 		if live && s.ensureFileLoaded(f) == nil {
 			s.mu.RLock()
 			defer s.mu.RUnlock()
-			if wasLazy && f.Path == fc.Path && f.OldPath == fc.OldPath && f.Status == fc.Status {
-				loadedHunks = f.DiffHunks
-			}
-			return f.Content, f.FileHash, loadedHunks
+			return f.Content, f.FileHash
 		}
 	}
 	// path comes from the ?path= query: keep the read inside repoRoot,
 	// symlinks included.
 	resolved, err := pathsafe.ResolveUnder(filepath.Join(repoRoot, filepath.Clean(filepath.FromSlash(path))), repoRoot)
 	if err != nil {
-		return "", "", nil
+		return "", ""
 	}
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return "", "", nil
+		return "", ""
 	}
-	return string(data), fileHash(data), nil
+	return string(data), fileHash(data)
 }
 
 // liveAllHunks diffs one file base vs working tree, the way the session's
