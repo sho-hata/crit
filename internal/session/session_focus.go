@@ -1208,7 +1208,12 @@ func scopedDiffContents(path, scope, repoRoot, worktreeContent string, v vcs.VCS
 // hash, so the diff and the text it is drawn on come from the same moment.
 // A path that is in the session but no longer differs from base gets no hunks.
 func (s *Session) liveAllFileDiff(path string, ignoreWhitespace bool) (map[string]any, bool) {
+	dbgT0 := time.Now()
+	dbgLap := dbgT0
+	dbg := func(step string) { fmt.Fprintf(os.Stderr, "DBGLIVE %s %s %s\n", path, step, time.Since(dbgLap)); dbgLap = time.Now() }
+	defer func() { fmt.Fprintf(os.Stderr, "DBGLIVE %s total %s\n", path, time.Since(dbgT0)) }()
 	s.SyncWorkingTree(path)
+	dbg("sync")
 
 	s.mu.RLock()
 	f := s.fileByPathLocked(path)
@@ -1223,6 +1228,7 @@ func (s *Session) liveAllFileDiff(path string, ignoreWhitespace bool) (map[strin
 	}
 
 	changes, err := s.liveAllChanges(vc, baseRef, repoRoot, ignorePatterns)
+	dbg("changes")
 	if err != nil {
 		return s.GetFileDiffSnapshot(path, ignoreWhitespace)
 	}
@@ -1233,6 +1239,7 @@ func (s *Session) liveAllFileDiff(path string, ignoreWhitespace bool) (map[strin
 	}
 
 	content, hash := s.liveFileContent(path, f, fc, repoRoot)
+	dbg("content")
 	result := map[string]any{"content": content, "file_hash": hash, "hunks": []vcs.DiffHunk{}}
 	if !found {
 		return result, true
@@ -1240,6 +1247,7 @@ func (s *Session) liveAllFileDiff(path string, ignoreWhitespace bool) (map[strin
 	if hunks := liveAllHunks(fc, content, baseRef, repoRoot, ignoreWhitespace, vc); hunks != nil {
 		result["hunks"] = hunks
 	}
+	dbg("hunks")
 	if detectFileType(path) != "code" {
 		result["previous_content"] = gitBaseContentForMarkdown(s, focus, fc.Path, fc.OldPath, fc.Status, baseRef, repoRoot, vc)
 	}

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -24,7 +25,10 @@ func (s *Session) liveAllChanges(v vcs.VCS, baseRef, repoRoot string, ignorePatt
 	if s.liveChangesKey == key && time.Now().Before(s.liveChangesExpiry) {
 		return s.liveChanges, nil
 	}
+	dbgT := time.Now()
 	changes, err := changedFilesForSession(v, baseRef, repoRoot)
+	fmt.Fprintf(os.Stderr, "DBGLIVE rescan changedFiles %s\n", time.Since(dbgT))
+	defer func() { fmt.Fprintf(os.Stderr, "DBGLIVE rescan total %s\n", time.Since(dbgT)) }()
 	if err != nil {
 		return nil, err
 	}
