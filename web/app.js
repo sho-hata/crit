@@ -82,18 +82,40 @@
   // Scroll/expand/flash a comment card located anywhere in the document, given just its id.
   // Distinct from scrollToComment(commentId, filePath) below — that one needs filePath context.
   function scrollToCommentRef(id) {
-    if (pierreViewActive()) {
-      const owner = files.find(function(f) {
-        return (f.comments || []).some(function(c) { return c.id === id; });
-      });
-      if (owner) pierreJumpToComment(id, owner.path, flashCommentRefCard);
+    const selector = '.comment-card[data-comment-id="' + CSS.escape(id) + '"]';
+    if (!pierreViewActive()) {
+      // Story view: the card is in the chapter pane when its chapter is shown.
+      const storyCard = document.querySelector(selector);
+      if (!storyCard) return;
+      flashCommentRefCard(storyCard);
+      storyCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    // Story view: the card is in the chapter pane when its chapter is shown.
-    const card = document.querySelector('.comment-card[data-comment-id="' + CSS.escape(id) + '"]');
-    if (!card) return;
-    flashCommentRefCard(card);
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // A card already mounted in the review list is scrolled to directly.
+    // pierreJumpToComment is for cards not mounted yet: it scrolls to the file
+    // first, which jumps the page to the top of the file and back when the
+    // card is nearby. Only look inside #filesContainer: the comments panel
+    // keeps its own copy of each card, even while hidden.
+    const card = document.querySelector('#filesContainer ' + selector);
+    if (card) {
+      // Supersede a jump still in flight. Align with the instant loop, not a
+      // smooth scroll: files mounting on the way adjust scrollTop, and that
+      // cancels the browser's animation partway.
+      const seq = ++pierreJumpSeq;
+      flashCommentRefCard(card);
+      scrollPierreElementIntoView(card, function() { return seq === pierreJumpSeq; });
+      return;
+    }
+    const owner = files.find(function(f) {
+      return (f.comments || []).some(function(c) { return c.id === id; });
+    });
+    if (owner) {
+      pierreJumpToComment(id, owner.path, flashCommentRefCard);
+      return;
+    }
+    // A review-level comment has no card while the review conversation is
+    // collapsed. scrollToReviewComment expands it first.
+    if (reviewComments.some(function(c) { return c.id === id; })) scrollToReviewComment(id, flashCommentRefCard);
   }
 
   function flashCommentRefCard(card) {
@@ -102,11 +124,17 @@
       card.classList.remove('collapsed');
       if (typeof commentCollapseOverrides !== 'undefined') commentCollapseOverrides[id] = false;
     }
-    card.classList.remove('comment-ref-flash');
-    void card.offsetWidth;
-    card.classList.add('comment-ref-flash');
-    card.addEventListener('animationend', function() {
-      card.classList.remove('comment-ref-flash');
+    restartFlash(card, 'comment-ref-flash');
+  }
+
+  // Play a one-shot highlight animation on `el`. Removing the class and
+  // forcing a reflow restarts the animation when it is already running.
+  function restartFlash(el, className) {
+    el.classList.remove(className);
+    void el.offsetWidth;
+    el.classList.add(className);
+    el.addEventListener('animationend', function() {
+      el.classList.remove(className);
     }, { once: true });
   }
 
@@ -255,6 +283,8 @@
   // Disable (c)/(r)/(tm) → ©/®/™ replacements so enumerated options render
   // literally. Keep typographer (smart quotes) and disable only replacements.
   documentMd.disable('replacements');
+  // Raw HTML in a reviewed document is untrusted: strip scripts and handlers.
+  window.crit.documentRawHtml.install(documentMd);
 
   // Add id attributes and anchor links to headings
   const HEADING_LINK_SVG = '<svg class="heading-anchor-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a2.002 2.002 0 0 0 0 2.83Z"></path></svg>';
@@ -688,7 +718,9 @@
       };
     }
     let diffUrl = '/api/file/diff?path=' + enc(fi.path);
-    if (scope && scope !== 'all') {
+    // "all" is sent too: without a scope the server answers from the round
+    // snapshot, while /api/session?scope=all lists the live working tree.
+    if (scope) {
       diffUrl += '&scope=' + enc(scope);
     }
     if (diffCommit) {
@@ -726,7 +758,8 @@
       lazy: false,
       orphaned: false,
       generated: !!fi.generated,
-      fileHash: fileRes.file_hash || '',
+      // Prefer the hash of the content the diff was drawn on (live scopes).
+      fileHash: diffRes.file_hash || fileRes.file_hash || '',
     };
 
     // Parse markdown content into line blocks. Fenced code is tokenized in
@@ -830,6 +863,7 @@
       if (f.viewed) continue; // respect existing/restored viewed state
       if (globMatch.matchAny(f.path, patterns)) {
         f.viewed = true;
+        delete f.viewedHunks;
         f.collapsed = true;
       }
     }
@@ -837,12 +871,47 @@
     try { localStorage.setItem(autoViewedMarkerKey(), '1'); } catch {}
   }
 
+  function viewedHunkKeys(hunks) {
+    return (hunks || []).flatMap(storyRawHunks).map(function(hunk) {
+      // Ignore synthesized context and new-side line shifts when matching a refreshed diff.
+      const changes = JSON.stringify(hunk.Lines.filter(function(line) {
+        return line.Type !== 'context';
+      }).map(function(line) { return [line.Type, line.Content]; }));
+      let hash = 0;
+      for (let i = 0; i < changes.length; i++) hash = ((hash << 5) - hash + changes.charCodeAt(i)) | 0;
+      return hunk.OldStart + ':' + (hash >>> 0).toString(36);
+    });
+  }
+
+  function areHunksViewed(file, hunks) {
+    const keys = viewedHunkKeys(hunks);
+    return keys.length > 0 && keys.every(function(key) {
+      return file.viewedHunks ? file.viewedHunks.includes(key) : !!file.viewed;
+    });
+  }
+
+  function reconcileStoryViewed(file) {
+    // Only the full, unfiltered Story diff can determine whole-file completion.
+    // A commit pin scopes file.diffHunks to that commit, which would drop keys.
+    if (file.lazy || storyHidden || diffCommit || !storyHasContent(session && session.story)) return;
+    const keys = viewedHunkKeys(file.diffHunks);
+    // Renames, binaries and failed diff loads have no hunks: the file flag decides.
+    if (!keys.length) { delete file.viewedHunks; return; }
+    if (!file.viewedHunks && file.viewed) file.viewedHunks = keys;
+    if (!file.viewedHunks) return;
+    file.viewedHunks = file.viewedHunks.filter(function(key) { return keys.includes(key); });
+    file.viewed = areHunksViewed(file, file.diffHunks);
+  }
+
   function saveViewedState() {
     const viewed = {};
+    const hunks = {};
     for (let i = 0; i < files.length; i++) {
       if (files[i].viewed) viewed[files[i].path] = true;
+      if (files[i].viewedHunks) hunks[files[i].path] = files[i].viewedHunks;
     }
     try { localStorage.setItem(viewedStorageKey(), JSON.stringify(viewed)); } catch {}
+    try { localStorage.setItem('crit-viewed-hunks-' + viewedIdentityHash(), JSON.stringify(hunks)); } catch {}
   }
 
   function restoreViewedState() {
@@ -853,35 +922,29 @@
         if (files[i].viewed) files[i].collapsed = true;
       }
     } catch {}
+    try {
+      const data = JSON.parse(localStorage.getItem('crit-viewed-hunks-' + viewedIdentityHash()) || '{}');
+      files.forEach(function(file) {
+        if (Array.isArray(data[file.path])) file.viewedHunks = data[file.path];
+        reconcileStoryViewed(file);
+      });
+    } catch {}
   }
 
   function toggleViewed(filePath) {
     const file = getFileByPath(filePath);
     if (!file) return;
     file.viewed = !file.viewed;
+    delete file.viewedHunks;
     saveViewedState();
     updateViewedCount();
     updateTreeViewedState();
-    if (pierreView && pierreViewActive()) {
-      // Header is rebuilt by the item update (checkbox state included).
-      pierreView.setCollapsed(file, file.viewed ? true : file.collapsed);
-      critFind.filesChanged();
-      return;
-    }
-    // Update the checkbox in the file header
-    const section = document.getElementById('file-section-' + filePath);
-    if (section) {
-      const cb = section.querySelector('.file-header-viewed input');
-      if (cb) cb.checked = file.viewed;
-      // Collapse when marking as viewed
-      if (file.viewed && section.open) {
-        if (section.getBoundingClientRect().top < 0) {
-          section.scrollIntoView({ behavior: 'instant' });
-        }
-        section.open = false;
-        file.collapsed = true;
-      }
-    }
+    // Both callers (the Pierre file header and the `a` shortcut) only run in
+    // the Pierre view. The header is rebuilt by the item update (checkbox
+    // state included).
+    if (!pierreView) return;
+    pierreView.setCollapsed(file, file.viewed ? true : file.collapsed);
+    critFind.filesChanged();
   }
 
   // Wraps crit.shared.waitForSession with the app.js-specific UI:
@@ -929,6 +992,7 @@
   async function init() {
     watchCodeBlocks();
     installRenderAnchorComments();
+    installRenderedQuoteHighlights();
     initTheme();
     initWidth();
     // Code font is a pure CSS-variable override; no mode-specific work here,
@@ -1130,12 +1194,12 @@
         // First launch — prefer "branch" (committed changes only) over "all"
         // (which includes untracked files and can overwhelm large repos).
         diffScope = scopes.indexOf('branch') !== -1 ? 'branch' : 'all';
-        if (diffScope !== 'all') {
-          let corrected = await hydrateStoryIfMissing(await fetchWhenReady('/api/session?scope=' + enc(diffScope)));
-          corrected = await hydrateFullSessionForStoryIfNeeded(corrected);
-          session = corrected;
-          reviewComments = corrected.review_comments || [];
-        }
+        // Re-fetch even for "all": the first fetch had no scope, so it came
+        // from the round snapshot rather than the live working tree.
+        let corrected = await hydrateStoryIfMissing(await fetchWhenReady('/api/session?scope=' + enc(diffScope)));
+        corrected = await hydrateFullSessionForStoryIfNeeded(corrected);
+        session = corrected;
+        reviewComments = corrected.review_comments || [];
       } else if (scopes.indexOf(diffScope) === -1) {
         diffScope = 'all';
         setSetting('diffScope', 'all');
@@ -1291,8 +1355,8 @@
   function rewriteImageSrcs(html, filePath) {
     return html.replace(/(<img\s[^>]*src=")([^"]+)(")/gi, function(match, pre, src, post) {
       if (/^https?:\/\/|^data:|^\//.test(src)) return match;
-      // Runs after sanitizing, so the path must not reopen the attribute:
-      // src is already serialized HTML, the file path is not.
+      // src comes from serialized HTML and is already escaped; the file path
+      // is raw, and a quote in a folder name would end the attribute.
       return pre + '/files/' + resolveImagePath(escapeHtml(filePath || ''), src) + post;
     });
   }
@@ -1315,7 +1379,8 @@
   // A jump that centers a line (find, comment navigation) leaves another file
   // at the top of the list, and the scroll can keep settling after the
   // ignore window on a slow machine. Keep the target active while it is on
-  // screen; the pin holds for the first 2s while the list is still moving.
+  // screen. Scrolled off screen, the tree follows the scroll, but for the
+  // first 2s the pin stays in case the settling list brings the file back.
   let treePin = null; // { path, until }
   function pinTreeActive(path) {
     treePin = { path: path, until: Date.now() + 2000 };
@@ -1770,9 +1835,10 @@
     return null;
   }
 
-  // Files-mode code file: the whole file as a Pierre file item.
+  // Files-mode code file, or a markdown file in Source view: the whole file
+  // as a Pierre file item.
   function pierreIsFileView(file) {
-    return file.fileType === 'code' && file.viewMode === 'document' && !file.orphaned;
+    return ((file.fileType === 'code' && file.viewMode === 'document') || file.viewMode === 'source') && !file.orphaned;
   }
 
   function pierreLineCount(file) {
@@ -1946,7 +2012,85 @@
     section.appendChild(body);
     populateDocumentBody(body, file);
     highlightQuotesInSection(section, file);
+    observePierreDocumentResize(section);
     return section;
+  }
+
+  // Pierre keeps a rendered document in place by the first line of its empty
+  // file, which sits below the whole document. A thread growing inside the
+  // document (a reply, a resolve, an opened reply form) then scrolled the page
+  // by its growth. Instead, the block at the top of the screen stays where it
+  // is: it is remembered as the reader scrolls, and put back when the document
+  // changes height. Pierre's ResizeObserver was created first (each view
+  // creates its own, and disposePierreView drops ours with it), so its own
+  // scroll fix has already run in the same frame when ours puts the block back.
+  let pierreReaderAnchor = null; // { section, selector (null: the section itself), top }
+  let pierreDocumentResizeObserver = null;
+
+  function readerAnchorSelector(el) {
+    if (el.dataset.commentId) return '.comment-card[data-comment-id="' + CSS.escape(el.dataset.commentId) + '"]';
+    return '.line-block[data-start-line="' + el.dataset.startLine + '"][data-end-line="' + el.dataset.endLine + '"]';
+  }
+
+  // The document block or thread the top edge of the review pane cuts
+  // through, or the document itself when the edge cuts the part of its item
+  // above it (the file header, file-level threads): Pierre keeps an item in
+  // place only while the item's top is on screen.
+  // Null when the whole item starts on screen (Pierre's anchor is right).
+  // Blocks are in vertical order, so a binary search keeps this cheap on
+  // long documents.
+  function rememberPierreReaderAnchor() {
+    pierreReaderAnchor = null;
+    const scroller = document.getElementById('filesContainer');
+    if (!scroller) return;
+    const edge = scroller.getBoundingClientRect().top;
+    const sections = scroller.querySelectorAll('.pierre-document');
+    for (const section of sections) {
+      const rect = section.getBoundingClientRect();
+      if (rect.bottom <= edge) continue;
+      if (rect.top >= edge) {
+        const item = section.closest('diffs-container');
+        if (item && item.getBoundingClientRect().top < edge) {
+          pierreReaderAnchor = { section: section, selector: null, top: rect.top };
+        }
+        return;
+      }
+      const blocks = section.querySelectorAll('.line-block[data-start-line], .comment-card[data-comment-id]');
+      let low = 0;
+      let high = blocks.length - 1;
+      let found = null;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (blocks[mid].getBoundingClientRect().bottom > edge) {
+          found = blocks[mid];
+          high = mid - 1;
+        } else {
+          low = mid + 1;
+        }
+      }
+      if (found) {
+        pierreReaderAnchor = { section: section, selector: readerAnchorSelector(found), top: found.getBoundingClientRect().top };
+      }
+      return;
+    }
+  }
+
+  function observePierreDocumentResize(section) {
+    if (!pierreDocumentResizeObserver) {
+      pierreDocumentResizeObserver = new ResizeObserver(function(entries) {
+        const anchor = pierreReaderAnchor;
+        if (!anchor || !entries.some(function(entry) { return entry.target === anchor.section; })) return;
+        // A removed or hidden section reports a zero rect; there is nothing
+        // to keep in place.
+        if (!anchor.section.isConnected || !anchor.section.getClientRects().length) return;
+        const el = anchor.selector ? anchor.section.querySelector(anchor.selector) : anchor.section;
+        const scroller = document.getElementById('filesContainer');
+        if (!el || !scroller) return;
+        const shift = el.getBoundingClientRect().top - anchor.top;
+        if (Math.abs(shift) >= 1) scroller.scrollTop += shift;
+      });
+    }
+    pierreDocumentResizeObserver.observe(section);
   }
 
   // Re-render a mounted document's contents in place. Swapping the
@@ -2203,6 +2347,7 @@
     let treeSyncQueued = false;
     pierreUnsubscribeTree = pierreView.viewer.subscribeToScroll(function() {
       critFind.rowsChanged();
+      rememberPierreReaderAnchor();
       if (treeSyncQueued) return;
       treeSyncQueued = true;
       requestAnimationFrame(function() { treeSyncQueued = false; syncTreeActiveFromPierre(); });
@@ -2213,6 +2358,37 @@
   // ----- Keyboard focus (model-driven; Pierre rows are virtualized) -----
   let pierreFocus = null; // { path, line, side }
   let pierreVisualAnchor = null; // same shape, set by Shift+V
+
+  // Mouse (or pen) state for toggle_viewed / toggle_collapse: whether it is
+  // over the review list, and whether it moved there since the keyboard
+  // focus was last shown (then it, not the focus, picks the file). Moves
+  // synthesized when content scrolls under a still pointer keep the same
+  // position and report no movement, and touch has no hover, so neither
+  // counts.
+  let mouseInList = false;
+  let mouseMovedSinceFocus = false;
+  const reviewList = document.getElementById('filesContainer');
+  let lastPointerPoint = null;
+  reviewList.addEventListener('pointermove', function(e) {
+    if (e.pointerType === 'touch') return;
+    const point = { x: e.clientX, y: e.clientY };
+    const moved = e.movementX || e.movementY ||
+      (lastPointerPoint && (lastPointerPoint.x !== point.x || lastPointerPoint.y !== point.y));
+    lastPointerPoint = point;
+    if (!moved) return;
+    mouseInList = true;
+    mouseMovedSinceFocus = true;
+  });
+  reviewList.addEventListener('pointerleave', function(e) {
+    if (e.pointerType !== 'touch') mouseInList = false;
+  });
+  // Story chapters render outside the review list; there only the pointer
+  // type matters (a tap leaves :hover stuck on the tapped element; mouse and
+  // pen hover, as in the review list).
+  let pointerHovers = false;
+  ['pointerdown', 'pointermove'].forEach(function(type) {
+    document.addEventListener(type, function(e) { pointerHovers = e.pointerType !== 'touch'; }, true);
+  });
 
   // Keyboard rows for a file: diff rows, or the rendered document's blocks
   // when a markdown file is in Document view (same stops as the classic view).
@@ -2271,6 +2447,7 @@
   function showPierreFocus() {
     if (!pierreView) return;
     if (!pierreFocus) { pierreView.setSelectedLine(null); return; }
+    mouseMovedSinceFocus = false;
     if (pierreFocus.block !== undefined) {
       const focus = pierreFocus;
       const anchor = pierreVisualAnchor && pierreVisualAnchor.path === focus.path ? pierreVisualAnchor : null;
@@ -2332,7 +2509,16 @@
       });
     }
     if (fileIdx < 0) {
-      enter(order[direction > 0 ? 0 : order.length - 1]);
+      // Focus left in a file that has since collapsed (e.g. marked viewed):
+      // continue from its place in the list instead of the list's ends.
+      const at = pierreFocus ? files.findIndex(function(f) { return f.path === pierreFocus.path; }) : -1;
+      if (at < 0) {
+        enter(order[direction > 0 ? 0 : order.length - 1]);
+        return;
+      }
+      for (let i = at + direction; i >= 0 && i < files.length; i += direction) {
+        if (!files[i].collapsed && !files[i].orphaned) { enter(files[i]); return; }
+      }
       return;
     }
     const file = order[fileIdx];
@@ -2382,14 +2568,21 @@
   // ancestor scroll container. The comments panel and other fixed chrome can
   // otherwise make native scrollIntoView move the document instead of the
   // virtualized review list.
-  function scrollPierreElementIntoView(el) {
+  // `isCurrent` (optional) stops the alignment once a newer jump has started,
+  // so a card that cannot reach the center (the top of the list) does not keep
+  // pulling the list back over the next jump.
+  // An element taller than the list is aligned by its top instead, so its
+  // start (and the line just above a comment card) stays in view.
+  function scrollPierreElementIntoView(el, isCurrent) {
     const root = document.getElementById('filesContainer');
     if (!root || !el) return;
     let frames = 0;
     (function align() {
+      if (isCurrent && !isCurrent()) return;
       const rootRect = root.getBoundingClientRect();
       const elRect = el.getBoundingClientRect();
-      const offset = elRect.top - rootRect.top - (root.clientHeight - elRect.height) / 2;
+      const gap = Math.max(0, (root.clientHeight - elRect.height) / 2);
+      const offset = elRect.top - rootRect.top - gap;
       if (Math.abs(offset) < 2 || frames++ >= 12) return;
       // Make each layout correction immediate instead of starting overlapping
       // browser scroll animations during the bounded alignment loop.
@@ -2399,7 +2592,8 @@
   }
 
   // Jump to a comment: load/expand its file, let Pierre scroll the anchor
-  // line into place, then hand the mounted card to `done` (flash/highlight).
+  // line into place, center the mounted card, then hand it to `done`
+  // (highlight only; `done` must not scroll again).
   // Outdated and file-level comments anchor at the file top.
   // Each jump takes a sequence number; a jump that a newer one has replaced
   // (rapid next-comment navigation) skips its alignment and `done`.
@@ -2431,15 +2625,20 @@
         whenMounted(card, function(el) {
           if (!isCurrent()) return;
           // Diff jumps don't wait for the list to settle. The view's scrollTo
-          // passes no smooth behavior, so the list is already in place, and
-          // Pierre itself places an anchored line. Waiting would add 250ms+
-          // to every next-comment step. Only document comments need the
-          // inner alignment below, after the outer scroll stops.
-          if (!inDocument) { done(el); return; }
+          // passes no smooth behavior, so the list is already in place; the
+          // card is then centered right away (top-aligned when taller than
+          // the list). Waiting would add 250ms+ to every next-comment step.
+          // Only document comments wait for the outer scroll to stop before
+          // the alignment below.
+          if (!inDocument) {
+            scrollPierreElementIntoView(el, isCurrent);
+            done(el);
+            return;
+          }
           whenListScrollSettled(document.getElementById('filesContainer'), function() {
             whenMounted(card, function(mountedCard) {
               if (!isCurrent()) return;
-              scrollPierreElementIntoView(mountedCard);
+              scrollPierreElementIntoView(mountedCard, isCurrent);
               done(mountedCard);
             });
           }, isCurrent);
@@ -2734,7 +2933,6 @@
   }
 
   function pinnedOnScreen(paths, viewer, top) {
-    if (Date.now() < treePin.until) return true;
     const i = paths.indexOf(treePin.path);
     if (i < 0) return false;
     const root = document.getElementById('filesContainer');
@@ -2754,7 +2952,7 @@
       updateTreeActive(treePin.path);
       return;
     }
-    treePin = null;
+    const pin = treePin && Date.now() < treePin.until ? treePin : null;
     // Above the first file sits the review conversation (the list header).
     const conversation = document.getElementById('reviewConversation');
     let best = conversation && !conversation.hidden && top + 60 < viewer.getTopForItem(paths[0])
@@ -2763,6 +2961,7 @@
       if (viewer.getTopForItem(paths[i]) <= top + 60) best = paths[i];
     }
     updateTreeActive(best);
+    treePin = pin; // updateTreeActive drops a pin for another file; keep it for 2s
   }
 
   function disposePierreView() {
@@ -2776,6 +2975,10 @@
       container.parentNode.insertBefore(conversation, container);
     }
     if (pierreView) { pierreView.destroy(); pierreView = null; }
+    // The next view creates its own ResizeObserver. Ours must be created after
+    // it to run after Pierre's scroll fix, so drop it with the view.
+    if (pierreDocumentResizeObserver) { pierreDocumentResizeObserver.disconnect(); pierreDocumentResizeObserver = null; }
+    pierreReaderAnchor = null;
     document.body.classList.remove('pierre-review');
   }
 
@@ -3198,9 +3401,21 @@
     return document.getElementById('file-section-' + filePath);
   }
 
+  // Single-file file mode: the header bar names the file, so file headers
+  // (and their Viewed box) are hidden.
+  function isSingleFileMode() {
+    return session.mode !== 'git' && files.length === 1;
+  }
+
+  // Tooltip for a file header control, naming its shortcut when bound.
+  function shortcutTitle(label, id) {
+    const shortcutRegistry = window.crit && window.crit.shortcuts;
+    const keys = shortcutRegistry ? shortcutRegistry.getBinding(id) : '';
+    return keys ? label + ' (' + keys + ')' : label;
+  }
+
   // Fill a file header (name, badge, stats, markdown toggle, change nav,
-  // file-comment button, viewed checkbox). Shared by the classic <summary>
-  // header and Pierre's custom header slot.
+  // file-comment button, viewed checkbox) for Pierre's custom header slot.
   function populateFileHeader(file, header) {
     const dirParts = file.path.split('/');
     const fileName = dirParts.pop();
@@ -3216,8 +3431,7 @@
     if (file.status === 'renamed') badgeLabel = 'Renamed';
 
     // In single-file file mode, hide the file header (filename is shown in the header bar)
-    const singleFileMode = session.mode !== 'git' && files.length === 1;
-    if (singleFileMode) header.style.display = 'none';
+    if (isSingleFileMode()) header.style.display = 'none';
 
     const renameHeader = file.status === 'renamed' && file.oldPath
       ? '<span class="rename-paths"><span class="rename-old">' + escapeHtml(file.oldPath) + '</span>' +
@@ -3225,7 +3439,7 @@
       : '<span class="dir">' + escapeHtml(dirPath) + '</span><span class="filename">' + escapeHtml(fileName) + '</span>';
 
     header.innerHTML =
-      '<button type="button" class="file-header-chevron" aria-label="Toggle ' + escapeHtml(file.path) + '"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></button>' +
+      '<button type="button" class="file-header-chevron" aria-label="Toggle ' + escapeHtml(file.path) + '" title="' + escapeHtml(shortcutTitle('Collapse or expand', 'toggle_collapse')) + '"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></button>' +
       ICON_FILE +
       '<span class="file-header-name">' + renameHeader +
         '<button type="button" class="file-header-copy-path" aria-label="Copy file path">' + ICON_COPY_PATH + '</button>' +
@@ -3252,12 +3466,15 @@
       });
     })(file.path);
 
-    // Add document/diff toggle for markdown files that have diff hunks.
+    // Document / Diff / Source toggle for markdown: Diff when the file has
+    // hunks, Source (the whole file as code) in files mode.
     // In git mode with base content available, offer a third Rendered view:
     // Previous-vs-Current split/unified (follows the existing split/unified
-    // toggle). Markdown only. Hide when diffActive is on (header-level
-    // rendered diff overrides per-file toggle).
-    if (file.fileType === 'markdown' && file.diffHunks && file.diffHunks.length > 0 && !diffActive) {
+    // toggle). Hide when diffActive is on (header-level rendered diff
+    // overrides per-file toggle).
+    const hasHunks = !!(file.diffHunks && file.diffHunks.length > 0);
+    const showSource = session.mode !== 'git' && !file.orphaned;
+    if (file.fileType === 'markdown' && (hasHunks || showSource) && !diffActive) {
       const hasRendered = hasRenderedDiff(file);
       const toggle = document.createElement('div');
       toggle.className = 'file-header-toggle';
@@ -3266,11 +3483,12 @@
       toggle.innerHTML =
         '<button type="button" class="toggle-btn' + (file.viewMode === 'document' ? ' active' : '') + '" data-mode="document" aria-pressed="' + (file.viewMode === 'document' ? 'true' : 'false') + '">Document</button>' +
         (hasRendered ? '<button type="button" class="toggle-btn' + (file.viewMode === 'rendered-diff' ? ' active' : '') + '" data-mode="rendered-diff" aria-pressed="' + (file.viewMode === 'rendered-diff' ? 'true' : 'false') + '">Rendered</button>' : '') +
-        '<button type="button" class="toggle-btn' + (file.viewMode === 'diff' ? ' active' : '') + '" data-mode="diff" aria-pressed="' + (file.viewMode === 'diff' ? 'true' : 'false') + '">Diff</button>';
+        (hasHunks ? '<button type="button" class="toggle-btn' + (file.viewMode === 'diff' ? ' active' : '') + '" data-mode="diff" aria-pressed="' + (file.viewMode === 'diff' ? 'true' : 'false') + '">Diff</button>' : '') +
+        (showSource ? '<button type="button" class="toggle-btn' + (file.viewMode === 'source' ? ' active' : '') + '" data-mode="source" aria-pressed="' + (file.viewMode === 'source' ? 'true' : 'false') + '">Source</button>' : '');
       toggle.addEventListener('click', function(e) {
         const btn = e.target.closest('.toggle-btn');
         if (!btn) return;
-        e.preventDefault(); // Don't toggle the <details>
+        e.preventDefault();
         const fileForms = getFormsForFile(file.path);
         fileForms.forEach(function(f) { removeForm(f.formKey); });
         if (activeFilePath === file.path) {
@@ -3290,7 +3508,7 @@
       header.appendChild(toggle);
 
       // Change navigation widget (file mode, both document and diff view)
-      if (session.mode !== 'git') {
+      if (session.mode !== 'git' && hasHunks) {
         const changeNav = document.createElement('div');
         changeNav.className = 'change-nav';
         const sc = window.crit && window.crit.shortcuts;
@@ -3350,7 +3568,7 @@
       fileCommentBtn.setAttribute('aria-label', 'Add file-level comment');
       fileCommentBtn.innerHTML = ICON_COMMENT;
       fileCommentBtn.addEventListener('click', function(e) {
-        e.stopPropagation(); // Don't toggle the <details>
+        e.stopPropagation(); // Don't collapse the file (header click)
         e.preventDefault();
         openFileCommentForm(file.path);
       });
@@ -3360,10 +3578,10 @@
     // Viewed checkbox
     const viewedLabel = document.createElement('label');
     viewedLabel.className = 'file-header-viewed';
-    viewedLabel.title = 'Viewed';
+    viewedLabel.title = shortcutTitle('Viewed', 'toggle_viewed');
     viewedLabel.innerHTML = '<input type="checkbox"' + (file.viewed ? ' checked' : '') + '><span>Viewed</span>';
     viewedLabel.addEventListener('click', function(e) {
-      e.stopPropagation(); // Don't toggle the <details>
+      e.stopPropagation(); // Don't collapse the file (header click)
     });
     viewedLabel.querySelector('input').addEventListener('change', function() {
       toggleViewed(file.path);
@@ -3584,7 +3802,11 @@
 
     const contentEl = document.createElement('div');
     contentEl.className = buildContentClasses(block);
-    let html = block.wordDiffHtml || block.html;
+    // Word-diff spans are spliced into already-sanitized HTML as a string, so
+    // clean the result again before it reaches the page.
+    let html = block.wordDiffHtml
+      ? window.crit.documentRawHtml.sanitizeRendered(block.wordDiffHtml)
+      : block.html;
     html = processTaskLists(html);
     html = rewriteImageSrcs(html, file.path);
     contentEl.innerHTML = html;
@@ -5521,7 +5743,9 @@
 
   // ===== Quote Highlighting in Document/Diff Body =====
 
-  function highlightQuotesInSection(sectionEl, file) {
+  // onlyContent limits the pass to one .line-content (a block re-rendered
+  // after the first pass, e.g. a diagram drawn later).
+  function highlightQuotesInSection(sectionEl, file, onlyContent) {
     const quotedComments = file.comments.filter(function(c) { return c.quote && !c.resolved; });
 
     // Also highlight quotes from open (unsaved) comment forms
@@ -5573,6 +5797,11 @@
         }
       }
 
+      if (onlyContent) {
+        if (contentEls.indexOf(onlyContent) === -1) return;
+        contentEls.length = 0;
+        contentEls.push(onlyContent);
+      }
       if (contentEls.length === 0) return;
 
       // Preserve a whitespace boundary between cells/line blocks while retaining
@@ -5585,6 +5814,10 @@
         let node;
         while ((node = walker.nextNode())) {
           if (node.textContent.length === 0) continue;
+          // A rendered block's hidden source is not what the reader sees.
+          if (node.parentElement.closest('.crit-render-source[hidden], .crit-render-expand')) continue;
+          // Nor is a drawn diagram's <style>, <title> or <desc>.
+          if (!isVisibleSvgText(node)) continue;
           const start = fullText.length;
           fullText += node.textContent;
           nodeRanges.push({ node: node, start: start, end: fullText.length });
@@ -5657,9 +5890,7 @@
 
         if (startInNode === 0 && endInNode === node.textContent.length) {
           // Wrap entire text node
-          const mark = document.createElement('mark');
-          mark.className = 'quote-highlight';
-          mark.dataset.commentId = comment.id;
+          const mark = quoteMark(node, comment.id);
           node.parentNode.replaceChild(mark, node);
           mark.appendChild(node);
         } else {
@@ -5669,9 +5900,7 @@
           const after = node.textContent.slice(endInNode);
           const frag = document.createDocumentFragment();
           if (before) frag.appendChild(document.createTextNode(before));
-          const mark = document.createElement('mark');
-          mark.className = 'quote-highlight';
-          mark.dataset.commentId = comment.id;
+          const mark = quoteMark(node, comment.id);
           mark.textContent = middle;
           frag.appendChild(mark);
           if (after) frag.appendChild(document.createTextNode(after));
@@ -5679,6 +5908,25 @@
         }
       }
     });
+  }
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // Text directly in an SVG element is visible only in <text>, <tspan> and
+  // <textPath>; a diagram's <style>, <title> and <desc> hold text too.
+  function isVisibleSvgText(node) {
+    const parent = node.parentElement;
+    return parent.namespaceURI !== SVG_NS || /^(text|tspan|textPath)$/.test(parent.localName);
+  }
+
+  // The element that wraps a quoted part of textNode. SVG <text> does not draw
+  // an HTML <mark>, so a diagram label gets an SVG <tspan>.
+  function quoteMark(textNode, commentId) {
+    const inSvg = textNode.parentElement.namespaceURI === SVG_NS;
+    const mark = inSvg ? document.createElementNS(SVG_NS, 'tspan') : document.createElement('mark');
+    mark.setAttribute('class', 'quote-highlight');
+    mark.dataset.commentId = commentId;
+    return mark;
   }
 
   function createInlineEditor(comment, filePath) {
@@ -6175,26 +6423,30 @@
   }
 
   // Scroll to and flash a specific review-level comment card. Mirrors scrollToComment.
-  function scrollToReviewComment(commentId) {
+  // `flash` (optional) replaces the default highlight; it runs before the
+  // scroll so a card it expands is placed at its full height.
+  function scrollToReviewComment(commentId, flash) {
     if (isReviewConversationCollapsed()) {
       setReviewConversationCollapsed(false);
       renderReviewConversation();
     }
     const section = document.getElementById('reviewConversation');
     if (!section) return;
+    // Supersede a file jump still in flight so it does not scroll back down.
+    const seq = ++pierreJumpSeq;
     const card = section.querySelector('.comment-card[data-comment-id="' + CSS.escape(commentId) + '"]');
     if (!card) {
       scrollToReviewConversation();
       return;
     }
     ignoreTreeObserverUntil = Date.now() + 200;
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.classList.remove('comment-card-highlight');
-    void card.offsetWidth;
-    card.classList.add('comment-card-highlight');
-    card.addEventListener('animationend', function() {
-      card.classList.remove('comment-card-highlight');
-    }, { once: true });
+    if (flash) flash(card);
+    else restartFlash(card, 'comment-card-highlight');
+    // The conversation is the review list's header. A smooth scroll there
+    // stops partway: files mounting on the way up adjust scrollTop, and that
+    // cancels the browser's animation.
+    if (section.closest('#filesContainer')) scrollPierreElementIntoView(card, function() { return seq === pierreJumpSeq; });
+    else card.scrollIntoView({ block: 'center', behavior: 'instant' });
     updateTreeActive(REVIEW_CONVERSATION_PATH);
   }
 
@@ -6788,15 +7040,10 @@
   }
 
 
+  // Highlight only. pierreJumpToComment has already placed the card, and
+  // the story path scrolls it itself.
   function flashCommentCard(commentCard) {
-    if (pierreView && pierreViewActive()) scrollPierreElementIntoView(commentCard);
-    else commentCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    commentCard.classList.remove('comment-card-highlight');
-    void commentCard.offsetWidth;
-    commentCard.classList.add('comment-card-highlight');
-    commentCard.addEventListener('animationend', function() {
-      commentCard.classList.remove('comment-card-highlight');
-    }, { once: true });
+    restartFlash(commentCard, 'comment-card-highlight');
   }
 
   function scrollToComment(commentId, filePath) {
@@ -6827,7 +7074,9 @@
         const pane = document.getElementById('storyPane');
         if (!pane) return;
         const card = pane.querySelector('.comment-card[data-comment-id="' + CSS.escape(commentId) + '"]');
-        if (card) flashCommentCard(card);
+        if (!card) return;
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        flashCommentCard(card);
       };
       if (navigated) requestAnimationFrame(locate); else locate();
       return;
@@ -7199,6 +7448,7 @@
             viewMode: files[pi].viewMode,
             collapsed: files[pi].collapsed,
             viewed: files[pi].viewed,
+            viewedHunks: files[pi].viewedHunks,
             fileHash: files[pi].fileHash,
           };
         }
@@ -7225,16 +7475,23 @@
             // back to Document. Lazy files are checked once they load. A
             // renderer's view needs a renderer that still applies (the file
             // may have been deleted); without one the mode default applies.
+            // In files mode Diff needs hunks; a file the round left unchanged
+            // has no Diff button, so it goes back to Document.
             if (prev.viewMode === 'rendered-diff' && !files[fi].lazy && !hasRenderedDiff(files[fi])) {
               files[fi].viewMode = 'document';
             } else if (prev.viewMode === 'rendered' && !fileRendererFor(files[fi])) {
               files[fi].viewMode = session.mode === 'git' ? 'diff' : 'document';
+            } else if (prev.viewMode === 'diff' && session.mode !== 'git' && files[fi].fileType === 'markdown' &&
+                !files[fi].lazy && !(files[fi].diffHunks && files[fi].diffHunks.length > 0)) {
+              files[fi].viewMode = 'document';
             } else {
               files[fi].viewMode = prev.viewMode;
             }
             // Lazy files must stay collapsed — they have no content to render
             if (!files[fi].lazy && !contentChanged) files[fi].collapsed = prev.collapsed;
             if (prev.viewed && !contentChanged) files[fi].viewed = true;
+            files[fi].viewedHunks = prev.viewedHunks;
+            reconcileStoryViewed(files[fi]);
           }
         }
 
@@ -7459,8 +7716,17 @@
   // Announce copy action to screen readers via live region. Used by the
   // finish-review copy flow and the settings overlay.
   function announceCopy() {
+    announce('Copied to clipboard');
+  }
+
+  // Write a short message to the polite live region for screen readers.
+  // Clearing first and setting the text a frame later makes a repeat of the
+  // same message count as a change, so it is read again.
+  function announce(message) {
     const el = document.getElementById('copyStatus');
-    if (el) { el.textContent = ''; el.textContent = 'Copied to clipboard'; }
+    if (!el) return;
+    el.textContent = '';
+    requestAnimationFrame(function() { el.textContent = message; });
   }
 
   // ===== Table of Contents =====
@@ -7599,7 +7865,13 @@
   function scrollToHashHeading() {
     const hash = window.location.hash;
     if (!hash || hash === '#') return;
-    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    const id = decodeURIComponent(hash.slice(1));
+    // Ids and names in a document's raw HTML carry a user-content- prefix
+    // (document-html.js), so #foo also finds the author's id="foo" or
+    // name="foo", as on GitHub.
+    const target = document.getElementById(id) ||
+      document.getElementById('user-content-' + id) ||
+      document.querySelector('[name="' + CSS.escape('user-content-' + id) + '"]');
     if (!target) return;
     scrollReviewToElement(target, 8, 'instant');
   }
@@ -7655,6 +7927,25 @@
         quote: d.quote || null,
         quoteOffset: null,
       });
+    });
+  }
+
+  // A diagram is drawn after the document's first highlight pass, which could
+  // only see its hidden source: highlight quotes again in the drawn output.
+  // The renderer caches its clean output before it sends the event.
+  function installRenderedQuoteHighlights() {
+    document.addEventListener('crit:rendered', function(e) {
+      const target = e.target;
+      const content = target.isConnected && target.closest('.line-content');
+      const block = content && content.closest('.line-block[data-file-path]');
+      const section = block && block.closest('.file-section');
+      const file = block && getFileByPath(block.dataset.filePath);
+      if (!section || !file) return;
+      content.querySelectorAll('.quote-highlight').forEach(function(mark) {
+        mark.replaceWith.apply(mark, Array.from(mark.childNodes));
+      });
+      content.normalize();
+      highlightQuotesInSection(section, file, content);
     });
   }
 
@@ -7934,21 +8225,30 @@
     normalizeCommitPins();
     if (virtualCommitSelected && !commitFrom && !commitThrough) {
       diffCommit = VIRTUAL_WORKING_COMMIT;
-      return;
-    }
-    if (!commitFrom && !commitThrough) {
+    } else if (!commitFrom && !commitThrough) {
       diffCommit = '';
-      return;
-    }
-    if (commitFrom && !commitThrough) {
+    } else if (commitFrom && !commitThrough) {
       diffCommit = commitFrom;
-      return;
-    }
-    if (commitFrom && commitThrough) {
+    } else if (commitFrom && commitThrough) {
       diffCommit = commitFrom + '..' + commitThrough;
-      return;
+    } else {
+      diffCommit = '';
     }
-    diffCommit = '';
+    updateScopePinIndicator();
+  }
+
+  // Marks the scope toggle while a pinned commit overrides it. The hint goes
+  // on each button, since the browser shows the innermost element's title.
+  function updateScopePinIndicator() {
+    if (!wtScopeToggleEl) return;
+    const pinned = !!diffCommit;
+    wtScopeToggleEl.classList.toggle('commit-pinned', pinned);
+    wtScopeToggleEl.querySelectorAll('.toggle-btn').forEach(function(b) {
+      if (b.dataset.baseTitle === undefined) b.dataset.baseTitle = b.title || '';
+      b.title = pinned
+        ? b.dataset.baseTitle + ' (a commit is pinned; click to show this scope)'
+        : b.dataset.baseTitle;
+    });
   }
 
   function clearCommitPins() {
@@ -8430,14 +8730,13 @@
   // ===== Scope Toggle (All / Branch / Staged / Unstaged) =====
   document.getElementById('scopeToggle').addEventListener('click', async function(e) {
     const btn = e.target.closest('.toggle-btn');
-    if (!btn || btn.disabled || btn.classList.contains('active')) return;
+    if (!btn || btn.disabled) return;
     const scope = btn.dataset.scope;
+    if (btn.classList.contains('active') && !diffCommit) return;
     diffScope = scope;
     navCommentId = null;
     setSetting('diffScope', scope);
-    if (scope !== 'all' && scope !== 'branch') {
-      clearCommitPins();
-    }
+    clearCommitPins();
     document.querySelectorAll('#scopeToggle .toggle-btn').forEach(function(b) {
       b.classList.toggle('active', b.dataset.scope === scope);
     });
@@ -9132,6 +9431,49 @@
         document.getElementById('finishBtn').click();
         break;
       }
+      case 'toggle_viewed': case 'toggle_collapse': {
+        // Holding the key would flip the file on every repeat.
+        if (e.repeat) return;
+        const markViewed = shortcutAction === 'toggle_viewed';
+        if (storyActive()) {
+          toggleStoryFile(e, markViewed);
+          break;
+        }
+        if (!pierreView || !pierreViewActive()) return;
+        if (isSingleFileMode()) return;
+        // Whichever pointed at a file last wins: the keyboard focus (while
+        // its file is on screen) or the file under the mouse. The other is
+        // the fallback, e.g. once the mouse has left the list.
+        const keyboardFile = pierreFocus && getFileByPath(pierreFocus.path) &&
+          pierreView.isOnScreen(pierreFocus.path) ? pierreFocus.path : null;
+        const mouseFile = mouseInList ? pierreView.hoveredPath() : null;
+        const filePath = mouseMovedSinceFocus ? (mouseFile || keyboardFile) : (keyboardFile || mouseFile);
+        if (!filePath) return;
+        e.preventDefault();
+        // Collapsing the file would strand a visual range inside it.
+        const leftVisual = !!pierreVisualAnchor && pierreVisualAnchor.path === filePath;
+        if (leftVisual) {
+          pierreVisualAnchor = null;
+          document.body.classList.remove('visual-mode');
+          hidePierreSelection();
+          clearPierreDocVisual();
+        }
+        const file = getFileByPath(filePath);
+        if (markViewed) {
+          toggleViewed(filePath);
+        } else if (file) {
+          pierreView.setCollapsed(file, !file.collapsed);
+        }
+        // Full path: base names like README.md repeat across folders.
+        if (file) {
+          if (markViewed) announce((file.viewed ? 'Marked ' : 'Unmarked ') + file.path + ' viewed');
+          else announce((file.collapsed ? 'Collapsed ' : 'Expanded ') + file.path);
+        }
+        // The file stayed open (un-viewed, or expanded): keep the focused
+        // line highlighted, as Esc does when it leaves visual mode.
+        if (leftVisual && file && !file.collapsed) showPierreFocus();
+        break;
+      }
       case 'general_comment': {
         e.preventDefault();
         openReviewCommentForm();
@@ -9194,7 +9536,8 @@
         const scopeMap = { scope_all: 'all', scope_branch: 'branch', scope_staged: 'staged', scope_unstaged: 'unstaged' };
         const scope = scopeMap[shortcutAction];
         const btn = document.querySelector('#scopeToggle .toggle-btn[data-scope="' + scope + '"]');
-        if (btn && !btn.disabled && !btn.classList.contains('active')) {
+        // The active scope still releases a pinned commit, as a click does.
+        if (btn && !btn.disabled && (!btn.classList.contains('active') || diffCommit)) {
           e.preventDefault();
           btn.click();
         }
@@ -10046,19 +10389,48 @@
   }
 
   // ----- Story progress -----
-  // Story mode uses the same file.viewed state and localStorage key as the
-  // regular diff. A file marked viewed in a chapter is viewed everywhere.
-  function isStoryFileViewed(filePath) {
+  function isStoryFileViewed(filePath, oldStarts, pageId) {
     const file = getFileByPath(filePath);
-    return !!(file && file.viewed);
+    if (!file || file.lazy) return !!(file && file.viewed);
+    const built = cloneFileForHunks(filePath, oldStarts, pageId);
+    return !!(built && areHunksViewed(file, built.clone.diffHunks));
   }
 
-  // Progress for a page: {done, total} over its file groups.
+  function setStoryFileViewed(filePath, oldStarts, pageId, viewed) {
+    const file = getFileByPath(filePath);
+    if (!file || file.lazy) return;
+    const built = cloneFileForHunks(filePath, oldStarts, pageId);
+    if (!built) return;
+    const keys = new Set(file.viewedHunks || (file.viewed ? viewedHunkKeys(file.diffHunks) : []));
+    viewedHunkKeys(built.clone.diffHunks).forEach(function(key) {
+      if (viewed) keys.add(key);
+      else keys.delete(key);
+    });
+    file.viewedHunks = Array.from(keys);
+    reconcileStoryViewed(file);
+  }
+
+  // A group whose hunks are no longer in the diff (stale story) has nothing
+  // to mark. Lazy files count: their hunks arrive on load.
+  function storyGroupMarkable(filePath, oldStarts, pageId) {
+    const file = getFileByPath(filePath);
+    if (!file) return false;
+    if (file.lazy) return true;
+    const built = cloneFileForHunks(filePath, oldStarts, pageId);
+    return !!(built && built.shown);
+  }
+
+  // Progress for a page: {done, total} over its file groups that have hunks.
   function storyPageProgress(page) {
-    const groupFiles = Array.from(page.refsByFile.keys());
+    const pid = storyPageId(page);
     let done = 0;
-    groupFiles.forEach(function (fp) { if (isStoryFileViewed(fp)) done++; });
-    return { done: done, total: groupFiles.length };
+    let total = 0;
+    page.refsByFile.forEach(function (starts, fp) {
+      if (!storyGroupMarkable(fp, starts, pid)) return;
+      total++;
+      if (isStoryFileViewed(fp, starts, pid)) done++;
+    });
+    return { done: done, total: total };
   }
 
   // Keep the chapter mark button in sync when per-file Viewed state changes.
@@ -10116,7 +10488,7 @@
     clone.previousLineBlocks = file.previousLineBlocks;
     clone.tocItems = file.tocItems;
     clone.collapsed = file.collapsed;
-    clone.viewed = file.viewed;
+    clone.viewed = areHunksViewed(file, clone.diffHunks);
     clone.additions = file.additions;
     clone.deletions = file.deletions;
     clone.lazy = file.lazy;
@@ -10152,6 +10524,9 @@
       file.tocItems = loaded.tocItems;
       file.fileHash = loaded.fileHash;
       file.lazy = false;
+      reconcileStoryViewed(file);
+      updateViewedCount();
+      updateTreeViewedState();
       file._lazyLoading = false;
       delete file._storyLazyPromise;
       // Drop clones built against the empty lazy placeholder.
@@ -10210,6 +10585,7 @@
       // Force diff view for the group body regardless of markdown viewMode.
       viewMode: 'diff',
     });
+    clone.viewed = areHunksViewed(file, copiedHunks);
     storyExpandedFileCache.set(key, { fileHash: file.fileHash, clone: clone, total: expandedHunks.length });
     return { clone: clone, total: expandedHunks.length, shown: copiedHunks.length };
   }
@@ -10255,16 +10631,16 @@
         sub = 'Why this change exists';
       } else if (page.kind === 'support') {
         indexLabel = 'S';
-        const prog = storyPageProgress(page);
+        const nf = page.refsByFile.size;
         name = escapeHtml(supportPageLabel(page));
-        sub = prog.total + ' file' + (prog.total === 1 ? '' : 's');
+        sub = nf + ' file' + (nf === 1 ? '' : 's');
         statusHtml = railStatusHtml(page);
       } else {
         indexLabel = String(page.idx + 1);
         name = escapeHtml(page.title);
-        const prog = storyPageProgress(page);
+        const nf = page.refsByFile.size;
         const nh = countHunksForPage(page);
-        sub = prog.total + ' file' + (prog.total === 1 ? '' : 's') + ' · ' + nh + ' hunk' + (nh === 1 ? '' : 's');
+        sub = nf + ' file' + (nf === 1 ? '' : 's') + ' · ' + nh + ' hunk' + (nh === 1 ? '' : 's');
         statusHtml = railStatusHtml(page);
       }
       row.innerHTML =
@@ -10379,7 +10755,6 @@
       item.className = 'crit-story-toc__item' + (page.kind === 'support' ? ' support' : '');
       const pid = storyPageId(page);
       item.dataset.storyTarget = pid;
-      const prog = storyPageProgress(page);
       const nh = countHunksForPage(page);
       const indexLabel = page.kind === 'support' ? 'S' : String(page.idx + 1);
       const title = page.kind === 'support' ? supportPageLabel(page) : page.title;
@@ -10394,7 +10769,7 @@
         '</span>' +
         '<span class="crit-story-toc__meta">' +
           railStatusHtml(page) +
-          '<span>' + prog.total + 'f · ' + nh + 'h</span>' +
+          '<span>' + page.refsByFile.size + 'f · ' + nh + 'h</span>' +
           '<span class="crit-story-toc__go">→</span>' +
         '</span>';
       item.addEventListener('click', function () { showStory(pid); });
@@ -10567,7 +10942,7 @@
     section.className = 'file-section crit-story-file-group';
     section.id = 'story-file-section-' + pid + '-' + filePath;
     section.dataset.storyFile = filePath;
-    if (file && file.viewed) section.classList.add('viewed');
+    if (isStoryFileViewed(filePath, oldStarts, pid)) section.classList.add('viewed');
     if (!file || !file.collapsed) section.open = true;
 
     const header = document.createElement('summary');
@@ -10579,7 +10954,7 @@
       }
       if (file && section.open) {
         e.preventDefault();
-        if (section.getBoundingClientRect().top < 0) section.scrollIntoView({ behavior: 'instant' });
+        revealStorySectionTop(section);
         section.open = false;
         file.collapsed = true;
       }
@@ -10601,7 +10976,7 @@
     const fileName = dirParts.pop();
     const dirPath = dirParts.length > 0 ? dirParts.join('/') + '/' : '';
     header.innerHTML =
-      '<div class="file-header-chevron"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></div>' +
+      '<div class="file-header-chevron" title="' + escapeHtml(shortcutTitle('Collapse or expand', 'toggle_collapse')) + '"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></div>' +
       ICON_FILE +
       '<span class="file-header-name"><span class="dir">' + escapeHtml(dirPath) + '</span><span class="filename">' + escapeHtml(fileName || filePath) + '</span>' +
         '<button type="button" class="file-header-copy-path" aria-label="Copy file path">' + ICON_COPY_PATH + '</button>' +
@@ -10662,13 +11037,22 @@
 
     const viewedLabel = document.createElement('label');
     viewedLabel.className = 'file-header-viewed';
-    viewedLabel.title = 'Viewed';
-    viewedLabel.innerHTML = '<input type="checkbox"' + (file && file.viewed ? ' checked' : '') + '><span>Viewed</span>';
+    viewedLabel.title = shortcutTitle('Viewed', 'toggle_viewed');
+    viewedLabel.innerHTML = '<input type="checkbox"' + (isStoryFileViewed(filePath, oldStarts, pid) ? ' checked' : '') + '><span>Viewed</span>';
     viewedLabel.addEventListener('click', function(e) { e.stopPropagation(); });
+    viewedLabel.querySelector('input').disabled = !!(file && file.lazy) || !storyGroupMarkable(filePath, oldStarts, pid);
     viewedLabel.querySelector('input').addEventListener('change', function () {
-      toggleViewed(filePath);
-      if (file && file.viewed && section.open) section.open = false;
-      section.classList.toggle('viewed', !!(file && file.viewed));
+      setStoryFileViewed(filePath, oldStarts, pid, this.checked);
+      const viewed = isStoryFileViewed(filePath, oldStarts, pid);
+      this.checked = viewed;
+      saveViewedState();
+      updateViewedCount();
+      updateTreeViewedState();
+      if (viewed && section.open) {
+        revealStorySectionTop(section);
+        section.open = false;
+      }
+      section.classList.toggle('viewed', viewed);
       renderStoryRail();
       updateStoryMarkButton(page);
     });
@@ -10758,12 +11142,15 @@
     return true;
   }
 
-  function markPageViewed(page, viewed) {
-    page.refsByFile.forEach(function (_starts, filePath) {
+  async function markPageViewed(page, viewed) {
+    // A file that fails to load stays lazy, and setStoryFileViewed skips it.
+    await Promise.allSettled(Array.from(page.refsByFile.keys()).map(function(filePath) {
+      return ensureStoryLazyFile(getFileByPath(filePath));
+    }));
+    page.refsByFile.forEach(function (starts, filePath) {
+      setStoryFileViewed(filePath, starts, storyPageId(page), viewed);
       const file = getFileByPath(filePath);
-      if (!file || file.viewed === viewed) return;
-      file.viewed = viewed;
-      if (viewed) file.collapsed = true;
+      if (viewed && file && !file.lazy) file.collapsed = true;
     });
     saveViewedState();
     updateViewedCount();
@@ -11016,6 +11403,38 @@
     return false;
   }
 
+  // A story file group read from its middle (header stuck under the pane's
+  // top edge) is brought back into view before it collapses, so the next
+  // file starts at the top.
+  function revealStorySectionTop(section) {
+    const pane = document.getElementById('storyPane');
+    const top = pane ? pane.getBoundingClientRect().top : 0;
+    if (section.getBoundingClientRect().top < top) section.scrollIntoView({ behavior: 'instant' });
+  }
+
+  // toggle_viewed / toggle_collapse in a story chapter (no line focus
+  // there): the file group under the mouse, else the one taking up most of
+  // the pane. Clicking its Viewed checkbox or header runs the same handlers
+  // as a real click (rail, chapter mark, scroll back to a collapsed header).
+  function toggleStoryFile(e, markViewed) {
+    const pane = document.getElementById('storyPane');
+    if (!pane) return;
+    let group = pointerHovers ? pane.querySelector('.crit-story-file-group:hover') : null;
+    if (!group) {
+      const view = pane.getBoundingClientRect();
+      let best = 0;
+      pane.querySelectorAll('.crit-story-file-group').forEach(function(g) {
+        const r = g.getBoundingClientRect();
+        const shown = Math.min(r.bottom, view.bottom) - Math.max(r.top, view.top);
+        if (shown > best) { best = shown; group = g; }
+      });
+    }
+    const target = group && group.querySelector(markViewed ? '.file-header-viewed input' : '.crit-story-file-header');
+    if (!target) return;
+    e.preventDefault();
+    target.click();
+  }
+
   function storyActive() { return !!storyState && document.body.classList.contains('crit-story-active'); }
 
   // Handle a keydown when story view is active. Returns true if consumed.
@@ -11163,12 +11582,7 @@
               const start = parseInt(el.dataset.startLine);
               const end = parseInt(el.dataset.endLine);
               if (start >= anchor.startLine && end <= anchor.endLine) {
-                el.classList.remove('comment-card-highlight');
-                void el.offsetWidth;
-                el.classList.add('comment-card-highlight');
-                el.addEventListener('animationend', function () {
-                  el.classList.remove('comment-card-highlight');
-                }, { once: true });
+                restartFlash(el, 'comment-card-highlight');
               }
             });
             return Promise.resolve();

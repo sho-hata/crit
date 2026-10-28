@@ -245,14 +245,29 @@ func rewriteReviewJSONRenames(critPath string, renames []pathRename) {
 		return
 	}
 	reviewPath := ReviewPathsFor(critPath).Review
-	data, err := os.ReadFile(reviewPath)
-	if err != nil {
+	// Check first: the lock would otherwise create a folder for no review.
+	if _, err := os.Stat(reviewPath); err != nil {
 		return
 	}
-	var cj CritJSON
-	if err := json.Unmarshal(data, &cj); err != nil || cj.Files == nil {
-		return
-	}
+	_ = WithReviewWriteLock(critPath, func() error {
+		data, err := ReadFileShared(reviewPath)
+		if err != nil {
+			return err
+		}
+		var cj CritJSON
+		if err := json.Unmarshal(data, &cj); err != nil || cj.Files == nil {
+			return err
+		}
+		if !applyReviewJSONRenames(&cj, renames) {
+			return nil
+		}
+		return saveCritJSONToDisk(critPath, cj)
+	})
+}
+
+// applyReviewJSONRenames moves cj.Files keys for each rename and reports
+// whether anything moved.
+func applyReviewJSONRenames(cj *CritJSON, renames []pathRename) bool {
 	changed := false
 	for _, r := range renames {
 		if r.from == "" || r.to == "" || r.from == r.to {
@@ -275,14 +290,7 @@ func rewriteReviewJSONRenames(critPath string, renames []pathRename) {
 		delete(cj.Files, r.from)
 		changed = true
 	}
-	if !changed {
-		return
-	}
-	out, err := json.MarshalIndent(cj, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = AtomicWriteFile(reviewPath, out, 0o600)
+	return changed
 }
 
 // mergeCommentSlices appends comments from extra whose IDs are not already in base.
@@ -609,6 +617,10 @@ func (s *Session) finishRoundComplete(edits int) {
 // and round advance still run.
 // Must only be called from the single watcher goroutine (watchGit).
 func (s *Session) handleRoundCompleteGit() {
+	s.mu.RLock()
+	seq := s.roundSignalSeq
+	s.mu.RUnlock()
+	defer s.finishRoundPending(seq)
 	s.mu.RLock()
 	edits := s.lastRoundEdits
 	s.mu.RUnlock()
@@ -1114,6 +1126,20 @@ func remapLines(lineMap map[int]int, oldStart, oldEnd, maxLine int) (int, int) {
 	return s, e
 }
 
+// remapCommentPosition maps a line comment onto new content: LCS line mapping
+// first, then anchor verification to correct the position. Drifted reports
+// that the anchor text was not found where the mapping put it; it is false for
+// a comment without an anchor.
+func remapCommentPosition(c Comment, lineMap map[int]int, newLines []string, newLineCount int) (start, end int, drifted bool) {
+	start, end = remapLines(lineMap, c.StartLine, c.EndLine, newLineCount)
+	if c.Anchor != "" {
+		var drift int
+		start, end, drift = verifyAndCorrectPosition(newLines, c.Anchor, start, end)
+		drifted = drift != 0
+	}
+	return start, end, drifted
+}
+
 // carryForwardComments maps comments from the previous round to new document
 // positions using LCS line mapping + anchor verification. Works for all file
 // types (markdown and code) that have PreviousContent and PreviousComments.
@@ -1197,18 +1223,8 @@ func (s *Session) carryForwardFileComments(f *FileEntry) {
 			f.Comments = append(f.Comments, carryForwardComment(c, now))
 			continue
 		}
-		newStart, newEnd := remapLines(lineMap, c.StartLine, c.EndLine, newLineCount)
 		carried := carryForwardComment(c, now)
-		carried.StartLine = newStart
-		carried.EndLine = newEnd
-
-		if c.Anchor != "" {
-			corrStart, corrEnd, drift := verifyAndCorrectPosition(newLines, c.Anchor, newStart, newEnd)
-			carried.StartLine = corrStart
-			carried.EndLine = corrEnd
-			carried.Drifted = drift != 0
-		}
-
+		carried.StartLine, carried.EndLine, carried.Drifted = remapCommentPosition(c, lineMap, newLines, newLineCount)
 		f.Comments = append(f.Comments, carried)
 	}
 	s.mu.Unlock()

@@ -93,7 +93,13 @@ func fetchSessionFocus(client *http.Client, host string, port int) *Focus {
 // ResolvePullScope picks the (HeadSHA, DiffScope) pair stamped on imported
 // GitHub PR comments.
 func ResolvePullScope(cj *CritJSON) InheritedScope {
-	if focus := ProbeDaemonFocus(); focus != nil && focus.Kind == FocusRange {
+	return PullScopeFor(ProbeDaemonFocus(), cj)
+}
+
+// PullScopeFor is ResolvePullScope with an already probed daemon focus, for
+// callers that must not make the HTTP call while holding the review lock.
+func PullScopeFor(focus *Focus, cj *CritJSON) InheritedScope {
+	if focus != nil && focus.Kind == FocusRange {
 		return InheritedScope{HeadSHA: focus.HeadSHA, DiffScope: "layer"}
 	}
 	if cj != nil && cj.ActiveDiffScope != "" {

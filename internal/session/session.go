@@ -443,6 +443,20 @@ type Session struct {
 	// ingested one). Read/write under s.mu; surfaced via GetSessionInfo.
 	story *Story
 
+	// roundCompletePending is true from SignalRoundComplete until the git
+	// watcher has carried comments forward. SyncWorkingTree must not touch
+	// content in that window. Read/write under s.mu.
+	roundCompletePending bool
+	// roundSignalSeq counts SignalRoundComplete calls, so a watcher run only
+	// clears roundCompletePending when no newer signal arrived meanwhile.
+	roundSignalSeq uint64
+
+	// Short-lived cache of the scope "all" file list (see liveAllChanges).
+	liveChangesMu     sync.Mutex
+	liveChanges       []vcs.FileChange
+	liveChangesKey    string
+	liveChangesExpiry time.Time
+
 	// RoundSnapshots is in-memory state populated from <folder>/snapshots.json
 	// at boot. Persisted via SaveSnapshotsFile; never written into review.json.
 	//
@@ -461,6 +475,15 @@ type Session struct {
 	// yet written to disk. Keyed by file path -> set of comment IDs. buildCritJSON's
 	// applyDeletedCommentIDs drops them after merging with disk.
 	deletedCommentIDs map[string]map[string]struct{}
+	// deletedReplyIDs lists replies the reviewer deleted, so a daemon write
+	// does not take them back from a review file that still has them.
+	deletedReplyIDs map[string]struct{}
+	// resolvedDirtyIDs lists comments whose resolved state the reviewer
+	// changed since the last write, each with the value of resolvedDirtySeq
+	// at the change. A write that takes in a CLI reply keeps the reviewer's
+	// resolved state for these instead of the one on disk.
+	resolvedDirtyIDs map[string]uint64
+	resolvedDirtySeq uint64
 
 	// pendingGitHubDeletes holds GitHub comment IDs (root or reply) that the
 	// user has deleted locally and that the next `crit push` must DELETE
@@ -486,18 +509,23 @@ type Session struct {
 	// been deleted. time.Timer.Stop() does not wait for callbacks already
 	// executing, so the writeGen check alone is not sufficient to prevent a
 	// snapshot-taken-before-clear from resurrecting the file.
-	writeMu             sync.Mutex
-	pendingWrite        bool
-	status              *Status
-	roundComplete       chan struct{}
-	pollInterval        time.Duration // watcher tick; 0 means 1s (tests shorten it)
-	pendingEdits        int
-	lastRoundEdits      int
-	lastCritJSONMtime   time.Time // mtime after our last WriteFiles(); used to detect external changes
-	awaitingFirstReview bool      // true until first review-cycle completes
-	waitingForAgent     bool      // true between finish (with unresolved comments) and round-complete
-	planHook            string    // plan_mode | codex while a plan hook waits on review-cycle
-	browserClients      int32     // number of connected SSE browser clients (atomic)
+	writeMu           sync.Mutex
+	pendingWrite      bool
+	status            *Status
+	roundComplete     chan struct{}
+	pollInterval      time.Duration // watcher tick; 0 means 1s (tests shorten it)
+	pendingEdits      int
+	lastRoundEdits    int
+	lastCritJSONMtime time.Time // mtime after our last WriteFiles(); used to detect external changes
+	// diskHasUnloadedComments is set when our last write kept comments or
+	// replies that only disk had, so the watcher reloads despite the mtime match.
+	diskHasUnloadedComments bool
+	// writeSeq counts scheduled writes; see writeFilesSnapshot.writeSeq.
+	writeSeq            uint64
+	awaitingFirstReview bool   // true until first review-cycle completes
+	waitingForAgent     bool   // true between finish (with unresolved comments) and round-complete
+	planHook            string // plan_mode | codex while a plan hook waits on review-cycle
+	browserClients      int32  // number of connected SSE browser clients (atomic)
 
 	// Focus is the discriminator that selects what the session is showing.
 	// Defaults to FocusWorkingTree (today's behavior). Range-mode sessions
@@ -1432,14 +1460,16 @@ func (s *Session) UpdateReviewComment(id, body string) (Comment, bool) {
 }
 
 // DeleteReviewComment deletes a review-level comment by ID. Review-level
-// comments are local-only (not synced to GitHub PR review comments), so a
-// straight removal is safe — there is no upstream record to tombstone.
+// comments are local-only (not synced to GitHub PR review comments), so there
+// is no upstream record to delete. The local tombstone stops the next write
+// from re-adding the comment from disk.
 func (s *Session) DeleteReviewComment(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, c := range s.reviewComments {
 		if c.ID == id {
 			s.reviewComments = append(s.reviewComments[:i], s.reviewComments[i+1:]...)
+			s.trackDeletedComment(reviewCommentTombstones, id)
 			s.scheduleWrite()
 			return true
 		}
@@ -1462,6 +1492,7 @@ func (s *Session) ResolveReviewComment(id string, resolved bool) (Comment, bool)
 				s.reviewComments[i].ResolvedRound = 0
 			}
 			s.reviewComments[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			s.markResolvedDirtyLocked(id)
 			s.scheduleWrite()
 			return s.reviewComments[i], true
 		}
@@ -1515,6 +1546,7 @@ func (s *Session) AddReviewCommentReply(commentID, body, author, userID string) 
 			s.reviewComments[i].Resolved = false
 			s.reviewComments[i].ResolvedRound = 0
 			s.reviewComments[i].UpdatedAt = now
+			s.markResolvedDirtyLocked(commentID)
 			s.scheduleWrite()
 			return r, true
 		}
@@ -1553,6 +1585,7 @@ func (s *Session) DeleteReviewCommentReply(commentID, replyID string) bool {
 				if r.ID == replyID {
 					s.reviewComments[i].Replies = append(s.reviewComments[i].Replies[:j], s.reviewComments[i].Replies[j+1:]...)
 					s.reviewComments[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+					s.markReplyDeletedLocked(replyID)
 					s.scheduleWrite()
 					return true
 				}
@@ -1636,6 +1669,7 @@ func (s *Session) SetCommentResolved(filePath, id string, resolved bool) (Commen
 		f.Comments[i].ResolvedRound = 0
 	}
 	f.Comments[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	s.markResolvedDirtyLocked(id)
 	s.scheduleWrite()
 	return f.Comments[i], true
 }
@@ -1723,8 +1757,13 @@ func (s *Session) appendPendingGHDelete(ghID int64) {
 	s.pendingGitHubDeletes = append(s.pendingGitHubDeletes, ghID)
 }
 
-// trackDeletedComment records a file comment ID as deleted so the merge logic
-// does not re-add it from disk. Caller must hold s.mu.
+// reviewCommentTombstones is the deletedCommentIDs key for review-level
+// comments. It contains NUL, so it never collides with a file path.
+const reviewCommentTombstones = "\x00review"
+
+// trackDeletedComment records a comment ID as deleted so the merge logic does
+// not re-add it from disk. filePath is the comment's file, or
+// reviewCommentTombstones for a review-level comment. Caller must hold s.mu.
 func (s *Session) trackDeletedComment(filePath, id string) {
 	if s.deletedCommentIDs == nil {
 		s.deletedCommentIDs = make(map[string]map[string]struct{})
@@ -1780,6 +1819,7 @@ func (s *Session) AddReply(filePath, commentID, body, author, userID string) (Re
 	f.Comments[i].Resolved = false
 	f.Comments[i].ResolvedRound = 0
 	f.Comments[i].UpdatedAt = now
+	s.markResolvedDirtyLocked(commentID)
 	s.scheduleWrite()
 	return r, true
 }
@@ -1821,6 +1861,7 @@ func (s *Session) DeleteReply(filePath, commentID, replyID string) bool {
 			}
 			f.Comments[i].Replies = append(f.Comments[i].Replies[:j], f.Comments[i].Replies[j+1:]...)
 			f.Comments[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			s.markReplyDeletedLocked(replyID)
 			s.scheduleWrite()
 			return true
 		}
@@ -2122,6 +2163,10 @@ func (s *Session) isWaitingForAgent() bool {
 // the review file. This prevents a TOCTOU race where GetSessionInfo could observe the
 // new round number before carry-forward is complete, returning empty comments.
 func (s *Session) SignalRoundComplete() {
+	// Wait for an in-flight write (SyncWorkingTree saves moved comment
+	// positions synchronously) so the watcher reloads what matches Content.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.Lock()
 	if s.writeTimer != nil {
 		s.writeTimer.Stop()
@@ -2131,6 +2176,8 @@ func (s *Session) SignalRoundComplete() {
 	s.lastRoundEdits = s.pendingEdits
 	s.pendingEdits = 0
 	s.waitingForAgent = false
+	s.roundCompletePending = s.Mode == "git"
+	s.roundSignalSeq++
 	// Clear comments on all files.
 	// ReviewRound is incremented later by the watcher after carry-forward.
 	for _, f := range s.Files {
@@ -2151,7 +2198,7 @@ func (s *Session) ClearAllComments() {
 	// Hold writeMu for the duration so any in-flight debounced write must
 	// finish (and observe the new writeGen) before we proceed. Without this,
 	// a WriteFiles() call that passed the gen check a moment ago could
-	// atomicWriteFile the old snapshot back onto disk after os.Remove below.
+	// AtomicWriteFile the old snapshot back onto disk after os.Remove below.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	s.mu.Lock()
@@ -2187,7 +2234,7 @@ func (s *Session) ClearAllComments() {
 	critPath := s.critJSONPath()
 	s.mu.Unlock()
 	// Full-folder cleanup; idempotent on missing folder.
-	if err := os.RemoveAll(critPath); err != nil && !os.IsNotExist(err) {
+	if err := ClearReviewFolder(critPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: removing review folder: %v\n", err)
 	}
 }
