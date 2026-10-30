@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,16 @@ type Language struct {
 	// fixed binary name is ever spawned — there is deliberately no config
 	// key for the path, so a malicious repo cannot hijack the command.
 	Command []string
+	// Env lists KEY=VALUE pairs set for the server process on top of the
+	// allowlisted environment (see serverEnv). Fixed per language, never
+	// read from config or the reviewed tree.
+	Env []string
+	// Requires reports why the language cannot run even though its binary is
+	// on PATH — a dependency crit has to supply from outside the reviewed
+	// tree (TypeScript's tsserver) — or nil. root is the workspace, "" when
+	// only general availability is asked (Available). Checked before each
+	// spawn and cached with Available.
+	Requires func(root string) error
 	// IDByExt maps a file extension (lower-case, no dot) to the LSP
 	// languageId sent with didOpen.
 	IDByExt map[string]string
@@ -113,14 +124,25 @@ func (l *Language) sweepCacheOnce(root string) {
 
 // node_modules, .venv, .terraform and vendor are untracked, so a range-focus
 // sparse worktree has none of them. Manager.depRoot borrows the working tree's
-// for the handshake (the tsserver to pin, the site-packages for pyright, the
-// Composer vendor dir for intelephense); TypeScript
-// cross-package hover/definition and Terraform registry/git module references
-// still degrade there, intra-repo symbols keep working.
+// for the handshake (the site-packages for pyright, the Composer vendor dir
+// for intelephense); TypeScript cross-package hover/definition and Terraform
+// registry/git module references still degrade there, intra-repo symbols keep
+// working.
+//
+// Nothing here runs code the reviewed tree supplies: the binaries come from
+// PATH, tsserver from outside the tree (trustedTSServer), terraform from
+// os.DevNull, and a server never gets an interpreter path (python.pythonPath)
+// it would execute. Keep it that way — a PR under review is untrusted input.
 var languages = []*Language{
 	{
 		Name:    "go",
 		Command: []string{"gopls"},
+		// The go command gopls drives honours a `toolchain` line in go.mod by
+		// downloading and running that Go release (GOTOOLCHAIN=auto, the
+		// default). The download is sumdb-checked, but a review should not
+		// install toolchains on the reviewer's machine; local means "use the
+		// one on PATH" and errors on a module that needs a newer one.
+		Env:     []string{"GOTOOLCHAIN=local"},
 		IDByExt: map[string]string{"go": "go"},
 		SparsePatterns: []string{
 			"*.go", "go.mod", "go.sum", "go.work", "go.work.sum",
@@ -149,7 +171,8 @@ var languages = []*Language{
 			"package.json", "tsconfig*.json", "jsconfig.json",
 		},
 		InitOptions: tsInitOptions,
-		ExtraRoots:  npmGlobalRoots,
+		Requires:    tsRequires,
+		ExtraRoots:  tsExtraRoots,
 	},
 	{
 		Name:    "python",
@@ -186,34 +209,158 @@ var languages = []*Language{
 	},
 }
 
-// tsInitOptions pins the nearest TypeScript install. typescript-language-server
-// resolves "typescript" from its workspace root and exits during initialize
-// when it finds none — the ordinary monorepo layout, where the dependency
-// belongs to the owning package (frontend/node_modules/typescript), not the
-// repo root crit anchors the workspace to. nil leaves the server's own
-// resolution in charge (single-package repo, global typescript).
-func tsInitOptions(root, absPath string) map[string]any {
-	tsserver := findTSServer(root, absPath)
+// tsInitOptions pins tsserver to an install outside the reviewed tree and
+// turns off automatic typing acquisition.
+//
+// tsserver.js is a Node program. Without tsserver.path,
+// typescript-language-server prefers the workspace's own
+// node_modules/typescript (and .yarn/sdks, .pnpm/sdks) over its fallback and
+// bundled copies, so it would run whatever JavaScript the checkout — a PR
+// under review — ships, with the reviewer's privileges (the shape of
+// CVE-2026-49241, where an editor extension honoured a repo-supplied
+// typescript.tsdk). An invalid path does not help: the server falls through
+// to the workspace copy. So the path always names a trusted install, and
+// tsRequires keeps the server from starting when there is none. The tree's
+// node_modules remains what it is to tsserver anyway: the .d.ts files types
+// resolve from.
+//
+// Typing acquisition would fetch @types packages from npm for untyped imports
+// and write them under the reviewer's cache; a review is not the time for
+// either.
+func tsInitOptions(root, _ string) map[string]any {
+	tsserver := trustedTSServerFor(root)
 	if tsserver == "" {
 		return nil
 	}
-	return map[string]any{"tsserver": map[string]any{"path": tsserver}}
+	return map[string]any{
+		"tsserver":                          map[string]any{"path": tsserver},
+		"disableAutomaticTypingAcquisition": true,
+	}
 }
 
-// findTSServer returns the tsserver.js nearest absPath within root, or "".
-func findTSServer(root, absPath string) string {
-	var tsserver string
-	walkUpWithin(root, absPath, func(dir string) bool {
-		candidate := filepath.Join(dir, "node_modules", "typescript", "lib", "tsserver.js")
-		// Stat, not Lstat: pnpm and Yarn link the package into the consuming
-		// package's node_modules, and the link target is the real install.
-		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			tsserver = candidate
-			return true
-		}
-		return false
-	})
+// tsRequires is Language.Requires for TypeScript: the server must not start
+// without a tsserver crit chose (see tsInitOptions).
+func tsRequires(root string) error {
+	if trustedTSServerFor(root) == "" {
+		return errors.New("lsp: no typescript install outside the reviewed tree " +
+			"(install it next to typescript-language-server, e.g. npm install -g typescript)")
+	}
+	return nil
+}
+
+// trustedTSServerFor is trustedTSServer, rejecting a result inside root: a
+// PATH that includes the tree's own node_modules/.bin (direnv, a project
+// shell) must not turn the tree's typescript into a trusted one.
+func trustedTSServerFor(root string) string {
+	tsserver := trustedTSServer()
+	if tsserver == "" || (root != "" && within(root, tsserver)) {
+		return ""
+	}
 	return tsserver
+}
+
+// within reports whether path lies under dir (or is dir), comparing resolved
+// paths so a symlinked prefix (macOS's /var -> /private/var) cannot hide the
+// relation.
+func within(dir, path string) bool {
+	dir, path = resolved(dir), resolved(path)
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolved is filepath.EvalSymlinks with the cleaned input as fallback.
+func resolved(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	return filepath.Clean(path)
+}
+
+// tsServerCache maps PATH to a tsServerEntry, with the TTL of availableCache:
+// a typescript installed mid-session shows up within it.
+var tsServerCache sync.Map
+
+type tsServerEntry struct {
+	path string
+	at   time.Time
+}
+
+// trustedTSServer returns the tsserver.js typescript-language-server may
+// run, or "": a typescript package installed alongside the server, or the
+// one behind tsc on PATH, or the global npm root — never one found by walking
+// the reviewed tree. The order is cheapest first; only the last spawns npm.
+// Result cached per PATH for availableTTL.
+func trustedTSServer() string {
+	return trustedTSServerAt(time.Now())
+}
+
+func trustedTSServerAt(now time.Time) string {
+	key := os.Getenv("PATH")
+	if v, ok := tsServerCache.Load(key); ok {
+		if e := v.(tsServerEntry); now.Sub(e.at) < availableTTL {
+			return e.path
+		}
+	}
+	path := findTrustedTSServer()
+	tsServerCache.Store(key, tsServerEntry{path: path, at: now})
+	return path
+}
+
+func findTrustedTSServer() string {
+	// 1. Next to typescript-language-server: its own node_modules (a nested
+	//    dependency) or the node_modules it was installed into (a sibling
+	//    global install). Symlinks are resolved because a global bin is a
+	//    link into lib/node_modules.
+	for _, bin := range []string{"typescript-language-server", "tsc"} {
+		exe, err := exec.LookPath(bin)
+		if err != nil {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		if tsserver := tsServerNear(exe); tsserver != "" {
+			return tsserver
+		}
+	}
+	// 2. The global npm root, for an npm prefix whose bin dir is not on PATH.
+	if dir := npmGlobalRoot(); dir != "" {
+		if tsserver := tsServerIn(dir); tsserver != "" {
+			return tsserver
+		}
+	}
+	return ""
+}
+
+// tsServerNear looks for node_modules/typescript/lib/tsserver.js in the
+// directories above exe, up to and including the first node_modules
+// (exclusive of anything beyond it, which would be an unrelated tree).
+func tsServerNear(exe string) string {
+	dir := filepath.Dir(exe)
+	for {
+		if filepath.Base(dir) == "node_modules" {
+			return tsServerIn(dir)
+		}
+		if tsserver := tsServerIn(filepath.Join(dir, "node_modules")); tsserver != "" {
+			return tsserver
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// tsServerIn returns nodeModules/typescript/lib/tsserver.js if it is a file.
+func tsServerIn(nodeModules string) string {
+	candidate := filepath.Join(nodeModules, "typescript", "lib", "tsserver.js")
+	// Stat, not Lstat: pnpm links the package, and the link target is the
+	// real install.
+	if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+		return candidate
+	}
+	return ""
 }
 
 // tsOpenSessionFile reports whether absPath may fall outside every
@@ -303,19 +450,28 @@ func goExtraRoots(_ string) []PeekRoot {
 	return roots
 }
 
-// npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
-// installed globally (the README's install command) and the repo has no
-// local typescript. Machine-wide, so root is ignored.
-func npmGlobalRoots(_ string) []PeekRoot {
+// npmGlobalRoot is `npm root -g`, or "" when npm is missing or fails.
+func npmGlobalRoot() string {
 	out, err := exec.Command("npm", "root", "-g").Output()
 	if err != nil {
-		return nil
+		return ""
 	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" {
-		return nil
+	return strings.TrimSpace(string(out))
+}
+
+// tsExtraRoots is where lib.*.d.ts definitions land: the typescript package
+// tsserver runs from (trustedTSServer) and the global npm root, the two
+// places a trusted install lives. Machine-wide, so root is ignored.
+func tsExtraRoots(_ string) []PeekRoot {
+	var roots []PeekRoot
+	if tsserver := trustedTSServer(); tsserver != "" {
+		// <pkg>/lib/tsserver.js -> <pkg>
+		roots = append(roots, PeekRoot{Path: filepath.Dir(filepath.Dir(tsserver)), Label: "$TYPESCRIPT"})
 	}
-	return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	if dir := npmGlobalRoot(); dir != "" {
+		roots = append(roots, PeekRoot{Path: dir, Label: "$NPM_GLOBAL"})
+	}
+	return roots
 }
 
 func pathExt(path string) string {
@@ -356,7 +512,9 @@ type availableEntry struct {
 	at time.Time
 }
 
-// Available reports whether the language's server binary is on PATH.
+// Available reports whether the language's server binary is on PATH and,
+// for a language with Requires, that what it needs beyond the binary is
+// installed too.
 func (l *Language) Available() bool {
 	return l.availableAt(time.Now())
 }
@@ -369,8 +527,12 @@ func (l *Language) availableAt(now time.Time) bool {
 		}
 	}
 	_, err := exec.LookPath(l.Command[0])
-	availableCache.Store(key, availableEntry{ok: err == nil, at: now})
-	return err == nil
+	ok := err == nil
+	if ok && l.Requires != nil {
+		ok = l.Requires("") == nil
+	}
+	availableCache.Store(key, availableEntry{ok: ok, at: now})
+	return ok
 }
 
 // Any reports whether include matches at least one registered language.

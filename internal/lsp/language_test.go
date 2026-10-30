@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 )
@@ -147,95 +148,166 @@ func writeTSInstall(t *testing.T, dir string) string {
 	return tsserver
 }
 
-func TestFindTSServer(t *testing.T) {
-	t.Parallel()
+// writeTSLSInstall lays out a global npm install of typescript-language-server
+// under prefix (bin/<name> -> lib/node_modules/<pkg>/lib/cli.mjs) and returns
+// prefix/bin for PATH. tsserverNear reads this layout.
+func writeTSLSInstall(t *testing.T, prefix string) string {
+	t.Helper()
+	return writeGlobalBin(t, prefix, "typescript-language-server", "typescript-language-server", filepath.Join("lib", "cli.mjs"))
+}
 
-	// Monorepo: the dependency belongs to the package, not the repo root —
-	// the layout that made typescript-language-server exit at initialize.
-	t.Run("nearest install wins", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		rootTS := writeTSInstall(t, root)
-		pkg := filepath.Join(root, "frontend")
-		pkgTS := writeTSInstall(t, pkg)
-		src := filepath.Join(pkg, "src", "App.tsx")
-		if got := findTSServer(root, src); got != pkgTS {
-			t.Errorf("findTSServer = %q, want the package install %q", got, pkgTS)
-		}
-		// A file outside the package still falls back to the root install.
-		if got := findTSServer(root, filepath.Join(root, "tools", "gen.ts")); got != rootTS {
-			t.Errorf("findTSServer (root file) = %q, want %q", got, rootTS)
+// writeGlobalBin creates prefix/lib/node_modules/<pkg>/<entry> and the
+// prefix/bin/<name> symlink npm makes for it; returns prefix/bin.
+func writeGlobalBin(t *testing.T, prefix, name, pkg, entry string) string {
+	t.Helper()
+	target := filepath.Join(prefix, "lib", "node_modules", pkg, entry)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("#!/usr/bin/env node\n"), 0o755); err != nil { //nolint:gosec // executable stub
+		t.Fatal(err)
+	}
+	bin := filepath.Join(prefix, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(bin, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(rel, filepath.Join(bin, name)); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+func TestTrustedTSServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinked global bins are a Unix layout")
+	}
+	// Each case gets its own PATH, which is also the lookup cache key, so
+	// the cases never see one another's result. npm is off PATH throughout,
+	// so the global-root fallback cannot answer.
+
+	t.Run("sibling of typescript-language-server", func(t *testing.T) {
+		prefix := t.TempDir()
+		bin := writeTSLSInstall(t, prefix)
+		want := resolved(writeTSInstall(t, filepath.Join(prefix, "lib")))
+		t.Setenv("PATH", bin)
+		if got := trustedTSServer(); got != want {
+			t.Errorf("trustedTSServer = %q, want %q", got, want)
 		}
 	})
 
-	t.Run("install at root only", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		rootTS := writeTSInstall(t, root)
-		src := filepath.Join(root, "src", "deep", "util.ts")
-		if got := findTSServer(root, src); got != rootTS {
-			t.Errorf("findTSServer = %q, want %q", got, rootTS)
+	t.Run("nested under typescript-language-server", func(t *testing.T) {
+		prefix := t.TempDir()
+		bin := writeTSLSInstall(t, prefix)
+		want := resolved(writeTSInstall(t, filepath.Join(prefix, "lib", "node_modules", "typescript-language-server")))
+		t.Setenv("PATH", bin)
+		if got := trustedTSServer(); got != want {
+			t.Errorf("trustedTSServer = %q, want %q", got, want)
 		}
 	})
 
-	t.Run("no install", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		if got := findTSServer(root, filepath.Join(root, "src", "util.ts")); got != "" {
-			t.Errorf("findTSServer = %q, want \"\" (server resolves on its own)", got)
+	// mise, volta and Homebrew keep each global package in its own prefix:
+	// the server's prefix has no typescript, tsc's does.
+	t.Run("behind tsc on PATH", func(t *testing.T) {
+		tsls := writeTSLSInstall(t, t.TempDir())
+		tsPrefix := t.TempDir()
+		tsc := writeGlobalBin(t, tsPrefix, "tsc", "typescript", filepath.Join("bin", "tsc"))
+		want := resolved(writeTSInstall(t, filepath.Join(tsPrefix, "lib")))
+		t.Setenv("PATH", tsls+string(os.PathListSeparator)+tsc)
+		if got := trustedTSServer(); got != want {
+			t.Errorf("trustedTSServer = %q, want %q", got, want)
 		}
 	})
 
-	// Walking on would escape into the parent tree (towards / on a shallow root).
-	t.Run("path outside root", func(t *testing.T) {
-		t.Parallel()
-		base := t.TempDir()
-		root := filepath.Join(base, "repo")
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
+	t.Run("none", func(t *testing.T) {
+		bin := writeTSLSInstall(t, t.TempDir())
+		t.Setenv("PATH", bin)
+		if got := trustedTSServer(); got != "" {
+			t.Errorf("trustedTSServer = %q, want \"\"", got)
 		}
-		outside := filepath.Join(base, "other")
-		writeTSInstall(t, outside)
-		if got := findTSServer(root, filepath.Join(outside, "src", "util.ts")); got != "" {
-			t.Errorf("findTSServer = %q, want \"\" for a file outside root", got)
+		if err := tsRequires(""); err == nil {
+			t.Error("tsRequires should fail without a trusted install")
+		}
+		// The binary is on PATH, yet the language is not available: starting
+		// the server would let it pick the reviewed tree's typescript.
+		lang := LanguageForPath("src/App.tsx")
+		if lang.availableAt(time.Now()) {
+			t.Error("typescript reported available without a trusted tsserver")
 		}
 	})
 }
 
-func TestTSInitOptions(t *testing.T) {
-	t.Parallel()
-
+// A PATH that includes the reviewed tree's node_modules/.bin (direnv, a
+// project shell) must not make the tree's own typescript the trusted one —
+// that is the code the PR ships.
+func TestTSInitOptionsRejectsReviewedTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinked bins are a Unix layout")
+	}
 	root := t.TempDir()
-	src := filepath.Join(root, "frontend", "src", "App.tsx")
+	repoTS := resolved(writeTSInstall(t, root))
+	binDir := filepath.Join(root, "node_modules", ".bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tsc := filepath.Join(root, "node_modules", "typescript", "bin", "tsc")
+	if err := os.MkdirAll(filepath.Dir(tsc), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tsc, []byte("#!/usr/bin/env node\n"), 0o755); err != nil { //nolint:gosec // executable stub
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "typescript", "bin", "tsc"), filepath.Join(binDir, "tsc")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
 
+	if got := trustedTSServer(); got != repoTS {
+		t.Fatalf("trustedTSServer = %q, want the PATH install %q (the test's premise)", got, repoTS)
+	}
+	src := filepath.Join(root, "src", "App.tsx")
 	if opts := tsInitOptions(root, src); opts != nil {
-		t.Errorf("tsInitOptions without a local install = %v, want nil", opts)
+		t.Errorf("tsInitOptions inside the reviewed tree = %v, want nil", opts)
+	}
+	if err := tsRequires(root); err == nil {
+		t.Error("tsRequires(root) should reject a tsserver inside root")
 	}
 
-	tsserver := writeTSInstall(t, filepath.Join(root, "frontend"))
-	opts := tsInitOptions(root, src)
+	// The same install is fine for a review of some other tree.
+	other := t.TempDir()
+	opts := tsInitOptions(other, filepath.Join(other, "src", "App.tsx"))
 	ts, ok := opts["tsserver"].(map[string]any)
-	if !ok {
-		t.Fatalf("tsInitOptions = %v, want a tsserver entry", opts)
+	if !ok || ts["path"] != repoTS {
+		t.Fatalf("tsInitOptions for another root = %v, want tsserver.path %q", opts, repoTS)
 	}
-	if ts["path"] != tsserver {
-		t.Errorf("tsserver.path = %v, want %q", ts["path"], tsserver)
+	if opts["disableAutomaticTypingAcquisition"] != true {
+		t.Errorf("disableAutomaticTypingAcquisition = %v, want true", opts["disableAutomaticTypingAcquisition"])
+	}
+	if err := tsRequires(other); err != nil {
+		t.Errorf("tsRequires(other) = %v, want nil", err)
 	}
 }
 
-// Registry wiring is a one-line omission away from the hook silently not
+// Registry wiring is a one-line omission away from the hooks silently not
 // running.
-func TestTypeScriptLanguageSendsInitOptions(t *testing.T) {
+func TestTypeScriptLanguageWiring(t *testing.T) {
 	t.Parallel()
 
 	lang := LanguageForPath("src/App.tsx")
-	if lang == nil || lang.InitOptions == nil {
-		t.Fatal("typescript language must define InitOptions")
+	if lang == nil || lang.InitOptions == nil || lang.Requires == nil {
+		t.Fatal("typescript language must define InitOptions and Requires")
 	}
-	root := t.TempDir()
-	writeTSInstall(t, root)
-	if lang.InitOptions(root, filepath.Join(root, "src", "App.tsx")) == nil {
-		t.Error("InitOptions returned nil with an install present")
+}
+
+func TestGoLanguagePinsLocalToolchain(t *testing.T) {
+	t.Parallel()
+
+	lang := LanguageForPath("main.go")
+	if lang == nil || !slices.Contains(lang.Env, "GOTOOLCHAIN=local") {
+		t.Fatalf("go language Env = %v, want GOTOOLCHAIN=local", lang.Env)
 	}
 }
 
