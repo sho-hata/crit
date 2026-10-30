@@ -36,7 +36,7 @@ func pyConfigSettings(root, absPath string) map[string]any {
 }
 
 // findSitePackages walks up from absPath's directory through root
-// (inclusive), like findTSServer. The nearest venv wins because a monorepo
+// (inclusive), like walkUpWithin. The nearest venv wins because a monorepo
 // keeps one per service.
 func findSitePackages(root, absPath string) string {
 	root = filepath.Clean(root)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -241,15 +242,21 @@ func startCapture(h *managerHarness, got *map[string]any) startFunc {
 	}
 }
 
-// A range/PR focus roots the server at a sparse worktree, which holds tracked
-// files only — node_modules is not among them. Without the fallback to the
-// working tree, typescript-language-server finds no TypeScript there and
-// exits during initialize, taking every hover in the focus with it.
-func TestManagerResolvesInitOptionsFromDepRootWhenWorktreeLacksDeps(t *testing.T) {
-	t.Parallel()
+// Whatever typescript the worktree or the working tree behind it holds, the
+// pinned tsserver is the trusted one from PATH: the tree's copy is code the
+// PR ships, and the working tree's is not crit's to run either.
+func TestManagerPinsTrustedTSServerOverTreeInstalls(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinked global bins are a Unix layout")
+	}
+	prefix := t.TempDir()
+	bin := writeTSLSInstall(t, prefix)
+	trusted := resolved(writeTSInstall(t, filepath.Join(prefix, "lib")))
+	t.Setenv("PATH", bin)
 
 	worktree, depRoot := t.TempDir(), t.TempDir()
-	tsserver := writeTSInstall(t, filepath.Join(depRoot, "frontend"))
+	writeTSInstall(t, worktree)
+	writeTSInstall(t, filepath.Join(depRoot, "frontend"))
 	file := filepath.Join(worktree, "frontend", "src", "App.tsx")
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		t.Fatal(err)
@@ -265,59 +272,12 @@ func TestManagerResolvesInitOptionsFromDepRootWhenWorktreeLacksDeps(t *testing.T
 	if _, err := m.Hover(file, 0, 0); err != nil {
 		t.Fatalf("Hover: %v", err)
 	}
-	ts, ok := got["tsserver"].(map[string]any)
-	if !ok {
-		t.Fatalf("initializationOptions = %v, want the working tree's tsserver", got)
-	}
-	if ts["path"] != tsserver {
-		t.Errorf("tsserver.path = %v, want %q", ts["path"], tsserver)
-	}
-}
-
-// The worktree's own install wins when it has one: depRoot is a fallback for
-// what git does not track, never an override of the checkout.
-func TestManagerPrefersWorkspaceInstallOverDepRoot(t *testing.T) {
-	t.Parallel()
-
-	worktree, depRoot := t.TempDir(), t.TempDir()
-	wsTS := writeTSInstall(t, worktree)
-	writeTSInstall(t, depRoot)
-	file := writeGoFile(t, worktree, "app.ts", "export const x = 1;\n")
-
-	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
-	var got map[string]any
-	m.start = startCapture(h, &got)
-	t.Cleanup(m.Shutdown)
-
-	if _, err := m.Hover(file, 0, 0); err != nil {
-		t.Fatalf("Hover: %v", err)
-	}
 	ts, _ := got["tsserver"].(map[string]any)
-	if ts == nil || ts["path"] != wsTS {
-		t.Errorf("tsserver.path = %v, want the workspace install %q", ts["path"], wsTS)
+	if ts == nil || ts["path"] != trusted {
+		t.Errorf("tsserver.path = %v, want the PATH install %q", got, trusted)
 	}
-}
-
-// No install anywhere: send no initializationOptions at all and leave the
-// server's own resolution (a global typescript) in charge.
-func TestManagerSendsNoInitOptionsWithoutAnyInstall(t *testing.T) {
-	t.Parallel()
-
-	worktree, depRoot := t.TempDir(), t.TempDir()
-	file := writeGoFile(t, worktree, "app.ts", "export const x = 1;\n")
-
-	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
-	var got map[string]any
-	m.start = startCapture(h, &got)
-	t.Cleanup(m.Shutdown)
-
-	if _, err := m.Hover(file, 0, 0); err != nil {
-		t.Fatalf("Hover: %v", err)
-	}
-	if got != nil {
-		t.Errorf("initializationOptions = %v, want nil", got)
+	if got["disableAutomaticTypingAcquisition"] != true {
+		t.Errorf("disableAutomaticTypingAcquisition = %v, want true", got["disableAutomaticTypingAcquisition"])
 	}
 }
 

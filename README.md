@@ -213,7 +213,10 @@ Opens a panel inline, right under the clicked line (like VS Code's peek referenc
    go install golang.org/x/tools/gopls@latest
    which gopls go   # both must resolve
 
-   # TypeScript / JavaScript
+   # TypeScript / JavaScript — typescript must be installed globally too:
+   # crit only ever runs a tsserver from outside the reviewed tree (the
+   # repo's node_modules/typescript is code the PR ships), and leaves
+   # TypeScript off when it finds none
    npm install -g typescript-language-server typescript
    which typescript-language-server
 

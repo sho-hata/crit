@@ -199,7 +199,10 @@ diff の新しい側でシンボルにホバーすると、型シグネチャと
    go install golang.org/x/tools/gopls@latest
    which gopls go   # 両方が解決されること
 
-   # TypeScript / JavaScript
+   # TypeScript / JavaScript — typescript もグローバルに入れてください。crit は
+   # レビュー対象ツリーの外にある tsserver しか起動しません（リポジトリの
+   # node_modules/typescript は PR が持ち込むコードです）。見つからなければ
+   # TypeScript は無効のままです
    npm install -g typescript-language-server typescript
    which typescript-language-server
 

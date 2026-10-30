@@ -278,6 +278,11 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 		srv.files = make(map[string]fileState)
 		srv.reviewDocs = make(map[string]bool)
 	}
+	if lang.Requires != nil {
+		if err := lang.Requires(m.root); err != nil {
+			return err
+		}
+	}
 	initOpts := m.handshake(lang.InitOptions, absPath)
 	settings := m.handshake(lang.ConfigSettings, absPath)
 	client, err := m.start(m.baseCtx, m.root, lang, initOpts, settings)
@@ -582,6 +587,7 @@ func startServer(ctx context.Context, rootDir string, lang *Language, initOpts, 
 	}
 	cmd := exec.CommandContext(ctx, lang.Command[0], lang.Command[1:]...) //nolint:gosec // argv is fixed in the registry, never user input
 	cmd.Dir = rootDir
+	cmd.Env = serverEnv(lang, os.Environ())
 	debug := debugEnabled()
 	if debug {
 		cmd.Stderr = &stderrLogger{name: lang.Name}
