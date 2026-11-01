@@ -5605,8 +5605,9 @@ func TestSyncCommentsFromDisk_ClearsPendingWrite(t *testing.T) {
 	if !s.SyncCommentsFromDisk() {
 		t.Fatal("SyncCommentsFromDisk returned false")
 	}
-	if len(s.Files[0].Comments) != 1 {
-		t.Fatalf("want 1 comment in memory, got %d", len(s.Files[0].Comments))
+	// The pending local comment is saved before the reload, so both survive.
+	if len(s.Files[0].Comments) != 2 {
+		t.Fatalf("want 2 comments in memory (local + remote), got %d", len(s.Files[0].Comments))
 	}
 	if s.PendingWriteForTest() {
 		t.Fatal("expected pendingWrite cleared after sync")

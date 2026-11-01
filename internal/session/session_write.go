@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -12,6 +13,7 @@ import (
 // scheduleWrite must be called with s.mu held.
 func (s *Session) scheduleWrite() {
 	s.pendingWrite = true
+	s.writeSeq++
 	if s.writeTimer != nil {
 		s.writeTimer.Stop()
 	}
@@ -29,7 +31,7 @@ func (s *Session) scheduleWrite() {
 			return
 		}
 		s.mu.RUnlock()
-		s.WriteFiles()
+		_ = s.writeFilesErr()
 	})
 }
 
@@ -54,7 +56,10 @@ func (s *Session) critJSONPath() string {
 // writeFilesSnapshot holds all session state needed to write the review file,
 // captured under lock so that disk I/O can happen without holding the lock.
 type writeFilesSnapshot struct {
-	critPath       string
+	critPath string
+	// writeSeq is Session.writeSeq at snapshot time. A write clears
+	// pendingWrite only if no change was scheduled after its snapshot.
+	writeSeq       uint64
 	lastMtime      time.Time
 	branch         string
 	baseRef        string
@@ -77,6 +82,7 @@ type writeFilesSnapshot struct {
 	// "freshly added since last load" (in snap but not in lastLoaded).
 	lastLoadedGHDeletes map[int64]struct{}
 	deletedCommentIDs   map[string]map[string]struct{}
+	resolvedDirtyIDs    map[string]uint64
 	// Per-file data needed for the merge. We copy comments so the snapshot
 	// is independent of later in-memory mutations.
 	files []writeFileSnapshot
@@ -132,6 +138,7 @@ func (s *Session) clearAllCommentData() {
 	}
 	s.reviewComments = nil
 	s.deletedCommentIDs = nil
+	s.resolvedDirtyIDs = nil
 	s.ReviewRound = 1
 	s.RoundSnapshots = nil
 	s.mu.Unlock()
@@ -140,10 +147,12 @@ func (s *Session) clearAllCommentData() {
 	}
 }
 
-// buildCritJSON loads the existing review file from disk, applies the snapshot metadata,
-// and merges per-file comments.
-func buildCritJSON(snap writeFilesSnapshot) CritJSON {
-	cj := CritJSON{Files: make(map[string]CritJSONFile)}
+// buildCritJSON loads the existing review file from disk, applies the snapshot
+// metadata, and merges file and review-level comments. unloaded reports that
+// disk held comments the snapshot lacks (written by another
+// process), so memory should reload them.
+func buildCritJSON(snap writeFilesSnapshot) (cj CritJSON, unloaded bool) {
+	cj = CritJSON{Files: make(map[string]CritJSONFile)}
 	if data, err := ReadFileShared(ReviewPathsFor(snap.critPath).Review); err == nil {
 		if unmarshalErr := json.Unmarshal(data, &cj); unmarshalErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: corrupt review file, starting fresh: %v\n", unmarshalErr)
@@ -156,7 +165,8 @@ func buildCritJSON(snap writeFilesSnapshot) CritJSON {
 	cj.BaseRef = snap.baseRef
 	cj.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	cj.ReviewRound = snap.reviewRound
-	cj.ReviewComments = snap.reviewComments
+	cj.ReviewComments, unloaded = mergeDiskComments(snap.reviewComments, cj.ReviewComments,
+		snap.deletedCommentIDs[reviewCommentTombstones])
 	cj.CliArgs = snap.cliArgs
 	// Only daemon-built snapshots carry a cwd; an empty one must leave the
 	// recorded directory alone rather than erase a resumable review's only
@@ -170,10 +180,39 @@ func buildCritJSON(snap writeFilesSnapshot) CritJSON {
 	)
 
 	for _, fs := range snap.files {
-		mergeFileSnapshotIntoCritJSON(&cj, fs)
+		if mergeFileSnapshotIntoCritJSON(&cj, fs, snap.deletedCommentIDs[fs.path]) {
+			unloaded = true
+		}
 	}
 	applyDeletedCommentIDs(&cj, snap.deletedCommentIDs)
-	return cj
+	return cj, unloaded
+}
+
+// mergeDiskComments returns mem plus the comments only disk has, skipping
+// tombstoned ones. Memory wins for a comment in both: another writer's new
+// comments survive a daemon write, but its edits to a comment memory also
+// holds do not (mergeRepliesWrittenSinceLastWrite has already taken in new
+// replies). added reports whether disk contributed.
+func mergeDiskComments(mem, disk []Comment, deleted map[string]struct{}) (merged []Comment, added bool) {
+	if len(disk) == 0 {
+		return mem, false
+	}
+	merged = append(make([]Comment, 0, len(mem)+len(disk)), mem...)
+	memIDs := make(map[string]struct{}, len(mem))
+	for _, mc := range mem {
+		memIDs[mc.ID] = struct{}{}
+	}
+	for _, dc := range disk {
+		if _, inMem := memIDs[dc.ID]; inMem {
+			continue
+		}
+		if _, gone := deleted[dc.ID]; gone {
+			continue
+		}
+		merged = append(merged, dc)
+		added = true
+	}
+	return merged, added
 }
 
 // applyDeletedCommentIDs removes explicitly deleted comments even when their
@@ -245,30 +284,15 @@ func reconcilePendingGHDeletes(snap, disk []int64, lastLoaded map[int64]struct{}
 	return out
 }
 
-// mergeFileSnapshotIntoCritJSON merges a single file's comments from the snapshot
-// with any disk-only comments, and updates the CritJSON.
-func mergeFileSnapshotIntoCritJSON(cj *CritJSON, fs writeFileSnapshot) {
-	diskFile, hasDisk := cj.Files[fs.path]
-
-	memIDs := make(map[string]struct{}, len(fs.comments))
-	for _, c := range fs.comments {
-		memIDs[c.ID] = struct{}{}
-	}
-
-	merged := fs.comments
-	if hasDisk {
-		for _, dc := range diskFile.Comments {
-			// Deleted IDs are dropped afterwards by applyDeletedCommentIDs.
-			if _, exists := memIDs[dc.ID]; exists {
-				continue
-			}
-			merged = append(merged, dc)
-		}
-	}
+// mergeFileSnapshotIntoCritJSON merges a single file's comments from the
+// snapshot with disk-only comments, and updates the CritJSON. It
+// reports whether disk contributed comments the snapshot lacks.
+func mergeFileSnapshotIntoCritJSON(cj *CritJSON, fs writeFileSnapshot, deleted map[string]struct{}) bool {
+	merged, added := mergeDiskComments(fs.comments, cj.Files[fs.path].Comments, deleted)
 
 	if len(merged) == 0 {
 		delete(cj.Files, fs.path)
-		return
+		return added
 	}
 
 	cj.Files[fs.path] = CritJSONFile{
@@ -276,6 +300,7 @@ func mergeFileSnapshotIntoCritJSON(cj *CritJSON, fs writeFileSnapshot) {
 		FileHash: fs.fileHash,
 		Comments: merged,
 	}
+	return added
 }
 
 func critJSONIsEmpty(cj CritJSON) bool {
@@ -290,11 +315,10 @@ func critJSONIsEmpty(cj CritJSON) bool {
 //
 // Concurrency note: callers that need to guarantee the write is observable
 // before returning a path to a client (e.g. POST /api/finish) MUST use
-// SyncWriteFiles, which serializes against the debounce timer via writeMu
-// and surfaces write errors. Bare WriteFiles is for the timer callback and
-// best-effort flushes (focus change, shutdown).
+// SyncWriteFiles, which surfaces write errors. WriteFiles uses the same
+// serialization but preserves the best-effort API for existing callers.
 func (s *Session) WriteFiles() {
-	_ = s.writeFilesErr()
+	_ = s.SyncWriteFiles()
 }
 
 // SyncWriteFiles flushes pending state to disk synchronously, serialized
@@ -306,7 +330,12 @@ func (s *Session) WriteFiles() {
 func (s *Session) SyncWriteFiles() error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	return s.syncWriteFilesLocked()
+}
 
+// syncWriteFilesLocked is SyncWriteFiles for a caller that already holds
+// writeMu.
+func (s *Session) syncWriteFilesLocked() error {
 	s.mu.Lock()
 	if s.writeTimer != nil {
 		s.writeTimer.Stop()
@@ -329,12 +358,32 @@ func (s *Session) writeFilesErr() error {
 		return nil
 	}
 
+	// Check before taking the lock: the lock recreates the review folder.
 	if s.handleExternalDeletion(critPath) {
 		return nil
 	}
+	// Preserve the no-op for an empty session without creating a review folder.
+	if _, err := os.Stat(critPath); os.IsNotExist(err) {
+		snap := s.snapshotForWrite(critPath)
+		if cj, _ := buildCritJSON(snap); critJSONIsEmpty(cj) {
+			s.markEmptyWritten(snap)
+			return nil
+		}
+	}
+	return WithReviewWriteLock(critPath, func() error {
+		return s.writeReviewFile(critPath)
+	})
+}
+
+// Caller holds writeMu and the review-file transaction lock.
+func (s *Session) writeReviewFile(critPath string) error {
+	if s.handleExternalDeletion(critPath) {
+		return nil
+	}
+	s.mergeRepliesWrittenSinceLastWrite(critPath)
 
 	snap := s.snapshotForWrite(critPath)
-	cj := buildCritJSON(snap)
+	cj, unloaded := buildCritJSON(snap)
 
 	paths := ReviewPathsFor(snap.critPath)
 	if critJSONIsEmpty(cj) {
@@ -345,13 +394,7 @@ func (s *Session) writeFilesErr() error {
 		if err := os.Remove(paths.Review); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing empty review file: %w", err)
 		}
-		s.mu.Lock()
-		s.lastCritJSONMtime = time.Time{}
-		s.pendingWrite = false
-		s.clearWrittenDeletedCommentIDs(snap.deletedCommentIDs)
-		s.pendingGitHubDeletes = nil
-		s.lastLoadedPendingGHDeletes = nil
-		s.mu.Unlock()
+		s.markEmptyWritten(snap)
 		return nil
 	}
 
@@ -367,8 +410,12 @@ func (s *Session) writeFilesErr() error {
 	if info, err := os.Stat(paths.Review); err == nil {
 		s.mu.Lock()
 		s.lastCritJSONMtime = info.ModTime()
-		s.pendingWrite = false
+		// The watcher skips a file whose mtime matches our own write, so
+		// flag comments another process added for it to load.
+		s.diskHasUnloadedComments = unloaded
+		s.clearPendingWrite(snap)
 		s.clearWrittenDeletedCommentIDs(snap.deletedCommentIDs)
+		s.clearWrittenResolvedDirtyIDs(snap.resolvedDirtyIDs)
 		// Sync in-memory pending-delete state to what we just wrote, so the
 		// next snapshot does not re-include IDs that a concurrent
 		// `crit push` already drained. See reconcilePendingGHDeletes.
@@ -380,6 +427,28 @@ func (s *Session) writeFilesErr() error {
 		s.mu.Unlock()
 	}
 	return nil
+}
+
+// clearPendingWrite clears pendingWrite after snap was written, unless a
+// change was scheduled after the snapshot: that change is not on disk yet,
+// and the watcher must not reload over it. Caller must hold s.mu.
+func (s *Session) clearPendingWrite(snap writeFilesSnapshot) {
+	if s.writeSeq == snap.writeSeq {
+		s.pendingWrite = false
+	}
+}
+
+// markEmptyWritten records that an empty snapshot is on disk (no review.json),
+// so the watcher stops treating the session as having a pending write.
+func (s *Session) markEmptyWritten(snap writeFilesSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastCritJSONMtime = time.Time{}
+	s.clearPendingWrite(snap)
+	s.clearWrittenDeletedCommentIDs(snap.deletedCommentIDs)
+	s.clearWrittenResolvedDirtyIDs(snap.resolvedDirtyIDs)
+	s.pendingGitHubDeletes = nil
+	s.lastLoadedPendingGHDeletes = nil
 }
 
 // clearWrittenDeletedCommentIDs acknowledges only tombstones included in a
@@ -397,6 +466,27 @@ func (s *Session) clearWrittenDeletedCommentIDs(written map[string]map[string]st
 	}
 	if len(s.deletedCommentIDs) == 0 {
 		s.deletedCommentIDs = nil
+	}
+}
+
+// markResolvedDirtyLocked records that the reviewer changed id's resolved
+// state. Caller must hold s.mu.
+func (s *Session) markResolvedDirtyLocked(id string) {
+	if s.resolvedDirtyIDs == nil {
+		s.resolvedDirtyIDs = make(map[string]uint64)
+	}
+	s.resolvedDirtySeq++
+	s.resolvedDirtyIDs[id] = s.resolvedDirtySeq
+}
+
+// clearWrittenResolvedDirtyIDs drops the resolved changes a completed write
+// included. A change made again after the write's snapshot has a newer seq
+// and stays. Caller must hold s.mu.
+func (s *Session) clearWrittenResolvedDirtyIDs(written map[string]uint64) {
+	for id, seq := range written {
+		if s.resolvedDirtyIDs[id] == seq {
+			delete(s.resolvedDirtyIDs, id)
+		}
 	}
 }
 
@@ -423,6 +513,7 @@ func (s *Session) snapshotForWrite(critPath string) writeFilesSnapshot {
 		}
 	}
 	snap := writeFilesSnapshot{
+		writeSeq:            s.writeSeq,
 		critPath:            critPath,
 		lastMtime:           s.lastCritJSONMtime,
 		branch:              s.Branch,
@@ -435,6 +526,7 @@ func (s *Session) snapshotForWrite(critPath string) writeFilesSnapshot {
 		pendingGHDeletes:    pendDeletes,
 		lastLoadedGHDeletes: lastLoaded,
 		deletedCommentIDs:   deletedByPath,
+		resolvedDirtyIDs:    maps.Clone(s.resolvedDirtyIDs),
 		files:               make([]writeFileSnapshot, len(s.Files)),
 	}
 	for i, f := range s.Files {
@@ -599,24 +691,125 @@ func (s *Session) filterDeletedReviewComments(diskComments []Comment) bool {
 	return false
 }
 
-// SyncCommentsFromDisk reloads file- and review-level comments from review.json
-// on disk into the in-memory session. Call after an external writer updates
-// review.json directly, without going through WriteFiles.
+// SyncCommentsFromDisk saves pending in-memory changes, then reloads file-
+// and review-level comments from review.json. Call after another writer
+// updated review.json. When this process makes that update, use
+// ApplyReviewFileUpdate so no save can land in between.
 func (s *Session) SyncCommentsFromDisk() bool {
+	changed, _ := s.ApplyReviewFileUpdate(nil)
+	return changed
+}
+
+// ApplyReviewFileUpdate saves pending in-memory changes, runs update (a
+// read-modify-write of review.json by other code, such as a hosted comment
+// merge), then reloads comments from disk. writeMu is held throughout, so a
+// debounced save cannot overwrite the update, and the save first means the
+// reload cannot drop comments that were only in memory. update may be nil.
+// It is not run when the save fails. changed reports whether the reload
+// changed in-memory comments.
+func (s *Session) ApplyReviewFileUpdate(update func() error) (changed bool, err error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	s.mu.Lock()
-	if s.writeTimer != nil {
-		s.writeTimer.Stop()
-		s.writeTimer = nil
+	if err := s.syncWriteFilesLocked(); err != nil {
+		return false, err
 	}
-	s.writeGen++
-	s.pendingWrite = false
+	if update != nil {
+		err = update()
+	}
+
+	s.mu.Lock()
 	s.lastCritJSONMtime = time.Time{}
 	s.mu.Unlock()
+	return s.mergeExternalCritJSON(), err
+}
 
-	return s.mergeExternalCritJSON()
+// mergeRepliesWrittenSinceLastWrite takes into memory the replies that
+// `crit comment --reply-to` wrote to the review file since the daemon's last
+// write. Every write calls it first: the watcher skips its merge while a write
+// is pending, and the write would otherwise overwrite those replies. Replies
+// the reviewer deleted stay out, and it adds or removes no comments.
+func (s *Session) mergeRepliesWrittenSinceLastWrite(critPath string) {
+	path := ReviewPathsFor(critPath).Review
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	s.mu.RLock()
+	lastWrite := s.lastCritJSONMtime
+	s.mu.RUnlock()
+	if info.ModTime().Equal(lastWrite) {
+		return
+	}
+	data, err := ReadFileShared(path)
+	if err != nil {
+		return
+	}
+	var cj CritJSON
+	if err := json.Unmarshal(data, &cj); err != nil {
+		return
+	}
+	changed := false
+	s.mu.Lock()
+	for _, f := range s.Files {
+		if diskFile, ok := cj.Files[f.Path]; ok {
+			for _, dc := range diskFile.Comments {
+				changed = s.addNewRepliesLocked(f.Comments, dc) || changed
+			}
+		}
+	}
+	for _, dc := range cj.ReviewComments {
+		changed = s.addNewRepliesLocked(s.reviewComments, dc) || changed
+	}
+	s.mu.Unlock()
+	if changed {
+		s.notify(SSEEvent{Type: "comments-changed"})
+	}
+}
+
+// addNewRepliesLocked appends disk replies of dc that memory lacks and the
+// reviewer did not delete. When it adopts a reply it also takes dc's
+// Resolved, ResolvedRound and UpdatedAt: `crit comment --reply-to` sets them
+// along with the reply (--resolve resolves, a plain reply unresolves), and
+// the next write would otherwise put memory's old values back on disk. It
+// does not when the reviewer changed the resolved state since the last
+// write: that change is newer than the one on disk. Caller must hold s.mu.
+func (s *Session) addNewRepliesLocked(comments []Comment, dc Comment) bool {
+	for i := range comments {
+		if comments[i].ID != dc.ID {
+			continue
+		}
+		known := make(map[string]struct{}, len(comments[i].Replies))
+		for _, r := range comments[i].Replies {
+			known[r.ID] = struct{}{}
+		}
+		changed := false
+		for _, r := range dc.Replies {
+			_, inMemory := known[r.ID]
+			_, deleted := s.deletedReplyIDs[r.ID]
+			if inMemory || deleted {
+				continue
+			}
+			comments[i].Replies = append(comments[i].Replies, r)
+			changed = true
+		}
+		if _, dirty := s.resolvedDirtyIDs[dc.ID]; changed && !dirty {
+			comments[i].Resolved = dc.Resolved
+			comments[i].ResolvedRound = dc.ResolvedRound
+			comments[i].UpdatedAt = dc.UpdatedAt
+		}
+		return changed
+	}
+	return false
+}
+
+// markReplyDeletedLocked records a reply the reviewer deleted. Caller must
+// hold s.mu.
+func (s *Session) markReplyDeletedLocked(replyID string) {
+	if s.deletedReplyIDs == nil {
+		s.deletedReplyIDs = make(map[string]struct{})
+	}
+	s.deletedReplyIDs[replyID] = struct{}{}
 }
 
 func (s *Session) mergeExternalCritJSON() bool {
@@ -635,7 +828,10 @@ func (s *Session) mergeExternalCritJSON() bool {
 		return false
 	}
 
-	if !lastMtime.IsZero() && info.ModTime().Equal(lastMtime) {
+	s.mu.RLock()
+	unloaded := s.diskHasUnloadedComments
+	s.mu.RUnlock()
+	if !lastMtime.IsZero() && info.ModTime().Equal(lastMtime) && !unloaded {
 		return false
 	}
 
@@ -667,12 +863,14 @@ func (s *Session) mergeExternalCritJSON() bool {
 	if cj.ReviewRound > 0 && memRound > cj.ReviewRound {
 		s.mu.Lock()
 		s.lastCritJSONMtime = info.ModTime()
+		s.diskHasUnloadedComments = false
 		s.mu.Unlock()
 		return false
 	}
 
 	s.mu.Lock()
 	s.lastCritJSONMtime = info.ModTime()
+	s.diskHasUnloadedComments = false
 	// Disk is authoritative for external edits — clear deleted tracking
 	s.deletedCommentIDs = nil
 

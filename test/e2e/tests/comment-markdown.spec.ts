@@ -141,6 +141,82 @@ test.describe('Comment markdown rendering', () => {
     await expectHighlightedCode(card(panel, code.id).locator('.comment-body'));
   });
 
+  test('a ref chip to a card already on the page scrolls straight to it', async ({ page, request }) => {
+    const path = await getMdPath(request);
+    const target = await addComment(request, path, 16, 'Target comment');
+    const ref = await addComment(request, path, 18, `See ${target.id}`);
+
+    await loadPage(page);
+    const doc = await switchToDocumentView(page);
+    await recordClassAdditions(page, 'comment-ref-flash');
+
+    // Put the chip near the top of the view; the target card sits just above.
+    const chip = card(doc, ref.id).locator('.comment-ref');
+    await expect(chip).toBeVisible();
+    await page.evaluate(() => {
+      const root = document.getElementById('filesContainer')!;
+      const chipEl = document.querySelector('.comment-ref')!;
+      root.scrollTop += chipEl.getBoundingClientRect().top - root.getBoundingClientRect().top - 40;
+      const w = window as unknown as { __minScrollTop: number };
+      w.__minScrollTop = root.scrollTop;
+      root.addEventListener('scroll', () => { w.__minScrollTop = Math.min(w.__minScrollTop, root.scrollTop); });
+    });
+    await expect(card(doc, target.id)).toBeAttached();
+
+    await expectClassAddedTo(page, 'comment-ref-flash', () => chip.click(), target.id);
+    await expect(card(doc, target.id)).toBeInViewport();
+
+    // The scroll never passed above where it ended: no detour to the top of the file.
+    await expect.poll(() => page.evaluate(() => {
+      const root = document.getElementById('filesContainer')!;
+      const w = window as unknown as { __minScrollTop: number };
+      return root.scrollTop - w.__minScrollTop;
+    })).toBeLessThanOrEqual(2);
+  });
+
+  test('a ref chip jumps the document even when the comments panel holds a copy of the card', async ({ page, request }) => {
+    // The target is in another file, so its card is not mounted in the list.
+    // The panel keeps its cards after it closes; the click must not stop there.
+    const path = await getMdPath(request);
+    const target = await addComment(request, 'server.go', 5, 'Target comment');
+    const ref = await addComment(request, path, 18, `See ${target.id}`);
+
+    await loadPage(page);
+    const doc = await switchToDocumentView(page);
+    await page.locator('#commentCount').click();
+    await expect(card(page.locator('#commentsPanelBody'), target.id)).toBeVisible();
+    await page.locator('#commentCount').click();
+    await expect(page.locator('#commentsPanel')).toHaveClass(/comments-panel-hidden/);
+
+    const chip = card(doc, ref.id).locator('.comment-ref');
+    await chip.scrollIntoViewIfNeeded();
+    await chip.click();
+    await expect(card(page.locator('#filesContainer'), target.id)).toBeInViewport();
+  });
+
+  test('a ref chip to a review comment opens the collapsed review conversation', async ({ page, request }) => {
+    const res = await request.post('/api/comments', { data: { body: 'Review-level target' } });
+    await expect(res).toBeOK();
+    const target = await res.json();
+    const path = await getMdPath(request);
+    const ref = await addComment(request, path, 18, `See ${target.id}`);
+
+    await loadPage(page);
+    const conversation = page.locator('#reviewConversation');
+    await conversation.locator('.review-conversation-toggle').click();
+    await expect(conversation).toHaveClass(/collapsed/);
+    await expect(card(conversation, target.id)).toHaveCount(0);
+    const doc = await switchToDocumentView(page);
+    // Same flash as a ref to a card that is already shown.
+    await recordClassAdditions(page, 'comment-ref-flash');
+
+    const chip = card(doc, ref.id).locator('.comment-ref');
+    await expect(chip).toBeVisible();
+    await expectClassAddedTo(page, 'comment-ref-flash', () => chip.click(), target.id);
+    await expect(conversation).not.toHaveClass(/collapsed/);
+    await expect(card(conversation, target.id)).toBeInViewport();
+  });
+
   test('diff comments render markdown and tables', async ({ page, request }) => {
     // server.go new line 5 (`"log"`) is an addition.
     const table = await addComment(request, 'server.go', 5, TABLE_MD);
