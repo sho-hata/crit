@@ -49,6 +49,15 @@ export async function loadPage(page: Page) {
   await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
 }
 
+// loadPage, then wait for the /api/events stream: SSE-driven updates (rounds,
+// edit-detected) can otherwise land before the page is listening.
+export async function loadPageWithEvents(page: Page) {
+  const connected = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/api/events' && response.ok());
+  await loadPage(page);
+  await connected;
+}
+
 // ----- Pierre diff surface -----
 //
 // Git-mode files render through @pierre/diffs CodeView. Each file is a
@@ -530,6 +539,35 @@ export async function addComment(request: APIRequestContext, path: string, line:
   });
   expect(resp.ok()).toBeTruthy();
   return resp.json();
+}
+
+/** Add a comment on the whole review (the "Review conversation" section); returns its id. */
+export async function addReviewComment(request: APIRequestContext, body: string): Promise<string> {
+  const response = await request.post('/api/comments', { data: { body } });
+  await expect(response).toBeOK();
+  return (await response.json()).id;
+}
+
+/** Add a comment on the whole file `path`; returns its id. */
+export async function addFileComment(request: APIRequestContext, path: string, body: string): Promise<string> {
+  const response = await request.post(`/api/file/comments?path=${encodeURIComponent(path)}`, {
+    data: { scope: 'file', start_line: 0, end_line: 0, body },
+  });
+  await expect(response).toBeOK();
+  return (await response.json()).id;
+}
+
+/** Wait until the comment card lies wholly inside the visible part of the review list. */
+export async function expectCardOnScreen(page: Page, commentId: string) {
+  await expect.poll(() => page.evaluate((id) => {
+    const card = document.querySelector(`#filesContainer .comment-card[data-comment-id="${CSS.escape(id)}"]`);
+    const list = document.getElementById('filesContainer');
+    if (!card || !list) return 'not mounted';
+    const cardBox = card.getBoundingClientRect();
+    const listBox = list.getBoundingClientRect();
+    if (cardBox.top >= listBox.top && cardBox.bottom <= listBox.bottom) return 'on screen';
+    return `off screen: card ${Math.round(cardBox.top)}..${Math.round(cardBox.bottom)}, list ${Math.round(listBox.top)}..${Math.round(listBox.bottom)}`;
+  }, commentId)).toBe('on screen');
 }
 
 // Get the markdown file path from the session.
