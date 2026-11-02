@@ -10,6 +10,9 @@ const FIND = process.platform === 'darwin' ? 'Meta+f' : 'Control+f';
 const bar = (page: Page) => page.locator('.crit-find-bar');
 const input = (page: Page) => page.locator('.crit-find-input');
 const count = (page: Page) => page.locator('.crit-find-count');
+// A trailing '…' means other lazy files are still loading. The match is
+// already final, so don't wait for all 300 files (slow on Windows runners).
+const ONE_MATCH = /^1 of 1…?$/;
 
 // Path, line and text of the current-match highlight, or null.
 function currentMatch(page: Page) {
@@ -44,7 +47,7 @@ test('finds and reveals a match in a lazy, off-screen file', async ({ page }) =>
   // whole poll. The perf project fails CI when that first attempt retries.
   await input(page).fill('Goodbye40()');
 
-  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
+  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
   await expect.poll(() => currentMatch(page), { timeout: 30_000 }).toMatchObject({
     path: 'file40.go', text: 'Goodbye40()', visible: true,
   });
@@ -83,7 +86,7 @@ test('Esc closes the bar, clears highlights and stays put', async ({ page }) => 
   await loadPage(page);
   await openFind(page);
   await input(page).fill('Goodbye3()');
-  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
+  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
 
   // Typing then Esc inside the debounce must not jump the list afterwards.
   await input(page).fill('Goodbye290(');
@@ -103,7 +106,7 @@ test('collapsed files are not searched', async ({ page }) => {
   await loadPage(page);
   await openFind(page);
   await input(page).fill('Goodbye1()');
-  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
+  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
   await page.keyboard.press('Escape');
 
   await page.locator('.pierre-file-header[data-file-path="file1.go"] .file-header-chevron').click();
