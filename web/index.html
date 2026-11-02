@@ -314,7 +314,7 @@
       // File viewer (crit-view.js); style-view.css hides the review chrome.
       document.documentElement.classList.add('crit-mode-view');
       var vl = document.createElement('link'); vl.rel = 'stylesheet'; vl.href = 'style-view.css';
-      document.head.appendChild(vl);
+      document.head.insertBefore(vl, document.getElementById('critCustomCSS'));
       window.critPierreReady = new Promise(function(resolve) {
         var pm = document.createElement('script'); pm.type = 'module'; pm.src = 'pierre/pierre-diffs.js';
         pm.onload = function() { resolve(window.PierreDiffs || null); };
