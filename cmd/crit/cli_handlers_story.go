@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -800,11 +801,12 @@ func storyReviewSessionKey(f storyFlags) (key, cwd string, err error) {
 
 // postIngest connects the freshly-saved story to a review surface (§4.1). If a
 // daemon for this session key is already running, it POSTs the story so the
-// open page live-updates via the story-updated SSE event. Otherwise it spawns
-// the daemon detached (same path as first-run `crit`) and opens the browser at
-// the story view, respecting --no-open / config. Any failure is logged, not
-// fatal: the story is already on disk, so the next `crit story`/`crit` picks it
-// up.
+// open page live-updates via the story-updated SSE event, then opens #story
+// when nothing is already connected (same check as resume and spawn). Otherwise
+// it spawns the daemon detached (same path as first-run `crit`) and opens the
+// browser at the story view, respecting --no-open / config. Any failure is
+// logged, not fatal: the story is already on disk, so the next `crit story`/`crit`
+// picks it up.
 func postIngest(f storyFlags, st *session.Story) {
 	key, cwd, err := storyReviewSessionKey(f)
 	if err != nil {
@@ -818,6 +820,9 @@ func postIngest(f storyFlags, st *session.Story) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "Updated the open review at %s\n", entry.BaseURL())
+		if !storyNoOpen(f, cwd) && !storyDaemonHasBrowser(entry) {
+			openBrowser(entry.BaseURL()+storyURLFragment, config.LoadConfig(cwd).OpenCmd)
+		}
 		return
 	}
 
@@ -945,13 +950,13 @@ func waitDaemonReady(base string) error {
 	}
 }
 
-// storyDaemonArgs strips story-only flags from the scope args so the spawned
-// daemon runs a plain review over the same diff scope. The scope args are
-// already free of story-only flags (parseStoryFlags separates them), so this
-// is currently a passthrough — kept as a seam in case the daemon needs a
-// dedicated story flag later.
+// storyDaemonArgs builds the spawned daemon's args: the scope args (already
+// free of story-only flags, which parseStoryFlags separates) plus --no-open.
+// The story CLI owns the browser open — it opens the #story view and honours
+// --no-open / config — so the daemon must never open its own tab at the
+// review root.
 func storyDaemonArgs(scopeArgs []string) []string {
-	return scopeArgs
+	return append(slices.Clone(scopeArgs), "--no-open")
 }
 
 // storyNoOpen reports whether the browser must NOT be opened: the CLI/config
