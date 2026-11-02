@@ -94,6 +94,21 @@ type Language struct {
 	// results per root. A nil result means the lookup failed and may be
 	// retried.
 	ExtraRoots func(root string) []PeekRoot
+	// CacheSweep is housekeeping for a server's on-disk cache that the server
+	// would do itself if crit's idle shutdown didn't stop it first. Run once
+	// per crit process in the background after the server first spawns, with
+	// the server's working directory; nil for none.
+	CacheSweep func(root string)
+
+	sweepOnce sync.Once
+}
+
+// sweepCacheOnce starts CacheSweep in the background the first time it is
+// called in this process.
+func (l *Language) sweepCacheOnce(root string) {
+	if l.CacheSweep != nil {
+		l.sweepOnce.Do(func() { go l.CacheSweep(root) })
+	}
 }
 
 // node_modules, .venv, .terraform and vendor are untracked, so a range-focus
@@ -111,6 +126,7 @@ var languages = []*Language{
 			"*.go", "go.mod", "go.sum", "go.work", "go.work.sum",
 		},
 		ExtraRoots: goExtraRoots,
+		CacheSweep: sweepGoplsCache,
 	},
 	{
 		Name:            "typescript",

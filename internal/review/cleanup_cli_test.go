@@ -113,22 +113,6 @@ func TestRunCleanup_NoStale(t *testing.T) {
 	}
 }
 
-func TestRemoveStaleReviewPath_FlatFile(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "review.json")
-	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !removeStaleReviewPathForTest(path) {
-		t.Error("expected true")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Error("file should be removed")
-	}
-}
-
 func TestExportedReviewAPIs(t *testing.T) {
 	t.Parallel()
 

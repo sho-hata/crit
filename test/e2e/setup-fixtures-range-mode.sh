@@ -79,6 +79,14 @@ FAKE_HOME=$(e2e_native_tempdir)
 e2e_cleanup_add "$FAKE_HOME"
 e2e_export_fake_home "$FAKE_HOME"
 
+# The daemon primes its `gh pr list` cache at boot, and the picker waits on
+# that prime. On a Windows runner the first gh call under a fresh HOME took
+# ~17s, longer than the stack popover tests wait. Pay it here, before the
+# fixture reports ready.
+if command -v gh >/dev/null 2>&1; then
+  gh auth status >/dev/null 2>&1 || true
+fi
+
 # Write fixture state for E2E tests.
 STATE_FILE="$(e2e_state_file "$PORT")"
 {

@@ -72,6 +72,35 @@ func TestSetFocus_Range_RebuildsFiles(t *testing.T) {
 	}
 }
 
+// Range focus drops binary files and ignore_patterns matches, like the
+// working-tree file list does.
+func TestSetFocus_Range_FiltersBinaryAndIgnored(t *testing.T) {
+	dir := initTestRepo(t)
+	base := gitT(t, dir, "rev-parse", "HEAD")
+	commitAt(t, dir, "doc.md", "# Doc\n", "add doc")
+	commitAt(t, dir, "shot.png", "\x89PNG\r\n\x1a\n", "add image")
+	commitAt(t, dir, "gen/out.txt", "generated\n", "add generated")
+	head := gitT(t, dir, "rev-parse", "HEAD")
+
+	s := &Session{
+		RepoRoot:       dir,
+		OutputDir:      dir,
+		VCS:            &vcs.GitVCS{},
+		IgnorePatterns: []string{"gen/"},
+	}
+
+	if err := s.SetFocus(Focus{Kind: FocusRange, BaseSHA: base, HeadSHA: head, DiffScope: DiffScopeLayer}); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, f := range s.Files {
+		paths = append(paths, f.Path)
+	}
+	if len(paths) != 1 || paths[0] != "doc.md" {
+		t.Errorf("expected [doc.md], got %v", paths)
+	}
+}
+
 // TestSetFocus_PostSetSession_PreservesComments is a regression test for B1
 // (review). Background: loadCritJSON checks Session.sessionStarted and bails
 // out post-SetSession; SetFocus calls it at runtime to repopulate per-file
