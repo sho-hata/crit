@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sho-hata/crit/internal/browser"
@@ -64,7 +66,7 @@ var smokeClient = &http.Client{Timeout: 10 * time.Second}
 var (
 	startLiveDaemon                = daemon.StartLiveDaemon
 	runLiveClient                  = daemon.RunReviewClient
-	installLiveDaemonSignalHandler = daemon.StopOnSignal
+	installLiveDaemonSignalHandler = installDaemonSignalHandler
 	openLiveBrowser                = browser.OpenBrowserWithCommand
 	launchLiveBrowser              = func(url, openCmd string) {
 		go openLiveBrowser(url, openCmd)
@@ -290,7 +292,7 @@ func RunLive(args []string) {
 		fmt.Fprintf(os.Stderr, "[crit] open %s/live\n", entry.BaseURL())
 	}
 
-	installLiveDaemonSignalHandler(entry, daemon.TerminationSignals()...)
+	installLiveDaemonSignalHandler(entry.PID)
 
 	runLiveClient(entry, key, quiet)
 }
@@ -310,4 +312,17 @@ func checkLiveSmoke(origin, cookies string) {
 	for _, n := range result.frameworkNotes {
 		fmt.Fprintf(os.Stderr, "[crit] note: %s\n", n)
 	}
+}
+
+func installDaemonSignalHandler(pid int) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		proc, err := os.FindProcess(pid)
+		if err == nil {
+			_ = daemon.TerminateProcess(proc)
+		}
+		os.Exit(0)
+	}()
 }

@@ -41,7 +41,7 @@ brew install sho-hata/tap/fcrit
 > The formula is `fcrit` (this fork), not `crit` (upstream, in homebrew-core) — but it still installs a binary named `crit`. The two conflict, so uninstall or `brew unlink crit` first if you have upstream installed. Upgrades: `brew update && brew upgrade fcrit`.
 
 <details>
-<summary>Also available via Go, Nix, Arch Linux, and Windows</summary>
+<summary>Also available via Go, Nix and Windows</summary>
 
 Go:
 ```bash
@@ -52,12 +52,6 @@ Nix:
 ```bash
 nix profile install github:sho-hata/crit
 ```
-
-Arch Linux:
-```bash
-yay -S crit.md-bin
-```
-> [AUR](https://aur.archlinux.org/packages/crit.md-bin) package, maintained outside this project. Any AUR helper works in place of `yay`.
 
 Windows:
 ```bash
@@ -360,7 +354,7 @@ After the first agent interaction, the comment becomes a **live thread**:
 - **Concurrent reviews.** Each instance runs on its own port - review multiple plans at once.
 - **Syntax highlighting.** Code blocks are highlighted and split per-line, so you can comment on individual lines inside a fence.
 - **Diagrams and custom renderers.** Mermaid fences render as diagrams, and `.mermaid` / `.mmd` files get a Diagram / Source toggle. In a Mermaid file, click a diagram node to comment on the line that defines it. See the **[renderers guide](docs/renderers.md)**.
-- **Live file watching.** Each new round loads the latest files. If a file under review changes during a round (in files and plan mode), Crit offers to reload the files in place, keeping your place and any comment you're writing. Comments move to their new lines at the next round, so until then one below an added or removed line can sit slightly off, as after a browser refresh.
+- **Live file watching.** The browser reloads automatically when the source file changes.
 - **Paired UI and code themes.** Choose light and dark Shiki-based palettes in Settings; code, rendered markdown and review UI share their colours. System/Light/Dark selects the active palette. Preferences persist in a cookie across ports.
 - **Configurable code font.** Code-review Settings → Display → Code font lists coding/monospace fonts detected by the local Crit daemon, plus Default, System monospace, and a custom `font-family` fallback. Applies to code and diffs, and persists across sessions.
 - **Local by default.** Server binds to `127.0.0.1`. Your files stay on your machine unless you explicitly share. Non-loopback listen hosts and `public_url` require `--allow-unauthenticated-network` (or `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1`) because Crit has no network authentication — prefer SSH forwarding, Tailscale Serve to loopback, or Docker `-p 127.0.0.1:…`.
@@ -488,33 +482,6 @@ Use `--no-ignore` to temporarily bypass all patterns:
 ```bash
 crit --no-ignore
 ```
-
-### Custom styles
-
-To restyle Crit with your own CSS, create `~/.crit/custom.css`. Every Crit page (reviews, live mode and the theme preview) loads it after Crit's own styles, reading it fresh each time, so edit the file and reload the tab to see changes. If the file can't be read, Crit logs why and uses its own styles. In review and live mode, Settings → Configuration shows whether the file exists and its path, and Settings → Display has a "Use custom CSS" switch to turn it off without deleting it.
-
-Crit marks the page with the mode in use, `data-crit-mode="light"` or `"dark"` (also when following the system setting), so you can keep everything for one mode in one block. Override theme variables and nest element rules inside it:
-
-```css
-:root[data-crit-mode="dark"] {
-  /* the block a comment is on, and the exact words it quotes */
-  --crit-comment-range-bg: rgba(83, 155, 245, 0.15);
-  --crit-quote-highlight-bg: rgba(83, 155, 245, 0.28);
-
-  .line-block.has-comment { box-shadow: inset 3px 0 0 #539bf5; }
-}
-
-:root[data-crit-mode="light"] {
-  --crit-comment-range-bg: rgba(9, 105, 218, 0.10);
-  --crit-quote-highlight-bg: rgba(9, 105, 218, 0.18);
-
-  .line-block.has-comment { box-shadow: inset 3px 0 0 #0969da; }
-}
-```
-
-For a single value that differs by mode, `light-dark(light, dark)` also works.
-
-Code diffs are drawn inside shadow roots, which page CSS cannot reach with selectors; only inherited CSS variables (such as the ones above, or `--diffs-*` overrides) get through. Override the derived `--crit-*` variables, as above: the palette's own `--crit-palette-*` values are set inline on `<html>`, so they only change with `!important`. Class names are not a stable API and may change between releases.
 
 ### Environment variables
 

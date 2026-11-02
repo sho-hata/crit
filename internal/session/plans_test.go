@@ -237,8 +237,8 @@ func TestPlanSessionKey(t *testing.T) {
 	if key1 == key3 {
 		t.Error("different slugs should produce different keys")
 	}
-	if key1 != key4 {
-		t.Error("the same global plan slug should produce the same key from different cwds")
+	if key1 == key4 {
+		t.Error("different cwds should produce different keys")
 	}
 	if len(key1) != 12 {
 		t.Errorf("key length = %d, want 12", len(key1))
@@ -312,19 +312,6 @@ func TestApplyPlanOverrides(t *testing.T) {
 	}
 	if session.Files[0].Path != "auth-flow.md" {
 		t.Errorf("display path = %q, want %q", session.Files[0].Path, "auth-flow.md")
-	}
-}
-
-func TestApplyPlanOverrides_DropsOrphansFromInitialLoad(t *testing.T) {
-	plan := &FileEntry{Path: "current.md", Status: "modified"}
-	orphan := &FileEntry{Path: "saved-plan.md", Status: "removed", Orphaned: true,
-		Comments: []Comment{{ID: "saved-comment"}}}
-	s := &Session{Files: []*FileEntry{plan, orphan}}
-
-	ApplyPlanOverrides(s, t.TempDir(), "saved-plan")
-
-	if len(s.Files) != 1 || s.Files[0] != plan || plan.Path != "saved-plan.md" {
-		t.Fatalf("plan files after removing initial orphan = %+v", s.Files)
 	}
 }
 

@@ -103,7 +103,7 @@ func RunReview(args []string) error {
 	}
 
 	if weStartedDaemon {
-		installDaemonSignalHandler(entry)
+		installDaemonSignalHandler(entry.PID)
 	}
 
 	approved := runReviewClientForReview(entry, key, sc.Quiet)

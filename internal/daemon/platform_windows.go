@@ -31,10 +31,9 @@ func terminationSignals() []os.Signal {
 // terminateProcess asks the given process to exit. On Windows we first try
 // GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) so the daemon's
 // signal.NotifyContext handler runs (the daemon child is spawned with
-// CREATE_NEW_PROCESS_GROUP, so the event targets only that group). The event
-// reaches only a daemon sharing the caller's console; the call fails for one
-// in another console and falls through to os.Process.Kill, which is why
-// callers try /api/shutdown first.
+// CREATE_NEW_PROCESS_GROUP, so the event targets only that group).
+// StopDaemon's polling loop gives the graceful path a moment to shut down
+// before falling back to TerminateProcess via os.Process.Kill.
 func terminateProcess(proc *os.Process) error {
 	if err := windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, uint32(proc.Pid)); err == nil {
 		return nil

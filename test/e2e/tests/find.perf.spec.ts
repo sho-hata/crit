@@ -10,9 +10,6 @@ const FIND = process.platform === 'darwin' ? 'Meta+f' : 'Control+f';
 const bar = (page: Page) => page.locator('.crit-find-bar');
 const input = (page: Page) => page.locator('.crit-find-input');
 const count = (page: Page) => page.locator('.crit-find-count');
-// A trailing '…' means other lazy files are still loading. The match is
-// already final, so don't wait for all 300 files (slow on Windows runners).
-const ONE_MATCH = /^1 of 1…?$/;
 
 // Path, line and text of the current-match highlight, or null.
 function currentMatch(page: Page) {
@@ -42,16 +39,13 @@ test.beforeEach(async ({ request }) => {
 test('finds and reveals a match in a lazy, off-screen file', async ({ page }) => {
   await loadPage(page);
   await openFind(page);
-  // Just past the eager window (25). A match as deep as file287 waits on
-  // hundreds of lazy files, and the highlight range is disconnected for the
-  // whole poll. The perf project fails CI when that first attempt retries.
-  await input(page).fill('Goodbye40()');
+  await input(page).fill('Goodbye287()');
 
-  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
-  await expect.poll(() => currentMatch(page), { timeout: 30_000 }).toMatchObject({
-    path: 'file40.go', text: 'Goodbye40()', visible: true,
+  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
+  await expect.poll(() => currentMatch(page), { timeout: 10_000 }).toMatchObject({
+    path: 'file287.go', text: 'Goodbye287()', visible: true,
   });
-  await expect(page.locator('.tree-file[data-tree-path="file40.go"]')).toHaveClass(/active/);
+  await expect(page.locator('.tree-file[data-tree-path="file287.go"]')).toHaveClass(/active/);
 });
 
 test('keeps the found file active in the tree until it scrolls out of view', async ({ page }) => {
@@ -64,29 +58,26 @@ test('keeps the found file active in the tree until it scrolls out of view', asy
 
   await loadPage(page);
   await openFind(page);
-  // file125.go is lazy and off screen, but the first lazy files load first.
-  // A match deeper in the list waits for ~180 lazy files to load, which can
-  // outrun the poll on a slow runner.
-  await input(page).fill('Goodbye125()');
-  await expect.poll(() => currentMatch(page), { timeout: 30_000 }).toMatchObject({ path: 'file125.go', visible: true });
-  await expect(treeRow('file125.go')).toHaveClass(/active/);
+  await input(page).fill('Goodbye287()');
+  await expect.poll(() => currentMatch(page), { timeout: 30_000 }).toMatchObject({ path: 'file287.go', visible: true });
+  await expect(treeRow('file287.go')).toHaveClass(/active/);
 
-  // The centered match leaves file124.go at the top of the list. A scroll
+  // The centered match leaves file286.go at the top of the list. A scroll
   // after the tree's 400ms post-jump window (on a slow runner, the jump's
   // own) must not hand the tree to it.
   await page.waitForTimeout(500);
   await scrollList(1);
-  await expect(treeRow('file125.go')).toHaveClass(/active/);
+  await expect(treeRow('file287.go')).toHaveClass(/active/);
 
   await scrollList(2000);
-  await expect(treeRow('file125.go')).not.toHaveClass(/active/);
+  await expect(treeRow('file287.go')).not.toHaveClass(/active/);
 });
 
 test('Esc closes the bar, clears highlights and stays put', async ({ page }) => {
   await loadPage(page);
   await openFind(page);
   await input(page).fill('Goodbye3()');
-  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
+  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
 
   // Typing then Esc inside the debounce must not jump the list afterwards.
   await input(page).fill('Goodbye290(');
@@ -106,7 +97,7 @@ test('collapsed files are not searched', async ({ page }) => {
   await loadPage(page);
   await openFind(page);
   await input(page).fill('Goodbye1()');
-  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
+  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
   await page.keyboard.press('Escape');
 
   await page.locator('.pierre-file-header[data-file-path="file1.go"] .file-header-chevron').click();
