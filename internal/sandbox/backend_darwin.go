@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 )
 
 // sandboxExec is run by absolute path: a PATH lookup could find a planted one.
 const sandboxExec = "/usr/bin/sandbox-exec"
+
+const detectTimeout = 10 * time.Second
 
 // detect runs /usr/bin/true under the real profile shape, so a macOS release
 // that rejects the profile text shows up here, not at the first hover. A
@@ -24,7 +27,11 @@ func detect() (Backend, bool) {
 		scratch:   os.TempDir(),
 		argv:      []string{"/usr/bin/true"},
 	}
-	cmd, err := confine(context.Background(), pol)
+	// A hung sandbox-exec must not hold detectMu forever: a timeout is a
+	// failed self-test, tried again on the next call.
+	ctx, cancel := context.WithTimeout(context.Background(), detectTimeout)
+	defer cancel()
+	cmd, err := confine(ctx, pol)
 	if err != nil {
 		return Backend{Reason: err.Error()}, false
 	}

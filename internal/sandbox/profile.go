@@ -13,7 +13,7 @@ import (
 // first, and the secrets beneath it denied again, so a tree under ~/.crit
 // reads while a secret under a tree (a dotfiles repository at $HOME) does
 // not, and the scratch under ~/.crit still reads after that. Execution and
-// native-code mapping are denied under the trees and the scratch. Metadata
+// native-code mapping are denied under every execDeny entry. Metadata
 // is readable for directories only: path walks need it, file sizes under a
 // secret are nobody's business. The mach-lookup list is what the measured
 // servers (gopls, typescript-language-server, pyright, intelephense,
@@ -30,7 +30,6 @@ func profile(p policy) (text string, params []string) {
 	for i, path := range p.execDeny {
 		noExec = append(noExec, param(fmt.Sprintf("EXEC_DENY_%d", i), path))
 	}
-	noExec = append(noExec, scratch)
 	fmt.Fprintf(&b, "(deny process-exec %s)\n(allow file-map-executable)\n(deny file-map-executable %s)\n",
 		strings.Join(noExec, " "), strings.Join(noExec, " "))
 	b.WriteString("(allow signal (target same-sandbox))\n(allow file-read*)\n")

@@ -14,14 +14,14 @@ import (
 type policy struct {
 	readDeny  []string // secrets: unreadable
 	readAllow []string // readable even inside readDeny: Root, DepRoot, scratch
-	execDeny  []string // Root, DepRoot: never executed or mapped executable; the backends add scratch
+	execDeny  []string // Root, DepRoot and the scratch base: never executed or mapped executable
 	scratch   string   // the only writable directory (besides /dev/null and friends)
 	env       []string
 	argv      []string // argv[0] absolute, outside the trees
 	dir       string
 }
 
-func plan(t Trees, scratch, dir string, p Process, readDeny, environ []string) (policy, error) {
+func plan(t Trees, scratchBase, scratch, dir string, p Process, readDeny, environ []string) (policy, error) {
 	env, err := buildEnv(environ, t, scratch, p)
 	if err != nil {
 		return policy{}, err
@@ -52,6 +52,9 @@ func plan(t Trees, scratch, dir string, p Process, readDeny, environ []string) (
 		pol.readAllow = append(pol.readAllow, realPath(tree))
 		pol.execDeny = append(pol.execDeny, realPath(tree))
 	}
+	// The whole scratch base, not just this process's scratch: a file one
+	// server wrote into its own scratch must not run from another's.
+	pol.execDeny = append(pol.execDeny, realPath(scratchBase))
 	pol.readAllow = append(pol.readAllow, pol.scratch)
 	return pol, nil
 }
@@ -130,8 +133,10 @@ var envAllow = []string{
 var envReserved = []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP"}
 
 // buildEnv is the allowlist, PATH without relative or in-tree entries, the
-// temp and cache variables pointed into scratch, then Process.Env.
-// Everything else is dropped.
+// temp variables and XDG_CACHE_HOME pointed into scratch, then Process.Env.
+// Everything else is dropped. macOS ignores XDG_CACHE_HOME (os.UserCacheDir
+// is ~/Library/Caches there, unwritable), so a program that caches says where
+// through Process.Env (gopls: GOCACHE, GOPLSCACHE).
 func buildEnv(environ []string, t Trees, scratch string, p Process) ([]string, error) {
 	for _, kv := range p.Env {
 		if k, _, _ := strings.Cut(kv, "="); slices.ContainsFunc(envReserved, func(r string) bool { return strings.EqualFold(r, k) }) {

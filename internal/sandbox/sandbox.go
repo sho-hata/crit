@@ -158,7 +158,7 @@ func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
 }
 
 func (j *Jail) command(ctx context.Context, p Process, scratch, dir string) (*exec.Cmd, error) {
-	pol, err := plan(j.trees, scratch, dir, p, j.readDeny, os.Environ())
+	pol, err := plan(j.trees, j.scratchBase, scratch, dir, p, j.readDeny, os.Environ())
 	if err != nil {
 		return nil, err
 	}

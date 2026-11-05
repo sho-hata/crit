@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -174,9 +175,9 @@ func TestProfileGolden(t *testing.T) {
 (deny default)
 (allow process-fork)
 (allow process-exec)
-(deny process-exec (subpath (param "EXEC_DENY_0")) (subpath (param "EXEC_DENY_1")) (subpath (param "SCRATCH_0")))
+(deny process-exec (subpath (param "EXEC_DENY_0")) (subpath (param "EXEC_DENY_1")))
 (allow file-map-executable)
-(deny file-map-executable (subpath (param "EXEC_DENY_0")) (subpath (param "EXEC_DENY_1")) (subpath (param "SCRATCH_0")))
+(deny file-map-executable (subpath (param "EXEC_DENY_0")) (subpath (param "EXEC_DENY_1")))
 (allow signal (target same-sandbox))
 (allow file-read*)
 (deny file-read* (subpath (param "READ_DENY_0")) (subpath (param "READ_DENY_1")))
@@ -350,6 +351,45 @@ func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Errorf("tmp/ not emptied: %v", err)
+	}
+}
+
+// A file one server wrote into its own scratch does not run from another
+// server's jail either: the scratch base as a whole is exec-denied.
+func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
+	b := Detect()
+	if b.Name == "" {
+		if os.Getenv("CRIT_REQUIRE_SANDBOX") != "" {
+			t.Fatalf("CRIT_REQUIRE_SANDBOX is set and there is no backend: %s", b.Reason)
+		}
+		t.Skipf("no sandbox backend: %s", b.Reason)
+	}
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(j.Workspace("other").Scratch, "true")
+	data, err := os.ReadFile("/usr/bin/true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(bin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, data, 0o700); err != nil { //nolint:gosec // an executable copy is the point
+		t.Fatal(err)
+	}
+	if err := exec.Command(bin).Run(); err != nil { //nolint:gosec // control: the copy runs unconfined
+		t.Fatalf("control: the copy does not run unconfined: %v", err)
+	}
+	cmd, err := j.Command(context.Background(), "t", func(Workspace) Process {
+		return Process{Argv: []string{"sh", "-c", `"$0"`, bin}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Errorf("%s ran from another scratch under the jail (%q)", bin, out)
 	}
 }
 
