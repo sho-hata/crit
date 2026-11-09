@@ -206,7 +206,7 @@ func buildViewedPushPlan(id ChangeID, cj session.CritJSON, remote prViewedState)
 // viewedMutation builds one request holding n aliased calls of mutation.
 func viewedMutation(mutation string, n int) string {
 	var vars, calls strings.Builder
-	for i := 0; i < n; i++ {
+	for i := range n {
 		fmt.Fprintf(&vars, ",$p%d:String!", i)
 		fmt.Fprintf(&calls, "m%d: %s(input:{pullRequestId:$pr,path:$p%d}){ clientMutationId }\n", i, mutation, i)
 	}
