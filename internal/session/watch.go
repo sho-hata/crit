@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/diff"
@@ -133,11 +135,18 @@ func (s *Session) RefreshFileList() {
 	s.mu.Lock()
 	for _, u := range built.updates {
 		u.entry.Status = u.status
+		// A phantom that reappears in the live change list is no longer
+		// orphaned — Branch scope (and other Orphaned readers) must not
+		// keep treating it as "left the review".
+		u.entry.Orphaned = false
 		if u.oldPath != "" {
 			u.entry.OldPath = u.oldPath
 		}
 		if u.newPath != "" {
 			u.entry.Path = u.newPath
+			u.entry.AbsPath = u.absPath
+		} else if u.absPath != "" && u.entry.AbsPath == "" {
+			// Phantoms are created without AbsPath; fill it in on reuse.
 			u.entry.AbsPath = u.absPath
 		}
 	}
@@ -178,7 +187,9 @@ func buildRefreshedFileList(existing map[string]*FileEntry, changes []vcs.FileCh
 	for i, fc := range changes {
 		absPath := filepath.Join(repoRoot, fc.Path)
 		if f, ok := existing[fc.Path]; ok {
-			out.updates = append(out.updates, fileListUpdate{entry: f, status: fc.Status, oldPath: fc.OldPath})
+			out.updates = append(out.updates, fileListUpdate{
+				entry: f, status: fc.Status, oldPath: fc.OldPath, absPath: absPath,
+			})
 			out.files = append(out.files, f)
 			delete(existing, fc.Path)
 			if fc.OldPath != "" {
@@ -1127,9 +1138,10 @@ func remapLines(lineMap map[int]int, oldStart, oldEnd, maxLine int) (int, int) {
 }
 
 // remapCommentPosition maps a line comment onto new content: LCS line mapping
-// first, then anchor verification to correct the position. Drifted reports
-// that the anchor text was not found where the mapping put it; it is false for
-// a comment without an anchor.
+// first, then anchor verification to correct the position. Drifted is true when
+// the anchor is not found where the mapping put it, or when a quoted comment's
+// quote is no longer on its lines. With neither anchor nor quote it is false
+// (callers that must keep a prior Drifted flag do so themselves).
 func remapCommentPosition(c Comment, lineMap map[int]int, newLines []string, newLineCount int) (start, end int, drifted bool) {
 	start, end = remapLines(lineMap, c.StartLine, c.EndLine, newLineCount)
 	if c.Anchor != "" {
@@ -1137,7 +1149,58 @@ func remapCommentPosition(c Comment, lineMap map[int]int, newLines []string, new
 		start, end, drift = verifyAndCorrectPosition(newLines, c.Anchor, start, end)
 		drifted = drift != 0
 	}
+	// The anchor check tolerates small edits to the line, but a comment on
+	// selected text is about its quote: once the quoted words are gone from
+	// its lines, the comment is Drifted (approximates the browser highlight).
+	if !drifted && c.Quote != "" && !quoteOnLines(newLines, start, end, c.Quote) {
+		drifted = true
+	}
 	return start, end, drifted
+}
+
+var (
+	quoteLinkTargetRe = regexp.MustCompile(`\]\([^)]*\)`)
+	quoteHTMLTagRe    = regexp.MustCompile(`</?[A-Za-z][A-Za-z0-9-]*(\s[^>]*)?/?>`)
+)
+
+// normalizeQuoteText keeps only letters and digits, lowercased, after
+// dropping markdown link targets and HTML tags. A quote is copied from the
+// rendered page (no `**`, link URLs or `<br/>` from the source), so both
+// sides are compared in this form.
+func normalizeQuoteText(s string) string {
+	if strings.Contains(s, "](") {
+		s = quoteLinkTargetRe.ReplaceAllString(s, "]")
+	}
+	if strings.Contains(s, "<") {
+		s = quoteHTMLTagRe.ReplaceAllString(s, " ")
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+// quoteOnLines reports whether quote is still on lines start..end (1-based,
+// inclusive), compared as normalizeQuoteText does. That approximates the
+// browser highlight (exact words after whitespace collapse): punctuation-only
+// edits are ignored here, and source markup the page does not show (list
+// markers, HTML entities, reference-link ids) can still disagree.
+func quoteOnLines(lines []string, start, end int, quote string) bool {
+	if start < 1 || end > len(lines) || start > end {
+		return true
+	}
+	span := lines[start-1 : end]
+	for _, line := range span {
+		if strings.Contains(line, quote) { // the usual case: quote unchanged
+			return true
+		}
+	}
+	q := normalizeQuoteText(quote)
+	return q == "" || strings.Contains(normalizeQuoteText(strings.Join(span, "\n")), q)
 }
 
 // carryForwardComments maps comments from the previous round to new document

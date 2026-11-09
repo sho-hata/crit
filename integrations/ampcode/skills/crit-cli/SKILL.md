@@ -185,6 +185,8 @@ crit comment --plan my-plan-2026-03-23 --reply-to c_a1b2c3 --author 'Amp' 'Updat
 ```bash
 crit pull [pr-number]                                    # Fetch PR review comments into the review file
 crit push [--dry-run] [--event <type>] [-m <msg>] [pr]   # Post review comments as a GitHub PR review
+crit push --viewed [pr]                                  # Also tick files marked viewed on the GitHub PR
+crit pull --viewed [pr]                                  # Also fetch files ticked viewed on the GitHub PR
 ```
 
 Requires `gh` CLI installed and authenticated. PR number is auto-detected from the current branch.

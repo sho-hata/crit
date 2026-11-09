@@ -278,13 +278,21 @@
       const seq = ++revealSeq;
       const isCurrent = function() { return open && seq === revealSeq; };
       Promise.resolve(opts.reveal(m, isCurrent)).then(function() {
-        // The row renders on a later frame; poll until it is mounted.
+        // The row renders on a later frame; poll until it is mounted. On a
+        // slow machine the lazy scan can hold it back past those frames, so
+        // try again once the scan settles rather than give up on the match.
         let frames = 0;
         (function poll() {
           if (!isCurrent()) return;
           const range = syncHighlights();
           if (range) { scrollRangeIntoView(range); return; }
-          if (++frames < 60) requestAnimationFrame(poll);
+          if (++frames < 60) { requestAnimationFrame(poll); return; }
+          if (loadRun) {
+            loadRun.then(function() {
+              frames = 0;
+              requestAnimationFrame(poll);
+            });
+          }
         })();
       });
     }
@@ -415,6 +423,11 @@
         if (!open || !query) return;
         search(true);
         loadPending();
+      },
+      // Call when the list was rebuilt from scratch (the page's fallback when
+      // the highlight workers don't start): jump to the current match again.
+      revealCurrent: function() {
+        if (open && current >= 0) go(current);
       },
       isOpen: function() { return open; },
       // Call from the page's Esc handling; true when it closed the bar.
