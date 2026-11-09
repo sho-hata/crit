@@ -296,6 +296,18 @@ crit push --message "Round 2"      # add a top-level review comment
 crit push 42                       # explicit PR number
 ```
 
+#### Sync viewed files with GitHub
+
+When you review with `crit --pr`, files you mark as viewed can be ticked in the PR's "Files changed" tab, and the other way round:
+
+```bash
+crit push --viewed             # tick your viewed files on the PR
+crit push --viewed --dry-run   # preview what would change
+crit pull --viewed             # bring in files ticked on GitHub
+```
+
+Push skips files that changed since you viewed them, files marked by `auto_viewed_patterns`, and marks made outside the PR's own diff. Unticking a file in Crit unticks it on GitHub. Your marks stay available after you finish a review, so you can push them afterwards. Pull adds GitHub's ticks but keeps any file you unticked in Crit; an open review page shows them after a reload.
+
 ### Send to agent (experimental)
 
 Click "Send now" on any comment during a review to get an AI agent response in real-time. This feature only appears when `agent_cmd` is configured.

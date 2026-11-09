@@ -723,6 +723,9 @@ type scopedSessionSnapshot struct {
 	// so scope "all" can keep them as orphaned rows when they drop out of
 	// the diff (the same rows GetSessionInfo shows).
 	commentedFiles []SessionFileInfo
+	// removedFiles is the part of commentedFiles that has left the review
+	// (the file is in no diff), so scope "branch" keeps them as rows too.
+	removedFiles []SessionFileInfo
 }
 
 func (s *Session) snapshotForScoped() scopedSessionSnapshot {
@@ -733,7 +736,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 	unresolvedCounts := make(map[string]int, len(s.Files))
 	lazyFiles := make(map[string]*FileEntry, len(s.Files))
 	totalUnresolved := 0
-	var commentedFiles []SessionFileInfo
+	var commentedFiles, removedFiles []SessionFileInfo
 	for _, f := range s.Files {
 		commentCounts[f.Path] = countVisibleComments(f.Comments, s.Focus)
 		for _, c := range f.Comments {
@@ -746,7 +749,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 			lazyFiles[f.Path] = f
 		}
 		if n := commentCounts[f.Path]; n > 0 {
-			commentedFiles = append(commentedFiles, SessionFileInfo{
+			row := SessionFileInfo{
 				Path:         f.Path,
 				OldPath:      f.OldPath,
 				Status:       f.Status,
@@ -754,7 +757,11 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 				CommentCount: n,
 				Orphaned:     true,
 				Generated:    f.Generated,
-			})
+			}
+			commentedFiles = append(commentedFiles, row)
+			if f.Orphaned {
+				removedFiles = append(removedFiles, row)
+			}
 		}
 	}
 	rc := make([]Comment, 0, len(s.reviewComments))
@@ -794,6 +801,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 		story:            s.story,
 		generatedRules:   s.generatedRules,
 		commentedFiles:   commentedFiles,
+		removedFiles:     removedFiles,
 	}
 }
 
@@ -906,7 +914,8 @@ func countHunkStats(hunks []vcs.DiffHunk) (additions, deletions int) {
 // range focus, delegates to GetSessionInfo (the round snapshot).
 // All other scopes (including "all") run fresh git queries to pick up work
 // done after the round started. "all" also keeps commented files that left the
-// diff as orphaned rows, as GetSessionInfo does.
+// diff as orphaned rows, as GetSessionInfo does; "branch" keeps those that
+// left the review entirely.
 // When commit is non-empty, files and diffs are scoped to that single commit.
 func (s *Session) GetSessionInfoScoped(scope, commit string) SessionInfo {
 	if commit == "" && (scope == "" || s.Mode == "files" || s.Mode == "plan") {
@@ -954,6 +963,10 @@ func (s *Session) GetSessionInfoScoped(scope, commit string) SessionInfo {
 	info.Files = snap.scopedFileInfos(changes, scope, commit)
 	if liveAll {
 		info.Files = appendOrphanedCommentedFiles(info.Files, snap.commentedFiles)
+	} else if scope == "branch" && commit == "" {
+		// A file that left the branch is in no diff, so without its row
+		// its comments could not be seen or resolved here.
+		info.Files = appendOrphanedCommentedFiles(info.Files, snap.removedFiles)
 	}
 
 	info.HiddenUnresolved = snap.hiddenUnresolved(info.Files)

@@ -191,6 +191,8 @@ When you are in a Grok plan-mode session, the plan file itself lives at `~/.grok
 ```bash
 crit pull [pr-number]                                    # Fetch PR review comments into the review file
 crit push [--dry-run] [--event <type>] [-m <msg>] [pr]   # Post review comments as a GitHub PR review
+crit push --viewed [pr]                                  # Also tick files marked viewed on the GitHub PR
+crit pull --viewed [pr]                                  # Also fetch files ticked viewed on the GitHub PR
 ```
 
 Requires the `gh` CLI installed and authenticated. PR number is auto-detected from the current branch (or you can pass it explicitly).
