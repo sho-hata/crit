@@ -304,7 +304,7 @@ func mergeFileSnapshotIntoCritJSON(cj *CritJSON, fs writeFileSnapshot, deleted m
 }
 
 func critJSONIsEmpty(cj CritJSON) bool {
-	return len(cj.Files) == 0 && len(cj.ReviewComments) == 0 && cj.Story == nil
+	return len(cj.Files) == 0 && len(cj.ReviewComments) == 0 && cj.Story == nil && len(cj.ViewedFiles) == 0
 }
 
 // WriteFiles writes the review file to disk.
@@ -371,12 +371,13 @@ func (s *Session) writeFilesErr() error {
 		}
 	}
 	return WithReviewWriteLock(critPath, func() error {
-		return s.writeReviewFile(critPath)
+		return s.writeReviewFile(critPath, nil)
 	})
 }
 
-// Caller holds writeMu and the review-file transaction lock.
-func (s *Session) writeReviewFile(critPath string) error {
+// Caller holds writeMu and the review-file transaction lock. mutate, when set,
+// edits the review before it is saved, in the same transaction.
+func (s *Session) writeReviewFile(critPath string, mutate func(*CritJSON)) error {
 	if s.handleExternalDeletion(critPath) {
 		return nil
 	}
@@ -384,6 +385,9 @@ func (s *Session) writeReviewFile(critPath string) error {
 
 	snap := s.snapshotForWrite(critPath)
 	cj, unloaded := buildCritJSON(snap)
+	if mutate != nil {
+		mutate(&cj)
+	}
 
 	paths := ReviewPathsFor(snap.critPath)
 	if critJSONIsEmpty(cj) {

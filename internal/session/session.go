@@ -584,6 +584,10 @@ type CritJSON struct {
 	// the user's intent is not lost.
 	PendingGitHubDeletes []int64 `json:"pending_github_deletes,omitempty"`
 
+	// ViewedFiles holds the reviewer's viewed marks by path. It is top-level
+	// rather than on CritJSONFile because Files only keeps paths with comments.
+	ViewedFiles map[string]ViewedFile `json:"viewed_files,omitempty"`
+
 	// ReviewType distinguishes review modes. "" (zero value) = code review.
 	// "live" = live mode. Omitted from JSON when empty for back-compat.
 	ReviewType string `json:"review_type,omitempty"`
