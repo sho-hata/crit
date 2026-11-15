@@ -113,17 +113,17 @@ type Language struct {
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
 	// per crit process in the background after the server first spawns, with
-	// the server's working directory; nil for none.
-	CacheSweep func(root string)
+	// the server's workspace; nil for none.
+	CacheSweep func(ws Workspace)
 
 	sweepOnce sync.Once
 }
 
 // sweepCacheOnce starts CacheSweep in the background the first time it is
 // called in this process.
-func (l *Language) sweepCacheOnce(root string) {
+func (l *Language) sweepCacheOnce(ws Workspace) {
 	if l.CacheSweep != nil {
-		l.sweepOnce.Do(func() { go l.CacheSweep(root) })
+		l.sweepOnce.Do(func() { go l.CacheSweep(ws) })
 	}
 }
 
@@ -141,6 +141,8 @@ var languages = []*Language{
 		SparsePatterns: []string{
 			"*.go", "go.mod", "go.sum", "go.work", "go.work.sum",
 		},
+		// gopls only ever runs the go toolchain, never a program from the tree.
+		Env:        goEnv,
 		ExtraRoots: goExtraRoots,
 		CacheSweep: sweepGoplsCache,
 	},
@@ -200,6 +202,16 @@ var languages = []*Language{
 		LocalEnv:       true,
 		ExtraRoots:     phpExtraRoots,
 	},
+}
+
+// goEnv keeps gopls's caches in scratch. The shared GOCACHE is the
+// reviewer's own: a confined server may write only where nothing but crit
+// reads, or a poisoned entry would run in their next unconfined build.
+func goEnv(ws Workspace) []string {
+	return []string{
+		"GOCACHE=" + filepath.Join(ws.Scratch, "gocache"),
+		"GOPLSCACHE=" + goplsCacheDir(ws),
+	}
 }
 
 // tsInitOptions pins the nearest TypeScript install. typescript-language-server

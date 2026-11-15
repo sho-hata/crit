@@ -34,60 +34,39 @@ func TestSweepGoplsCache(t *testing.T) {
 		}
 	}
 
-	tests := []struct {
-		name string
-		// env returns GOPLSCACHE and the directory it names, given the
-		// server root.
-		env func(root string) (value, cache string)
-	}{
-		{"absolute", func(string) (string, string) {
-			dir := t.TempDir()
-			return dir, dir
-		}},
-		{"relative to server root", func(root string) (string, string) {
-			return ".cache", filepath.Join(root, ".cache")
-		}},
+	ws := Workspace{Root: t.TempDir(), Scratch: t.TempDir()}
+	cache := goplsCacheDir(ws)
+	for rel, f := range files {
+		write(t, filepath.Join(cache, rel), f.old)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
-			value, cache := tt.env(root)
-			t.Setenv("GOPLSCACHE", value)
-			for rel, f := range files {
-				write(t, filepath.Join(cache, rel), f.old)
-			}
-			// The daemon's cwd differs from the server root under range
-			// focus; a relative GOPLSCACHE must not resolve against it.
-			cwd := t.TempDir()
-			decoy := filepath.Join(cwd, ".cache", "gopls", "h1", "aa", "old")
-			write(t, decoy, true)
-			t.Chdir(cwd)
+	// The cache the daemon's own environment names is not the server's.
+	other := t.TempDir()
+	t.Setenv("GOPLSCACHE", other)
+	decoy := filepath.Join(other, "gopls", "h1", "aa", "old")
+	write(t, decoy, true)
 
-			sweepGoplsCache(root)
+	sweepGoplsCache(ws)
 
-			for rel, f := range files {
-				_, err := os.Stat(filepath.Join(cache, rel))
-				if exists := err == nil; exists != f.kept {
-					t.Errorf("%s exists = %v, want %v", rel, exists, f.kept)
-				}
-			}
-			if _, err := os.Stat(filepath.Join(cache, "gopls/h1/aa")); err != nil {
-				t.Errorf("directory removed: %v", err)
-			}
-			if _, err := os.Stat(decoy); err != nil {
-				t.Errorf("file under the daemon's cwd removed: %v", err)
-			}
-		})
+	for rel, f := range files {
+		_, err := os.Stat(filepath.Join(cache, rel))
+		if exists := err == nil; exists != f.kept {
+			t.Errorf("%s exists = %v, want %v", rel, exists, f.kept)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cache, "gopls/h1/aa")); err != nil {
+		t.Errorf("directory removed: %v", err)
+	}
+	if _, err := os.Stat(decoy); err != nil {
+		t.Errorf("file in the daemon's own GOPLSCACHE removed: %v", err)
 	}
 }
 
 func TestSweepGoplsCacheMissingDirIsNoop(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("GOPLSCACHE", tmp)
+	ws := Workspace{Root: t.TempDir(), Scratch: t.TempDir()}
 
-	sweepGoplsCache(t.TempDir())
+	sweepGoplsCache(ws)
 
-	if _, err := os.Stat(filepath.Join(tmp, "gopls")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(goplsCacheDir(ws), "gopls")); !os.IsNotExist(err) {
 		t.Errorf("gopls dir was created (stat err = %v)", err)
 	}
 }
@@ -96,9 +75,9 @@ func TestSweepCacheOnceRunsOncePerLanguage(t *testing.T) {
 	t.Parallel()
 
 	var sweeps atomic.Int32
-	lang := &Language{Name: "go", CacheSweep: func(string) { sweeps.Add(1) }}
+	lang := &Language{Name: "go", CacheSweep: func(Workspace) { sweeps.Add(1) }}
 	for range 3 {
-		lang.sweepCacheOnce("")
+		lang.sweepCacheOnce(Workspace{})
 	}
 
 	waitFor(t, "cache sweep", func() bool { return sweeps.Load() >= 1 })
@@ -106,5 +85,5 @@ func TestSweepCacheOnceRunsOncePerLanguage(t *testing.T) {
 	if got := sweeps.Load(); got != 1 {
 		t.Errorf("sweeps = %d after 3 calls, want 1", got)
 	}
-	(&Language{Name: "none"}).sweepCacheOnce("")
+	(&Language{Name: "none"}).sweepCacheOnce(Workspace{})
 }

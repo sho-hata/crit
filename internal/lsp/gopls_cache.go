@@ -15,21 +15,15 @@ import (
 // is never misread.
 const goplsCacheMaxAge = 5 * 24 * time.Hour
 
+// goplsCacheDir is the GOPLSCACHE crit gives gopls: its default under the
+// user cache dir is unwritable in the sandbox.
+func goplsCacheDir(ws Workspace) string { return filepath.Join(ws.Scratch, "goplscache") }
+
 // sweepGoplsCache deletes gopls cache files older than goplsCacheMaxAge.
 // gopls does this itself, but its GC first runs 5 minutes after start and
-// crit's 3-minute idle shutdown kills the server before that. root is the
-// server's working directory, which a relative GOPLSCACHE is relative to.
-func sweepGoplsCache(root string) {
-	base := os.Getenv("GOPLSCACHE")
-	if base == "" {
-		var err error
-		if base, err = os.UserCacheDir(); err != nil {
-			return
-		}
-	} else if !filepath.IsAbs(base) {
-		base = filepath.Join(root, base)
-	}
-	dir := filepath.Join(base, "gopls")
+// crit's 3-minute idle shutdown kills the server before that.
+func sweepGoplsCache(ws Workspace) {
+	dir := filepath.Join(goplsCacheDir(ws), "gopls")
 	if _, err := os.Stat(dir); err != nil {
 		return
 	}
