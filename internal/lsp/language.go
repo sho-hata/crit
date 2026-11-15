@@ -355,17 +355,30 @@ func goExtraRoots(_ string, run Run) []PeekRoot {
 
 // npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
 // installed globally (the README's install command) and the repo has no
-// local typescript. Machine-wide, so root is ignored.
-func npmGlobalRoots(_ string, run Run) []PeekRoot {
-	out, err := run("npm", "root", "-g")
+// local typescript: the node_modules the server on PATH is installed in.
+// Not `npm root -g`: the npm on PATH can belong to another prefix than the
+// server's, and in the sandbox it cannot read a prefix set in ~/.npmrc.
+// Machine-wide, so root is ignored.
+func npmGlobalRoots(string, Run) []PeekRoot {
+	bin, err := exec.LookPath("typescript-language-server")
 	if err != nil {
 		return nil
 	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" {
+	// npm links the bin into <prefix>/bin on Unix and writes a .cmd shim
+	// beside node_modules on Windows.
+	real, err := filepath.EvalSymlinks(bin)
+	if err != nil {
 		return nil
 	}
-	return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	for dir := filepath.Dir(real); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if filepath.Base(dir) == "node_modules" {
+			return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+		}
+	}
+	if dir := filepath.Join(filepath.Dir(real), "node_modules"); isDir(filepath.Join(dir, "typescript-language-server")) {
+		return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	}
+	return nil
 }
 
 func pathExt(path string) string {
