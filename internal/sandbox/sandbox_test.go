@@ -52,8 +52,8 @@ func TestBuildEnv(t *testing.T) {
 	if got["TMPDIR"] != tmp || got["TMP"] != tmp || got["TEMP"] != tmp {
 		t.Errorf("temp dirs = %q %q %q, want %q", got["TMPDIR"], got["TMP"], got["TEMP"], tmp)
 	}
-	if got["XDG_CACHE_HOME"] != filepath.Join(scratch, "cache") || got["GOTOOLCHAIN"] != "local" {
-		t.Errorf("cache/toolchain = %q %q", got["XDG_CACHE_HOME"], got["GOTOOLCHAIN"])
+	if got["XDG_CACHE_HOME"] != filepath.Join(scratch, "cache") || got["GOTOOLCHAIN"] != "local" || got["GIT_CONFIG_GLOBAL"] != os.DevNull {
+		t.Errorf("cache/toolchain/git = %q %q %q", got["XDG_CACHE_HOME"], got["GOTOOLCHAIN"], got["GIT_CONFIG_GLOBAL"])
 	}
 	if got["GOCACHE"] != filepath.Join(scratch, "gocache") {
 		t.Errorf("Process.Env not appended: GOCACHE = %q", got["GOCACHE"])
@@ -72,7 +72,7 @@ func TestSecretsList(t *testing.T) {
 	got := secrets(home, noEnv)
 	for _, rel := range []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".kube", ".docker", ".config/gh",
-		".git-credentials", ".config/git/credentials",
+		".git-credentials", ".gitconfig", ".config/git",
 		".terraform.d/credentials.tfrc.json", ".terraformrc",
 		".composer/auth.json", ".config/composer/auth.json",
 		".config/pip", ".pip",
@@ -89,7 +89,6 @@ func TestSecretsList(t *testing.T) {
 	}
 }
 
-// A store moved by its environment variable is denied where it now lives.
 func TestSecretsFollowTheEnvironment(t *testing.T) {
 	t.Parallel()
 	base := realTempDir(t)
@@ -106,7 +105,7 @@ func TestSecretsFollowTheEnvironment(t *testing.T) {
 	}
 	got := secrets(home, func(k string) string { return env[k] })
 	for _, want := range []string{
-		at("xdg", "gh"), at("xdg", "git", "credentials"), at("cargo", "credentials.toml"),
+		at("xdg", "gh"), at("xdg", "git"), at("cargo", "credentials.toml"),
 		at("aws", "creds"), at("kube", "a"), at("kube", "b"),
 	} {
 		if !slices.Contains(got, want) {
@@ -122,8 +121,6 @@ func TestSecretsFollowTheEnvironment(t *testing.T) {
 
 func noEnv(string) string { return "" }
 
-// The reviews directory (two levels above the scratch base) joins the deny
-// set, except where denying it would cover the root, the home, or a tree.
 func TestDeniedAddsTheReviewsDir(t *testing.T) {
 	t.Parallel()
 	base := realTempDir(t)
@@ -211,9 +208,8 @@ func TestProfileGolden(t *testing.T) {
 	}
 }
 
-// profile.sb and profile.go agree on the parameters: each one the text reads
-// is passed, and each one passed is read. sandbox-exec refuses an unset one
-// at spawn, which only the macOS job would see.
+// sandbox-exec refuses an unset parameter at spawn, which only the macOS job
+// would see.
 func TestProfileParamsMatch(t *testing.T) {
 	t.Parallel()
 	text, params := profile(policy{
@@ -239,9 +235,6 @@ func TestProfileParamsMatch(t *testing.T) {
 	}
 }
 
-// A secret beneath a tree (a dotfiles repository checked out at $HOME) is
-// denied again right after the tree is allowed, and a deeper allow (the
-// scratch under ~/.crit) still comes after that.
 func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 	t.Parallel()
 	pol := policy{
@@ -263,8 +256,6 @@ func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 	}
 }
 
-// A tree that is itself a listed secret (a review of ~/.password-store) is
-// allowed and not denied again; a secret strictly beneath a tree still is.
 func TestProfileKeepsATreeThatIsASecret(t *testing.T) {
 	t.Parallel()
 	text, _ := profile(policy{
@@ -284,7 +275,6 @@ func TestProfileKeepsATreeThatIsASecret(t *testing.T) {
 	}
 }
 
-// requireBackend skips without a sandbox backend, or fails when CI demands one.
 func requireBackend(t *testing.T) Backend {
 	t.Helper()
 	b := Detect()
@@ -304,6 +294,33 @@ func realTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func TestRealPathFollowsADanglingSymlink(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs symlinks")
+	}
+	base := realTempDir(t)
+	link := func(target, name string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(base, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link(filepath.Join(base, "vault", "ssh"), "abs")
+	link(filepath.Join("vault", "ssh"), "rel")
+	link("abs", "chain")
+	link("loop", "loop")
+	want := filepath.Join(base, "vault", "ssh")
+	for _, name := range []string{"abs", "rel", "chain"} {
+		if got := realPath(filepath.Join(base, name, "id")); got != filepath.Join(want, "id") {
+			t.Errorf("realPath(%s/id) = %s, want %s/id", name, got, want)
+		}
+	}
+	if got := realPath(filepath.Join(base, "loop")); got != filepath.Join(base, "loop") {
+		t.Errorf("realPath(loop) = %s", got)
+	}
 }
 
 func TestOpenRejectsBadPaths(t *testing.T) {
@@ -329,7 +346,6 @@ func TestOpenRejectsBadPaths(t *testing.T) {
 	}
 }
 
-// No home, no secrets to name: refused rather than left readable.
 func TestOpenRefusesWithoutAHome(t *testing.T) {
 	homeVar := "HOME"
 	if runtime.GOOS == "windows" {
@@ -378,8 +394,6 @@ func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 	}
 }
 
-// The process sees the scrubbed environment and the scratch temp dir
-// whether or not a backend exists; Command and Output differ in cwd.
 func TestCommandEnvironmentAndCwd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs sh")
@@ -443,8 +457,6 @@ func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 	}
 }
 
-// What the last process left where tmp/ and cache/ belong (it may write
-// anywhere under its scratch) is replaced, not tripped over.
 func TestCommandReplacesPlantedScratchDirs(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -492,8 +504,6 @@ func TestCommandRefusesAScratchNameWithAPath(t *testing.T) {
 	}
 }
 
-// A self-test that failed is not the absence of a backend: nothing runs
-// until it passes, and the next call tries it again.
 func TestCommandRefusesWhileTheSelfTestFails(t *testing.T) {
 	detectMu.Lock()
 	wasDetected, wasSettled, wasTest := detected, detectSettled, selfTest
@@ -526,8 +536,6 @@ func TestCommandRefusesWhileTheSelfTestFails(t *testing.T) {
 	}
 }
 
-// A file one server wrote into its own scratch does not run from another
-// server's jail either: the scratch base as a whole is exec-denied.
 func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	requireBackend(t)
 	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
@@ -557,9 +565,6 @@ func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	}
 }
 
-// A confined process may write under its scratch but not replace the scratch
-// itself: a symlink there would aim the next spawn's cleanup and write grant
-// elsewhere.
 func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	requireBackend(t)
 	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
@@ -581,7 +586,6 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	if _, err := os.Lstat(ws.Scratch + ".moved"); err == nil {
 		t.Error("scratch renamed away")
 	}
-	// Writes under the scratch still land, in the scratch and not the victim.
 	if _, err := os.Stat(filepath.Join(ws.Scratch, "after")); err != nil {
 		t.Errorf("write under the scratch denied: %v", err)
 	}
@@ -593,8 +597,8 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	}
 }
 
-// TestJailConfinesCanary is the contract: the same script escapes when run
-// plainly (the control) and is contained through the Jail.
+// The contract: the same script escapes when run plainly (the control) and
+// is contained through the Jail.
 func TestJailConfinesCanary(t *testing.T) {
 	b := requireBackend(t)
 	tree := realTempDir(t)

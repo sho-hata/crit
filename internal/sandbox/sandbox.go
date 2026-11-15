@@ -41,12 +41,9 @@ var (
 	selfTest      = detect
 )
 
-// Detect reports the backend after a real self-test: a confined no-op must
-// run. A definitive answer (no sandbox on this OS, no sandbox-exec) is kept
-// for the process.
-// A failed self-test is reported as no backend and tried again on the next
-// call, so one failed fork at startup does not leave the servers unconfined
-// for the daemon's life.
+// Detect reports the backend after a self-test. A failed self-test is
+// reported as no backend and tried again on the next call; any other answer
+// is kept for the process.
 func Detect() Backend {
 	b, _ := backend()
 	return b
@@ -73,8 +70,7 @@ func (t Trees) list() []string {
 	return []string{t.Root, t.DepRoot}
 }
 
-// Workspace is what a language's hooks see: the root the server runs in and
-// the one directory it may write. Only a Jail mints a Scratch.
+// Workspace is the root a server runs in and the one directory it may write.
 type Workspace struct{ Root, Scratch string }
 
 // Process is one program to run. Argv[0] is a bare name resolved on the
@@ -94,8 +90,8 @@ type Jail struct {
 	readDeny    []string
 }
 
-// Open validates the paths (absolute and clean, scratchBase outside the
-// trees) and fixes the read-deny set.
+// Open refuses a path that is not absolute and clean, and a scratchBase
+// under a tree.
 func Open(t Trees, scratchBase string) (*Jail, error) {
 	for _, p := range append(t.list(), scratchBase) {
 		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
@@ -126,11 +122,9 @@ func (j *Jail) Workspace(name string) Workspace {
 	}
 }
 
-// Command returns a confined command for p, with Dir = Root. It mints the scratch directory (0700, tmp/ emptied). It refuses
-// when Argv[0] resolves under a tree, when the policy cannot be built, or
-// when the backend's self-test failed (the next call tries it again).
-// Where the OS has no backend the command runs plainly, with the scrubbed
-// environment.
+// Command returns a confined command for p, with Dir = Root, and empties the
+// scratch's tmp/. Where the OS has no backend the command runs plainly, with
+// the scrubbed environment; while a backend's self-test fails it is refused.
 func (j *Jail) Command(ctx context.Context, name string, p Process) (*exec.Cmd, error) {
 	ws, err := j.mint(name, true)
 	if err != nil {
@@ -267,8 +261,15 @@ func beneath(path, root string) bool {
 
 // realPath resolves symlinks through the deepest ancestor that exists, so
 // a path under a symlinked directory, or a secret not created yet, still
-// names what the kernel will see (/private/var, not /var).
-func realPath(p string) string {
+// names what the kernel will see (/private/var, not /var). A symlink whose
+// target is missing is followed too: the target may appear later (a secret
+// on a volume not mounted yet), and the kernel will see that, not the link.
+func realPath(p string) string { return resolve(p, 0) }
+
+// maxLinks bounds a symlink loop, as the kernel does.
+const maxLinks = 32
+
+func resolve(p string, links int) string {
 	p = filepath.Clean(p)
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r
@@ -277,5 +278,14 @@ func realPath(p string) string {
 	if parent == p {
 		return p
 	}
-	return filepath.Join(realPath(parent), filepath.Base(p))
+	parent = resolve(parent, links)
+	p = filepath.Join(parent, filepath.Base(p))
+	target, err := os.Readlink(p)
+	if err != nil || links >= maxLinks {
+		return p
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(parent, target)
+	}
+	return resolve(target, links+1)
 }

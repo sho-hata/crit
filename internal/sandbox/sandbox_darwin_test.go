@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,8 +29,6 @@ func writeFile(t *testing.T, path, text string, mode os.FileMode) {
 	}
 }
 
-// Credentials moved out of $HOME by an environment variable are as
-// unreadable as at their default place; the control reads them plainly.
 func TestJailDeniesRelocatedSecrets(t *testing.T) {
 	requireBackend(t)
 	t.Setenv("HOME", realTempDir(t))
@@ -56,8 +55,6 @@ func TestJailDeniesRelocatedSecrets(t *testing.T) {
 	}
 }
 
-// Reviewing a directory the secrets list names must not blind the server
-// to the tree it runs on; a secret beneath it stays unreadable.
 func TestJailReadsATreeThatIsASecret(t *testing.T) {
 	requireBackend(t)
 	home := realTempDir(t)
@@ -76,6 +73,65 @@ func TestJailReadsATreeThatIsASecret(t *testing.T) {
 	}
 	if out, err := catUnderJail(t, j, key); err == nil {
 		t.Errorf("secret beneath the tree readable: %q", out)
+	}
+}
+
+// A secret behind a symlink whose target appears after the policy is built
+// (a volume mounted later) is unreadable at the target as well as the link.
+func TestJailDeniesASecretBehindADanglingSymlink(t *testing.T) {
+	requireBackend(t)
+	home := realTempDir(t)
+	t.Setenv("HOME", home)
+	vault := filepath.Join(realTempDir(t), "vault")
+	if err := os.Symlink(filepath.Join(vault, "ssh"), filepath.Join(home, ".ssh")); err != nil {
+		t.Fatal(err)
+	}
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{filepath.Join(vault, "ssh", "id"), filepath.Join(home, ".ssh", "id")} {
+		cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"/bin/cat", p}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(vault, "ssh", "id"), "key\n", 0o600)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Errorf("%s readable under the jail: %q", p, out)
+		}
+		if err := os.RemoveAll(vault); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The reviewer's git config is unreadable, and git still runs without it.
+func TestJailHidesGitConfig(t *testing.T) {
+	requireBackend(t)
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	home := realTempDir(t)
+	t.Setenv("HOME", home)
+	config := filepath.Join(home, ".gitconfig")
+	writeFile(t, config, "[http]\n\textraheader = Authorization: token x\n", 0o600)
+	if out, err := exec.Command(git, "config", "--global", "--list").CombinedOutput(); err != nil || !strings.Contains(string(out), "token x") { //nolint:gosec // control: git reads the config unconfined
+		t.Fatalf("control: git does not read %s unconfined: %v: %s", config, err, out)
+	}
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := catUnderJail(t, j, config); err == nil {
+		t.Errorf("%s readable under the jail: %q", config, out)
+	}
+	cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"git", "config", "--global", "--list"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil || len(out) != 0 {
+		t.Errorf("git under the jail: %v: %q, want it to run and see no config", err, out)
 	}
 }
 
@@ -109,9 +165,7 @@ func TestJailRefusesTreeExecUnderAnotherSpelling(t *testing.T) {
 }
 
 // The canary's exec probes are shebang scripts and never map native code, so
-// this one covers file-map-executable: a dylib from the tree or the scratch
-// does not load, while a loader outside both still runs and loads it
-// unconfined (the control).
+// this one covers file-map-executable.
 func TestJailRefusesNativeCodeFromTheTrees(t *testing.T) {
 	requireBackend(t)
 	cc, err := exec.LookPath("cc")
