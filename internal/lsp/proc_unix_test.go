@@ -125,7 +125,8 @@ func TestContextCancelLetsTheServerExit(t *testing.T) {
 	cancel()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if raw, err := os.ReadFile(marker); err == nil {
+		// The helper creates the marker before it writes to it.
+		if raw, err := os.ReadFile(marker); err == nil && len(raw) > 0 {
 			if string(raw) != "eof" {
 				t.Fatalf("marker = %q, want the EOF exit path", raw)
 			}
