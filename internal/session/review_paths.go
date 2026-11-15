@@ -22,6 +22,11 @@ func ReviewPathsFor(identity string) ReviewPaths {
 	}
 }
 
+// LSPScratch is where the sandbox lets the review's language servers write.
+// Derived on demand: ReviewPathsFor runs on every save and load, which
+// never need it.
+func (p ReviewPaths) LSPScratch() string { return filepath.Join(p.Folder, "lsp-scratch") }
+
 // reviewLockPath is the review write lock file for a review identity. It is
 // not a ReviewPaths field: ReviewPathsFor runs on every review save and load,
 // and only the lock code needs this path.

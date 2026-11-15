@@ -13,10 +13,14 @@ package lsp
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sho-hata/crit/internal/sandbox"
 )
 
 type realPos struct{ line, char int }
@@ -168,8 +172,34 @@ func requireRealLanguage(tb testing.TB, lang *Language) {
 		tb.Skip("set CRIT_LSP_REAL=1 to run against the real language servers")
 	}
 	if !lang.Available() {
-		tb.Fatalf("%s not on PATH", lang.Command[0])
+		tb.Fatalf("%s: %s not on PATH", lang.Name, lang.Command[0])
 	}
+	if os.Getenv("CRIT_REQUIRE_SANDBOX") != "" && sandbox.Detect().Name == "" {
+		tb.Fatalf("CRIT_REQUIRE_SANDBOX is set and there is no backend: %s", sandbox.Detect().Reason)
+	}
+}
+
+// snapshotTree is every file under dir with its content: the servers run
+// confined, and the tree under review must come out byte-identical.
+func snapshotTree(tb testing.TB, dir string) map[string]string {
+	tb.Helper()
+	files := make(map[string]string)
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		files[filepath.ToSlash(rel)] = string(data)
+		return nil
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return files
 }
 
 func TestRealContract(t *testing.T) {
@@ -184,9 +214,11 @@ func TestRealContract(t *testing.T) {
 			requireRealLanguage(t, lang)
 			dir := writeRealCase(t, c)
 			file := filepath.Join(dir, c.file)
+			before := snapshotTree(t, dir)
 
-			m := NewManager(dir, "", context.Background())
-			defer m.Shutdown()
+			m := NewManager(dir, "", t.TempDir(), context.Background())
+			t.Cleanup(m.Shutdown)
+			t.Logf("sandbox: %+v", sandbox.Detect())
 
 			hover, err := m.Hover(file, c.use.line, c.use.char)
 			if err != nil {
@@ -221,6 +253,12 @@ func TestRealContract(t *testing.T) {
 			if err != nil || hover != "" {
 				t.Errorf("Hover(blank) = %q, %v; want empty and no error", hover, err)
 			}
+
+			// Stopped before the comparison: a live server could still write.
+			m.Shutdown()
+			if after := snapshotTree(t, dir); !maps.Equal(after, before) {
+				t.Errorf("the server changed the tree under review:\nbefore %v\nafter  %v", slices.Sorted(maps.Keys(before)), slices.Sorted(maps.Keys(after)))
+			}
 		})
 	}
 }
@@ -239,9 +277,19 @@ func BenchmarkRealLSP(b *testing.B) {
 			dir := writeRealCase(b, c)
 			file := filepath.Join(dir, c.file)
 
+			// The server's own on-disk cache (gopls's file cache, intelephense's
+			// index) lives in the scratch, so one unmeasured start fills it and
+			// every start below pays the spawn and the handshake, not the index.
+			scratch := b.TempDir()
+			warm := NewManager(dir, "", scratch, context.Background())
+			if _, err := warm.Hover(file, c.use.line, c.use.char); err != nil {
+				b.Fatalf("cache-filling Hover: %v", err)
+			}
+			warm.Shutdown()
+
 			b.Run("cold", func(b *testing.B) {
 				for b.Loop() {
-					m := NewManager(dir, "", context.Background())
+					m := NewManager(dir, "", scratch, context.Background())
 					if _, err := m.Hover(file, c.use.line, c.use.char); err != nil {
 						b.Fatalf("Hover: %v", err)
 					}
@@ -251,7 +299,7 @@ func BenchmarkRealLSP(b *testing.B) {
 				}
 			})
 
-			m := NewManager(dir, "", context.Background())
+			m := NewManager(dir, "", scratch, context.Background())
 			defer m.Shutdown()
 			if _, err := m.Hover(file, c.use.line, c.use.char); err != nil {
 				b.Fatalf("warm-up Hover: %v", err)

@@ -9,7 +9,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sho-hata/crit/internal/sandbox"
 )
+
+// Workspace is what a server's hooks see: the root it runs in and the one
+// directory it may write (sandbox.Workspace).
+type Workspace = sandbox.Workspace
+
+// Run executes a helper command confined, with cwd in the language's
+// scratch, and returns its stdout.
+type Run func(argv ...string) ([]byte, error)
 
 // PeekRoot is one directory tree outside the workspace root that definition
 // and reference peeks are allowed to read, with the display prefix the UI
@@ -40,9 +50,10 @@ type Language struct {
 	// source and project files the server needs, not the rest of the tree.
 	SparsePatterns []string
 	// InitOptions returns the initializationOptions for a server rooted at
-	// root whose first request is about absPath, or nil. Runs on the request
-	// path (once per server spawn) — keep it filesystem-cheap.
-	InitOptions func(root, absPath string) map[string]any
+	// ws.Root whose first request is about absPath, or nil. ws.Scratch is
+	// where a server's own writes (an index, a cache) must be pointed. Runs
+	// on the request path (once per server spawn) — keep it filesystem-cheap.
+	InitOptions func(ws Workspace, absPath string) map[string]any
 	// ConfigSettings answers workspace/configuration pulls, keyed by section
 	// name ("python"). Some servers take settings only this way (pyright
 	// ignores initializationOptions), hence separate from InitOptions. A nil
@@ -90,24 +101,29 @@ type Language struct {
 	// TypeScript). root is the tree the language's dependencies live in — the
 	// workspace root, or the working tree backing it under range/PR focus —
 	// for languages whose roots depend on the project rather than the
-	// machine. May run external commands; the Manager caches successful
-	// results per root. A nil result means the lookup failed and may be
-	// retried.
-	ExtraRoots func(root string) []PeekRoot
+	// machine. External commands go through run, which confines them with
+	// cwd outside the tree; the Manager caches successful results per root.
+	// A nil result means the lookup failed and may be retried.
+	ExtraRoots func(root string, run Run) []PeekRoot
+	// Args appends per-workspace argv (a data directory under ws.Scratch).
+	Args func(ws Workspace) []string
+	// Env adds server environment, used to steer a tool's writes into
+	// ws.Scratch (GOCACHE). It may not set PATH, HOME or the temp dirs.
+	Env func(ws Workspace) []string
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
 	// per crit process in the background after the server first spawns, with
-	// the server's working directory; nil for none.
-	CacheSweep func(root string)
+	// the server's workspace; nil for none.
+	CacheSweep func(ws Workspace)
 
 	sweepOnce sync.Once
 }
 
 // sweepCacheOnce starts CacheSweep in the background the first time it is
 // called in this process.
-func (l *Language) sweepCacheOnce(root string) {
+func (l *Language) sweepCacheOnce(ws Workspace) {
 	if l.CacheSweep != nil {
-		l.sweepOnce.Do(func() { go l.CacheSweep(root) })
+		l.sweepOnce.Do(func() { go l.CacheSweep(ws) })
 	}
 }
 
@@ -125,6 +141,8 @@ var languages = []*Language{
 		SparsePatterns: []string{
 			"*.go", "go.mod", "go.sum", "go.work", "go.work.sum",
 		},
+		// gopls only ever runs the go toolchain, never a program from the tree.
+		Env:        goEnv,
 		ExtraRoots: goExtraRoots,
 		CacheSweep: sweepGoplsCache,
 	},
@@ -148,7 +166,11 @@ var languages = []*Language{
 			"*.js", "*.mjs", "*.cjs", "*.jsx",
 			"package.json", "tsconfig*.json", "jsconfig.json",
 		},
+		// tsserver loads the repository's own node_modules/typescript (see
+		// tsInitOptions) and its compilerOptions.plugins: tree code, which is
+		// why a PR review offers no server without the sandbox.
 		InitOptions: tsInitOptions,
+		Env:         nodeEnv,
 		ExtraRoots:  npmGlobalRoots,
 	},
 	{
@@ -158,7 +180,9 @@ var languages = []*Language{
 		SparsePatterns: []string{
 			"*.py", "*.pyi", "pyproject.toml", "pyrightconfig.json",
 		},
+		// Static: pyright is never given an interpreter (pyConfigSettings).
 		ConfigSettings:  pyConfigSettings,
+		Env:             nodeEnv,
 		LocalEnv:        true,
 		SkipReadyWait:   true,
 		OpenSessionFile: pyOpenSessionFile,
@@ -169,9 +193,10 @@ var languages = []*Language{
 		Command:        []string{"terraform-ls", "serve"},
 		IDByExt:        map[string]string{"tf": "terraform", "tfvars": "terraform-vars"},
 		SparsePatterns: []string{"*.tf", "*.tfvars"},
-		InitOptions:    tfInitOptions,
-		NoResult:       tfNoResult,
-		SkipReadyWait:  true,
+		// Static once terraform.path points at /dev/null (tfInitOptions).
+		InitOptions:   tfInitOptions,
+		NoResult:      tfNoResult,
+		SkipReadyWait: true,
 	},
 	{
 		Name:    "php",
@@ -180,10 +205,31 @@ var languages = []*Language{
 		SparsePatterns: []string{
 			"*.php", "*.phtml", "composer.json", "composer.lock",
 		},
+		// Static: intelephense runs neither PHP nor Composer.
+		InitOptions:    phpInitOptions,
 		ConfigSettings: phpConfigSettings,
+		Env:            nodeEnv,
 		LocalEnv:       true,
 		ExtraRoots:     phpExtraRoots,
 	},
+}
+
+// goEnv keeps gopls's caches in scratch. The shared GOCACHE is the
+// reviewer's own: a confined server may write only where nothing but crit
+// reads, or a poisoned entry would run in their next unconfined build.
+func goEnv(ws Workspace) []string {
+	return []string{
+		"GOCACHE=" + filepath.Join(ws.Scratch, "gocache"),
+		"GOPLSCACHE=" + goplsCacheDir(ws),
+	}
+}
+
+// nodeEnv keeps node's module compile cache, which tsserver (TypeScript
+// 5.7+) turns on under os.tmpdir(), in the scratch's cache rather than its
+// tmp, which every start empties; a cold cache costs the next start the
+// compile of the whole server (about 75 ms for tsserver, measured).
+func nodeEnv(ws Workspace) []string {
+	return []string{"NODE_COMPILE_CACHE=" + filepath.Join(ws.Scratch, "cache", "node-compile-cache")}
 }
 
 // tsInitOptions pins the nearest TypeScript install. typescript-language-server
@@ -192,8 +238,12 @@ var languages = []*Language{
 // belongs to the owning package (frontend/node_modules/typescript), not the
 // repo root crit anchors the workspace to. nil leaves the server's own
 // resolution in charge (single-package repo, global typescript).
-func tsInitOptions(root, absPath string) map[string]any {
-	tsserver := findTSServer(root, absPath)
+//
+// Pin or no pin, the server loads the repository's own typescript package
+// when one is installed: tree code, which is why the language requires a
+// sandbox backend.
+func tsInitOptions(ws Workspace, absPath string) map[string]any {
+	tsserver := findTSServer(ws.Root, absPath)
 	if tsserver == "" {
 		return nil
 	}
@@ -284,8 +334,8 @@ func walkUpWithin(root, absPath string, found func(dir string) bool) bool {
 }
 
 // goExtraRoots ignores root: GOROOT and GOMODCACHE are machine-wide.
-func goExtraRoots(_ string) []PeekRoot {
-	out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
+func goExtraRoots(_ string, run Run) []PeekRoot {
+	out, err := run("go", "env", "GOROOT", "GOMODCACHE")
 	if err != nil {
 		return nil
 	}
@@ -305,17 +355,30 @@ func goExtraRoots(_ string) []PeekRoot {
 
 // npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
 // installed globally (the README's install command) and the repo has no
-// local typescript. Machine-wide, so root is ignored.
-func npmGlobalRoots(_ string) []PeekRoot {
-	out, err := exec.Command("npm", "root", "-g").Output()
+// local typescript: the node_modules the server on PATH is installed in.
+// Not `npm root -g`: the npm on PATH can belong to another prefix than the
+// server's, and in the sandbox it cannot read a prefix set in ~/.npmrc.
+// Machine-wide, so root is ignored.
+func npmGlobalRoots(string, Run) []PeekRoot {
+	bin, err := exec.LookPath("typescript-language-server")
 	if err != nil {
 		return nil
 	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" {
+	// npm links the bin into <prefix>/bin on Unix and writes a .cmd shim
+	// beside node_modules on Windows.
+	real, err := filepath.EvalSymlinks(bin)
+	if err != nil {
 		return nil
 	}
-	return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	for dir := filepath.Dir(real); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if filepath.Base(dir) == "node_modules" {
+			return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+		}
+	}
+	if dir := filepath.Join(filepath.Dir(real), "node_modules"); isDir(filepath.Join(dir, "typescript-language-server")) {
+		return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	}
+	return nil
 }
 
 func pathExt(path string) string {
@@ -359,6 +422,18 @@ type availableEntry struct {
 // Available reports whether the language's server binary is on PATH.
 func (l *Language) Available() bool {
 	return l.availableAt(time.Now())
+}
+
+// SandboxStatus is the one line `crit check` prints about confinement.
+func SandboxStatus() string {
+	b := sandbox.Detect()
+	if b.Name != "" {
+		if b.Reason != "" {
+			return b.Name + " (" + b.Reason + ")"
+		}
+		return b.Name
+	}
+	return "none (" + b.Reason + "); servers run unconfined for working-tree and --range reviews and are not offered for --pr reviews"
 }
 
 func (l *Language) availableAt(now time.Time) bool {
