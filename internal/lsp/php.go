@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+// phpInitOptions keeps intelephense's index under scratch. Its defaults are
+// a directory under os.tmpdir() and ~/.config/intelephense; the first
+// follows TMPDIR into scratch anyway, the second is unwritable in the
+// sandbox, and both are named here so the server never looks elsewhere.
+func phpInitOptions(ws Workspace, _ string) map[string]any {
+	return map[string]any{
+		"storagePath":       filepath.Join(ws.Scratch, "storage"),
+		"globalStoragePath": filepath.Join(ws.Scratch, "global-storage"),
+	}
+}
+
 // phpConfigSettings points intelephense at the nearest Composer vendor dir.
 //
 // intelephense indexes the workspace only, so it already finds a vendor/ under
