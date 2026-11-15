@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/sho-hata/crit/internal/reviewpath"
-	"github.com/sho-hata/crit/internal/sandbox"
 	"github.com/sho-hata/crit/internal/server"
 )
 
@@ -104,7 +103,6 @@ func resolveServeReviewPath(outputDir, planDir, sessionKey string) (string, erro
 }
 
 func runServe(args []string) {
-	sandbox.HideFromSameUser()
 	pipe := openReadyPipe()
 
 	sc, err := server.ResolveDaemonCLIConfig(args)

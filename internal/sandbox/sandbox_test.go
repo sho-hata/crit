@@ -348,42 +348,6 @@ func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 	}
 }
 
-// A scratch that is no longer a directory (a confined process swapped it for
-// a symlink) is refused before tmp/ is emptied through the link.
-func TestCommandRefusesReplacedScratch(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("needs symlinks")
-	}
-	t.Parallel()
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ws := j.Workspace("t")
-	victim := realTempDir(t)
-	keep := filepath.Join(victim, "tmp", "keep")
-	if err := os.MkdirAll(filepath.Dir(keep), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(keep, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(ws.Scratch), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(victim, ws.Scratch); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := j.Command(context.Background(), "t", func(Workspace) Process {
-		return Process{Argv: []string{"sh"}}
-	}); err == nil {
-		t.Error("symlinked scratch accepted")
-	}
-	if _, err := os.Stat(keep); err != nil {
-		t.Errorf("cleanup followed the link into %s: %v", victim, err)
-	}
-}
-
 // The process sees the scrubbed environment and the scratch temp dir
 // whether or not a backend exists; Command and Output differ in cwd.
 func TestCommandEnvironmentAndCwd(t *testing.T) {

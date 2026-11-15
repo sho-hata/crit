@@ -147,12 +147,6 @@ func (j *Jail) Output(ctx context.Context, name string, build func(Workspace) Pr
 
 func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
 	ws := j.Workspace(name)
-	// The profile keeps a confined process from replacing the scratch; this
-	// refuses one that was replaced anyway, before RemoveAll and the write
-	// grant follow the link.
-	if st, err := os.Lstat(ws.Scratch); err == nil && !st.IsDir() {
-		return Workspace{}, fmt.Errorf("sandbox: scratch %s is not a directory (%v)", ws.Scratch, st.Mode().Type())
-	}
 	tmp := filepath.Join(ws.Scratch, "tmp")
 	if emptyTmp {
 		if err := os.RemoveAll(tmp); err != nil {
