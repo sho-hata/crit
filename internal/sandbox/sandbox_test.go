@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -159,41 +160,30 @@ func (e fakeEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
 func TestProfileGolden(t *testing.T) {
 	t.Parallel()
 	pol := policy{
-		readDeny:  []string{"/Users/u/.ssh", "/Users/u/.crit"},
-		readAllow: []string{"/Users/u/.crit/reviews/k/lsp-worktree", "/Users/u/.crit/reviews/k/lsp-scratch/go/abc"},
-		execDeny:  []string{"/Users/u/.crit/reviews/k/lsp-worktree", "/Users/u/repo"},
-		scratch:   "/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
+		readDeny:    []string{"/Users/u/.ssh", "/Users/u/.crit"},
+		trees:       []string{"/Users/u/.crit/reviews/k/lsp-worktree", "/Users/u/repo"},
+		scratchBase: "/Users/u/.crit/reviews/k/lsp-scratch",
+		scratch:     "/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
 	}
 	text, params := profile(pol)
 	wantParams := []string{
-		"SCRATCH_0=/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
-		"EXEC_DENY_0=/Users/u/.crit/reviews/k/lsp-worktree", "EXEC_DENY_1=/Users/u/repo",
+		"ROOT=/Users/u/.crit/reviews/k/lsp-worktree", "DEP_ROOT=/Users/u/repo",
+		"SCRATCH_BASE=/Users/u/.crit/reviews/k/lsp-scratch", "SCRATCH=/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
 		"READ_DENY_0=/Users/u/.ssh", "READ_DENY_1=/Users/u/.crit",
-		"READ_ALLOW_0=/Users/u/.crit/reviews/k/lsp-worktree", "READ_ALLOW_1=/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
+		"READ_ALLOW_0=/Users/u/repo", "READ_ALLOW_1=/Users/u/.crit/reviews/k/lsp-worktree",
+		"READ_ALLOW_2=/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
 	}
 	if !slices.Equal(params, wantParams) {
 		t.Errorf("params = %q\nwant %q", params, wantParams)
 	}
-	wantHead := `(version 1)
-(deny default)
-(allow process-fork)
-(allow process-exec)
-(deny process-exec (subpath (param "EXEC_DENY_0")) (subpath (param "EXEC_DENY_1")))
-(allow file-map-executable)
-(deny file-map-executable (subpath (param "EXEC_DENY_0")) (subpath (param "EXEC_DENY_1")))
-(allow signal (target same-sandbox))
-(allow file-read*)
-(deny file-read* (subpath (param "READ_DENY_0")) (subpath (param "READ_DENY_1")))
+	wantReads := `(deny file-read* (subpath (param "READ_DENY_0")) (subpath (param "READ_DENY_1")))
 (allow file-read* (subpath (param "READ_ALLOW_0")))
 (allow file-read* (subpath (param "READ_ALLOW_1")))
+(allow file-read* (subpath (param "READ_ALLOW_2")))
 (allow file-read-metadata (vnode-type DIRECTORY))
-(allow file-write* (subpath (param "SCRATCH_0")))
-(deny file-write* (literal (param "SCRATCH_0")))
-(allow file-write-data (literal "/dev/null") (literal "/dev/zero"))
-(allow file-ioctl (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/dtracehelper"))
 `
-	if !strings.HasPrefix(text, wantHead) {
-		t.Errorf("profile head =\n%s\nwant\n%s", text, wantHead)
+	if text != baseProfile+wantReads {
+		t.Errorf("profile = profile.sb +\n%s\nwant profile.sb +\n%s", strings.TrimPrefix(text, baseProfile), wantReads)
 	}
 	for _, denied := range []string{"network", "mach-lookup (global-name \"com.apple.coreservices", "default"} {
 		if strings.Contains(text, "(allow "+denied) {
@@ -210,16 +200,44 @@ func TestProfileGolden(t *testing.T) {
 	}
 }
 
+// profile.sb and profile.go agree on the parameters: each one the text reads
+// is passed, and each one passed is read. sandbox-exec refuses an unset one
+// at spawn, which only the macOS job would see.
+func TestProfileParamsMatch(t *testing.T) {
+	t.Parallel()
+	text, params := profile(policy{
+		readDeny:    []string{"/h/.ssh"},
+		trees:       []string{"/r"},
+		scratchBase: "/s",
+		scratch:     "/s/x",
+	})
+	var used []string
+	for _, m := range regexp.MustCompile(`\(param "([A-Z_0-9]+)"\)`).FindAllStringSubmatch(text, -1) {
+		used = append(used, m[1])
+	}
+	var passed []string
+	for _, kv := range params {
+		k, _, _ := strings.Cut(kv, "=")
+		passed = append(passed, k)
+	}
+	slices.Sort(used)
+	used = slices.Compact(used)
+	slices.Sort(passed)
+	if !slices.Equal(used, passed) {
+		t.Errorf("profile reads %q, profile() passes %q", used, passed)
+	}
+}
+
 // A secret beneath a tree (a dotfiles repository checked out at $HOME) is
 // denied again right after the tree is allowed, and a deeper allow (the
 // scratch under ~/.crit) still comes after that.
 func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 	t.Parallel()
 	pol := policy{
-		readDeny:  []string{"/Users/u/.ssh", "/Users/u/.crit", "/Users/u/.crit/reviews"},
-		readAllow: []string{"/Users/u/.crit/reviews/k/lsp-worktree", "/Users/u", "/Users/u/.crit/reviews/k/lsp-scratch/go/abc"},
-		execDeny:  []string{"/Users/u/.crit/reviews/k/lsp-worktree", "/Users/u"},
-		scratch:   "/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
+		readDeny:    []string{"/Users/u/.ssh", "/Users/u/.crit", "/Users/u/.crit/reviews"},
+		trees:       []string{"/Users/u/.crit/reviews/k/lsp-worktree", "/Users/u"},
+		scratchBase: "/Users/u/.crit/reviews/k/lsp-scratch",
+		scratch:     "/Users/u/.crit/reviews/k/lsp-scratch/go/abc",
 	}
 	text, _ := profile(pol)
 	want := `(deny file-read* (subpath (param "READ_DENY_0")) (subpath (param "READ_DENY_1")) (subpath (param "READ_DENY_2")))
@@ -229,8 +247,8 @@ func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 (allow file-read* (subpath (param "READ_ALLOW_2")))
 (allow file-read-metadata (vnode-type DIRECTORY))
 `
-	if !strings.Contains(text, want) {
-		t.Errorf("profile =\n%s\nwant it to contain\n%s", text, want)
+	if !strings.HasSuffix(text, want) {
+		t.Errorf("profile =\n%s\nwant it to end with\n%s", text, want)
 	}
 }
 

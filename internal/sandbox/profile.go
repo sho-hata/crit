@@ -2,37 +2,38 @@ package sandbox
 
 import (
 	"cmp"
+	_ "embed"
 	"fmt"
 	"slices"
 	"strings"
 )
 
-// profile renders a policy as a seatbelt profile. Paths travel as -D
-// parameters, never spliced into the text. Rules are last-match-wins: the
-// secrets are denied, then each readAllow entry is re-allowed, shallowest
-// first, and the secrets beneath it denied again, so a tree under ~/.crit
+// baseProfile is every rule but the reads; see the file for what it allows.
+//
+//go:embed profile.sb
+var baseProfile string
+
+// profile renders a policy as a seatbelt profile: profile.sb, then the read
+// rules, which depend on how the paths nest and so are generated. The secrets
+// are denied, then each tree and the scratch are re-allowed, shallowest
+// first, with the secrets beneath each denied again, so a tree under ~/.crit
 // reads while a secret under a tree (a dotfiles repository at $HOME) does
-// not, and the scratch under ~/.crit still reads after that. Execution and
-// native-code mapping are denied under every execDeny entry. Metadata
-// is readable for directories only: path walks need it, file sizes under a
-// secret are nobody's business. The mach-lookup list is what the measured
-// servers (gopls, typescript-language-server, pyright, intelephense,
-// terraform-ls) need to answer a hover; everything else is denied.
+// not, and the scratch under ~/.crit still reads after that. Metadata is
+// readable for directories only: path walks need it, file sizes under a
+// secret are nobody's business.
 func profile(p policy) (text string, params []string) {
+	params = []string{
+		"ROOT=" + p.trees[0],
+		"DEP_ROOT=" + p.trees[len(p.trees)-1],
+		"SCRATCH_BASE=" + p.scratchBase,
+		"SCRATCH=" + p.scratch,
+	}
 	param := func(key, path string) string {
 		params = append(params, key+"="+path)
 		return fmt.Sprintf("(subpath (param %q))", key)
 	}
 	var b strings.Builder
-	b.WriteString("(version 1)\n(deny default)\n(allow process-fork)\n(allow process-exec)\n")
-	scratch := param("SCRATCH_0", p.scratch)
-	noExec := []string{}
-	for i, path := range p.execDeny {
-		noExec = append(noExec, param(fmt.Sprintf("EXEC_DENY_%d", i), path))
-	}
-	fmt.Fprintf(&b, "(deny process-exec %s)\n(allow file-map-executable)\n(deny file-map-executable %s)\n",
-		strings.Join(noExec, " "), strings.Join(noExec, " "))
-	b.WriteString("(allow signal (target same-sandbox))\n(allow file-read*)\n")
+	b.WriteString(baseProfile)
 	denyFilter := make(map[string]string, len(p.readDeny))
 	var denies []string
 	for i, path := range p.readDeny {
@@ -42,7 +43,7 @@ func profile(p policy) (text string, params []string) {
 	if len(denies) > 0 {
 		fmt.Fprintf(&b, "(deny file-read* %s)\n", strings.Join(denies, " "))
 	}
-	allows := slices.Clone(p.readAllow)
+	allows := append(slices.Clone(p.trees), p.scratch)
 	slices.SortStableFunc(allows, func(a, b string) int { return cmp.Compare(depth(a), depth(b)) })
 	for i, root := range allows {
 		fmt.Fprintf(&b, "(allow file-read* %s)\n", param(fmt.Sprintf("READ_ALLOW_%d", i), root))
@@ -57,25 +58,6 @@ func profile(p policy) (text string, params []string) {
 		}
 	}
 	b.WriteString("(allow file-read-metadata (vnode-type DIRECTORY))\n")
-	// Everything under the scratch, not the scratch itself: a process that
-	// could replace it with a symlink would steer the next spawn's cleanup
-	// and write grant to wherever the link points.
-	fmt.Fprintf(&b, "(allow file-write* %s)\n(deny file-write* (literal (param \"SCRATCH_0\")))\n", scratch)
-	b.WriteString(`(allow file-write-data (literal "/dev/null") (literal "/dev/zero"))
-(allow file-ioctl (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/dtracehelper"))
-(allow sysctl-read)
-(allow ipc-posix-shm)
-(allow ipc-posix-sem)
-(allow user-preference-read)
-(allow iokit-get-properties)
-(allow mach-lookup
-  (global-name "com.apple.logd")
-  (global-name "com.apple.system.logger")
-  (global-name "com.apple.system.notification_center")
-  (global-name "com.apple.system.opendirectoryd.libinfo")
-  (global-name "com.apple.system.opendirectoryd.membership")
-  (global-name "com.apple.FSEvents"))
-`)
 	return b.String(), params
 }
 

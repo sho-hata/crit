@@ -22,10 +22,10 @@ func detect() (Backend, bool) {
 		return Backend{Reason: err.Error()}, true
 	}
 	pol := policy{
-		readAllow: []string{"/nonexistent"},
-		execDeny:  []string{"/nonexistent"},
-		scratch:   os.TempDir(),
-		argv:      []string{"/usr/bin/true"},
+		trees:       []string{"/nonexistent"},
+		scratchBase: "/nonexistent",
+		scratch:     os.TempDir(),
+		argv:        []string{"/usr/bin/true"},
 	}
 	// A hung sandbox-exec must not hold detectMu forever: a timeout is a
 	// failed self-test, tried again on the next call.

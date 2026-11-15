@@ -12,13 +12,13 @@ import (
 // policy is the one description of what a confined process may do. Each
 // backend renders it and adds nothing of its own.
 type policy struct {
-	readDeny  []string // secrets: unreadable
-	readAllow []string // readable even inside readDeny: Root, DepRoot, scratch
-	execDeny  []string // Root, DepRoot and the scratch base: never executed or mapped executable
-	scratch   string   // the only writable directory (besides /dev/null and friends)
-	env       []string
-	argv      []string // argv[0] absolute, outside the trees
-	dir       string
+	readDeny    []string // secrets: unreadable, even inside a tree
+	trees       []string // Root, then DepRoot if any: readable, never executed or mapped executable
+	scratchBase string   // every server's scratch: never executed or mapped executable
+	scratch     string   // the only writable directory (besides /dev/null and friends)
+	env         []string
+	argv        []string // argv[0] absolute, outside the trees
+	dir         string
 }
 
 func plan(t Trees, scratchBase, scratch, dir string, p Process, readDeny, environ []string) (policy, error) {
@@ -36,11 +36,14 @@ func plan(t Trees, scratchBase, scratch, dir string, p Process, readDeny, enviro
 	if err != nil {
 		return policy{}, err
 	}
+	// The whole scratch base, not just this process's scratch: a file one
+	// server wrote into its own scratch must not run from another's.
 	pol := policy{
-		scratch: realPath(scratch),
-		env:     env,
-		argv:    append([]string{bin}, p.Argv[1:]...),
-		dir:     dir,
+		scratchBase: realPath(scratchBase),
+		scratch:     realPath(scratch),
+		env:         env,
+		argv:        append([]string{bin}, p.Argv[1:]...),
+		dir:         dir,
 	}
 	// Every entry, whether or not it exists yet: a secret created after the
 	// spawn (the first `aws configure`) must stay unreadable to a server
@@ -49,13 +52,8 @@ func plan(t Trees, scratchBase, scratch, dir string, p Process, readDeny, enviro
 		pol.readDeny = append(pol.readDeny, realPath(s))
 	}
 	for _, tree := range t.list() {
-		pol.readAllow = append(pol.readAllow, realPath(tree))
-		pol.execDeny = append(pol.execDeny, realPath(tree))
+		pol.trees = append(pol.trees, realPath(tree))
 	}
-	// The whole scratch base, not just this process's scratch: a file one
-	// server wrote into its own scratch must not run from another's.
-	pol.execDeny = append(pol.execDeny, realPath(scratchBase))
-	pol.readAllow = append(pol.readAllow, pol.scratch)
 	return pol, nil
 }
 
