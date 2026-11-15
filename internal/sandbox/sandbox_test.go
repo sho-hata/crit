@@ -312,8 +312,17 @@ func TestRealPathFollowsADanglingSymlink(t *testing.T) {
 	link(filepath.Join("vault", "ssh"), "rel")
 	link("abs", "chain")
 	link("loop", "loop")
+	// pivot/.. is vault, not links: the ".." applies after pivot resolves.
+	if err := os.MkdirAll(filepath.Join(base, "vault", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "links"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link(filepath.Join(base, "vault", "sub"), filepath.Join("links", "pivot"))
+	link(filepath.Join(base, "links", "pivot")+"/../ssh", "dotdot")
 	want := filepath.Join(base, "vault", "ssh")
-	for _, name := range []string{"abs", "rel", "chain"} {
+	for _, name := range []string{"abs", "rel", "chain", "dotdot"} {
 		if got := realPath(filepath.Join(base, name, "id")); got != filepath.Join(want, "id") {
 			t.Errorf("realPath(%s/id) = %s, want %s/id", name, got, want)
 		}

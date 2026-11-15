@@ -264,28 +264,40 @@ func beneath(path, root string) bool {
 // names what the kernel will see (/private/var, not /var). A symlink whose
 // target is missing is followed too: the target may appear later (a secret
 // on a volume not mounted yet), and the kernel will see that, not the link.
-func realPath(p string) string { return resolve(p, 0) }
-
-// maxLinks bounds a symlink loop, as the kernel does.
-const maxLinks = 32
-
-func resolve(p string, links int) string {
+func realPath(p string) string {
 	p = filepath.Clean(p)
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r
 	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p
+	// Component by component, as the kernel walks: a ".." in a link's
+	// target applies to what the components before it resolve to, so the
+	// target is never cleaned first.
+	const maxLinks = 32
+	sep := string(filepath.Separator)
+	vol := filepath.VolumeName(p)
+	dir, rest := vol+sep, strings.Split(p[len(vol):], sep)
+	for links := 0; len(rest) > 0; {
+		c := rest[0]
+		rest = rest[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			dir = filepath.Dir(dir)
+			continue
+		}
+		next := filepath.Join(dir, c)
+		target, err := os.Readlink(next)
+		if err != nil || links >= maxLinks {
+			dir = next
+			continue
+		}
+		links++
+		if filepath.IsAbs(target) {
+			vol = filepath.VolumeName(target)
+			dir, target = vol+sep, target[len(vol):]
+		}
+		rest = append(strings.Split(filepath.FromSlash(target), sep), rest...)
 	}
-	parent = resolve(parent, links)
-	p = filepath.Join(parent, filepath.Base(p))
-	target, err := os.Readlink(p)
-	if err != nil || links >= maxLinks {
-		return p
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(parent, target)
-	}
-	return resolve(target, links+1)
+	return dir
 }
