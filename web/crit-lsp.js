@@ -1097,8 +1097,17 @@
 
   // lsp_extensions follows the focus: the server offers no language for a
   // review it cannot run one on. An empty list switches every lookup off.
+  // What is pending or showing was asked under the previous focus: an
+  // armed hover would still send its request, and a definition in flight
+  // would jump to a location in files the page no longer lists.
   function setExtensions(extensions) {
-    if (st) st.extRe = makeExtensionMatcher(extensions);
+    if (!st) return;
+    st.extRe = makeExtensionMatcher(extensions);
+    clearTimeout(st.hoverTimer);
+    hideTooltip();
+    hidePeek();
+    hideRefs();
+    st.defSeq++;
   }
 
   const api = {
