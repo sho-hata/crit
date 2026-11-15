@@ -169,7 +169,11 @@ var languages = []*Language{
 			"*.js", "*.mjs", "*.cjs", "*.jsx",
 			"package.json", "tsconfig*.json", "jsconfig.json",
 		},
+		// tsserver loads the repository's own node_modules/typescript (see
+		// tsInitOptions) and its compilerOptions.plugins: tree code, which is
+		// why a PR review offers no server without the sandbox.
 		InitOptions: tsInitOptions,
+		Env:         nodeEnv,
 		ExtraRoots:  npmGlobalRoots,
 	},
 	{
@@ -218,12 +222,24 @@ func goEnv(ws Workspace) []string {
 	}
 }
 
+// nodeEnv keeps node's module compile cache, which tsserver (TypeScript
+// 5.7+) turns on under os.tmpdir(), in the scratch's cache rather than its
+// tmp, which every start empties; a cold cache costs the next start the
+// compile of the whole server (about 75 ms for tsserver, measured).
+func nodeEnv(ws Workspace) []string {
+	return []string{"NODE_COMPILE_CACHE=" + filepath.Join(ws.Scratch, "cache", "node-compile-cache")}
+}
+
 // tsInitOptions pins the nearest TypeScript install. typescript-language-server
 // resolves "typescript" from its workspace root and exits during initialize
 // when it finds none — the ordinary monorepo layout, where the dependency
 // belongs to the owning package (frontend/node_modules/typescript), not the
 // repo root crit anchors the workspace to. nil leaves the server's own
 // resolution in charge (single-package repo, global typescript).
+//
+// Pin or no pin, the server loads the repository's own typescript package
+// when one is installed: tree code, which is why the language requires a
+// sandbox backend.
 func tsInitOptions(ws Workspace, absPath string) map[string]any {
 	tsserver := findTSServer(ws.Root, absPath)
 	if tsserver == "" {
@@ -337,17 +353,30 @@ func goExtraRoots(_ string, run Run) []PeekRoot {
 
 // npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
 // installed globally (the README's install command) and the repo has no
-// local typescript. Machine-wide, so root is ignored.
-func npmGlobalRoots(_ string, run Run) []PeekRoot {
-	out, err := run("npm", "root", "-g")
+// local typescript: the node_modules the server on PATH is installed in.
+// Not `npm root -g`: the npm on PATH can belong to another prefix than the
+// server's, and in the sandbox it cannot read a prefix set in ~/.npmrc.
+// Machine-wide, so root is ignored.
+func npmGlobalRoots(string, Run) []PeekRoot {
+	bin, err := exec.LookPath("typescript-language-server")
 	if err != nil {
 		return nil
 	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" {
+	// npm links the bin into <prefix>/bin on Unix and writes a .cmd shim
+	// beside node_modules on Windows.
+	real, err := filepath.EvalSymlinks(bin)
+	if err != nil {
 		return nil
 	}
-	return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	for dir := filepath.Dir(real); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if filepath.Base(dir) == "node_modules" {
+			return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+		}
+	}
+	if dir := filepath.Join(filepath.Dir(real), "node_modules"); isDir(filepath.Join(dir, "typescript-language-server")) {
+		return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	}
+	return nil
 }
 
 func pathExt(path string) string {
