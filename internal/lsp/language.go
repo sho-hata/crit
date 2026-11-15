@@ -185,9 +185,10 @@ var languages = []*Language{
 		Command:        []string{"terraform-ls", "serve"},
 		IDByExt:        map[string]string{"tf": "terraform", "tfvars": "terraform-vars"},
 		SparsePatterns: []string{"*.tf", "*.tfvars"},
-		InitOptions:    tfInitOptions,
-		NoResult:       tfNoResult,
-		SkipReadyWait:  true,
+		// Static once terraform.path points at /dev/null (tfInitOptions).
+		InitOptions:   tfInitOptions,
+		NoResult:      tfNoResult,
+		SkipReadyWait: true,
 	},
 	{
 		Name:    "php",
