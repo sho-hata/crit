@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 )
@@ -63,7 +62,7 @@ func plan(t Trees, scratchBase, scratch, dir string, p Process, readDeny, enviro
 // it would take the filesystem root or the reviewer's home with it, or when
 // a tree lies beneath it; the trees and the scratch are re-allowed anyway.
 func denied(home, scratchBase string, t Trees) []string {
-	out := secrets(home, runtime.GOOS)
+	out := secrets(home)
 	reviews := filepath.Dir(filepath.Dir(scratchBase))
 	// Under range focus Root is a worktree inside the reviews directory and
 	// readAllow re-opens it, so only the working tree decides whether the
@@ -72,7 +71,7 @@ func denied(home, scratchBase string, t Trees) []string {
 	if t.DepRoot != "" {
 		working = t.DepRoot
 	}
-	if reviews == filepath.Dir(reviews) || (home != "" && Beneath(home, reviews)) || Beneath(working, reviews) {
+	if reviews == filepath.Dir(reviews) || Beneath(home, reviews) || Beneath(working, reviews) {
 		return out
 	}
 	return append(out, reviews)
@@ -83,10 +82,7 @@ func denied(home, scratchBase string, t Trees) []string {
 // npm, pip, bundler), cloud and cluster logins, agent and shell state,
 // and crit's own data. The tree under review and the scratch live under
 // ~/.crit, so readAllow re-opens them.
-func secrets(home, goos string) []string {
-	if home == "" {
-		return nil
-	}
+func secrets(home string) []string {
 	rel := []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".pypirc", ".kube", ".docker",
 		".config/gh", ".config/gcloud", ".azure",
@@ -100,9 +96,7 @@ func secrets(home, goos string) []string {
 		".local/share/keyrings", ".config/op", ".config/hub",
 		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
 		".crit", ".crit.config.json",
-	}
-	if goos == "darwin" {
-		rel = append(rel, "Library/Keychains", "Library/Application Support/pip")
+		"Library/Keychains", "Library/Application Support/pip",
 	}
 	out := make([]string, 0, len(rel))
 	for _, r := range rel {

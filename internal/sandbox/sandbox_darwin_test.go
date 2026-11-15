@@ -70,9 +70,7 @@ int main(int argc, char **argv) {
 		if out, err := exec.Command(loader, lib).CombinedOutput(); err != nil { //nolint:gosec // control: the probe loads unconfined
 			t.Fatalf("control: %s does not load unconfined: %v: %s", lib, err, out)
 		}
-		cmd, err := j.Command(context.Background(), "t", func(Workspace) Process {
-			return Process{Argv: []string{loader, lib}}
-		})
+		cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{loader, lib}})
 		if err != nil {
 			t.Fatal(err)
 		}

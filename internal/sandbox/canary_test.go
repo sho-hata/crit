@@ -1,8 +1,4 @@
-// Package sandboxtest plants a canary that tries, from inside a sandbox,
-// everything the sandbox must prevent, and asserts the outcome. It is the
-// only code allowed to run the canary unconfined (AssertEscaped), the control
-// that proves the probes are live.
-package sandboxtest
+package sandbox
 
 import (
 	"bufio"
@@ -20,8 +16,10 @@ import (
 	"testing"
 )
 
-// Canary is one planted probe set bound to a listener on 127.0.0.1.
-type Canary struct {
+// canary is one planted probe set bound to a listener on 127.0.0.1. It tries,
+// from inside the jail, everything the jail must prevent; assertEscaped runs
+// it unconfined, the control that proves the probes are live.
+type canary struct {
 	tree     string
 	script   string
 	marker   string // a write target outside both tree and scratch
@@ -38,10 +36,10 @@ type Canary struct {
 // executable one.
 var steps = []string{"outside-write", "tree-write", "connect", "udp", "exec", "copy-exec", "secret"}
 
-// Plant writes canary.sh and an executable bin/canary into tree, points HOME
+// plantCanary writes canary.sh and an executable bin/canary into tree, points HOME
 // at a fresh directory holding .ssh/id_canary (so call it before
 // sandbox.Open), starts the listener, and records the tree's content hash.
-func Plant(t testing.TB, tree string) *Canary {
+func plantCanary(t testing.TB, tree string) *canary {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -53,7 +51,7 @@ func Plant(t testing.TB, tree string) *Canary {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	c := &Canary{
+	c := &canary{
 		tree:   tree,
 		script: filepath.Join(tree, "canary.sh"),
 		marker: filepath.Join(t.TempDir(), "escaped"),
@@ -82,7 +80,7 @@ func Plant(t testing.TB, tree string) *Canary {
 // Each probe appends "<step> ok|denied" to $TMPDIR/probe.log; the jail sets
 // TMPDIR under its scratch, the only place a confined write may land. The
 // subshells keep a failed redirection from exiting a POSIX sh.
-func (c *Canary) scriptText() string {
+func (c *canary) scriptText() string {
 	return fmt.Sprintf(`#!/bin/sh
 log="${TMPDIR:?}/probe.log"
 : > "$log"
@@ -105,14 +103,14 @@ if cat %q >/dev/null 2>&1; then note secret ok; else note secret denied; fi
 `, c.marker, filepath.Join(c.tree, "canary-wrote"), c.port, c.port, c.port, c.port, filepath.Join(c.tree, "bin", "canary"), filepath.Join(c.tree, "bin", "canary"), c.secret)
 }
 
-// Command is the argv to run: sh resolved by the jail, never from the tree.
-func (c *Canary) Command() []string { return []string{"sh", c.script} }
+// command is the argv to run: sh resolved by the jail, never from the tree.
+func (c *canary) command() []string { return []string{"sh", c.script} }
 
-// AssertContained checks a confined run that had TMPDIR under scratch: every
+// assertContained checks a confined run that had TMPDIR under scratch: every
 // probe ran and was denied (the copy itself landed, only its run did not),
 // nothing landed outside scratch, the tree is byte-identical, and the
 // listener saw no connection.
-func (c *Canary) AssertContained(t testing.TB, scratch string) {
+func (c *canary) assertContained(t testing.TB, scratch string) {
 	t.Helper()
 	results := readLog(t, filepath.Join(scratch, "tmp", "probe.log"))
 	for _, step := range steps {
@@ -137,9 +135,9 @@ func (c *Canary) AssertContained(t testing.TB, scratch string) {
 	}
 }
 
-// AssertEscaped runs the same script unconfined and requires the probes to
-// succeed, so a pass of AssertContained is the sandbox's doing.
-func (c *Canary) AssertEscaped(t testing.TB) {
+// assertEscaped runs the same script unconfined and requires the probes to
+// succeed, so a pass of assertContained is the sandbox's doing.
+func (c *canary) assertEscaped(t testing.TB) {
 	t.Helper()
 	os.Remove(c.marker)
 	tmp := t.TempDir()

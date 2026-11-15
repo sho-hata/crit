@@ -118,27 +118,26 @@ func (j *Jail) Workspace(name string) Workspace {
 	}
 }
 
-// Command returns a confined command for the Process build describes, with
-// Dir = Root. It mints the scratch directory (0700, tmp/ emptied). It refuses
+// Command returns a confined command for p, with Dir = Root. It mints the scratch directory (0700, tmp/ emptied). It refuses
 // when Argv[0] resolves under a tree or when the policy cannot be built.
 // Without a backend the command runs plainly, with the scrubbed environment.
-func (j *Jail) Command(ctx context.Context, name string, build func(Workspace) Process) (*exec.Cmd, error) {
+func (j *Jail) Command(ctx context.Context, name string, p Process) (*exec.Cmd, error) {
 	ws, err := j.mint(name, true)
 	if err != nil {
 		return nil, err
 	}
-	return j.command(ctx, build(ws), ws.Scratch, j.trees.Root)
+	return j.command(ctx, p, ws.Scratch, j.trees.Root)
 }
 
 // Output runs a short helper (go env, npm root -g) the same way, with Dir =
 // scratch, never the tree, and returns its stdout. The scratch is not
 // emptied: a server may be using it.
-func (j *Jail) Output(ctx context.Context, name string, build func(Workspace) Process) ([]byte, error) {
+func (j *Jail) Output(ctx context.Context, name string, p Process) ([]byte, error) {
 	ws, err := j.mint(name, false)
 	if err != nil {
 		return nil, err
 	}
-	cmd, err := j.command(ctx, build(ws), ws.Scratch, ws.Scratch)
+	cmd, err := j.command(ctx, p, ws.Scratch, ws.Scratch)
 	if err != nil {
 		return nil, err
 	}

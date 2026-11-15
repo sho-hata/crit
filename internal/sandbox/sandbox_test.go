@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/sho-hata/crit/internal/sandbox/sandboxtest"
 )
 
 func TestBuildEnv(t *testing.T) {
@@ -72,7 +70,7 @@ func TestBuildEnv(t *testing.T) {
 func TestSecretsList(t *testing.T) {
 	t.Parallel()
 	home := filepath.Join(string(filepath.Separator), "home", "u")
-	got := secrets(home, "linux")
+	got := secrets(home)
 	for _, rel := range []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".kube", ".docker", ".config/gh",
 		".git-credentials", ".config/git/credentials",
@@ -83,21 +81,11 @@ func TestSecretsList(t *testing.T) {
 		".local/share/keyrings", ".config/op", ".config/hub",
 		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
 		".crit", ".crit.config.json",
+		"Library/Keychains", "Library/Application Support/pip",
 	} {
 		if !slices.Contains(got, filepath.Join(home, filepath.FromSlash(rel))) {
 			t.Errorf("secrets lacks %s", rel)
 		}
-	}
-	if slices.Contains(got, filepath.Join(home, "Library", "Keychains")) {
-		t.Error("Keychains is darwin-only")
-	}
-	for _, rel := range []string{"Library/Keychains", "Library/Application Support/pip"} {
-		if !slices.Contains(secrets(home, "darwin"), filepath.Join(home, filepath.FromSlash(rel))) {
-			t.Errorf("darwin must deny %s", rel)
-		}
-	}
-	if secrets("", "linux") != nil {
-		t.Error("no home, no home-relative secrets")
 	}
 }
 
@@ -319,9 +307,7 @@ func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc := func(argv ...string) func(Workspace) Process {
-		return func(Workspace) Process { return Process{Argv: argv} }
-	}
+	proc := func(argv ...string) Process { return Process{Argv: argv} }
 	if _, err := j.Command(context.Background(), "t", proc(evil)); err == nil {
 		t.Error("absolute path into the tree accepted")
 	}
@@ -362,9 +348,7 @@ func TestCommandEnvironmentAndCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := j.Workspace("t")
-	probe := func(Workspace) Process {
-		return Process{Argv: []string{"sh", "-c", `printf '%s\n%s\n%s\n%s\n' "$PWD" "$TMPDIR" "${CANARY_TOKEN-unset}" "$LANG"`}}
-	}
+	probe := Process{Argv: []string{"sh", "-c", `printf '%s\n%s\n%s\n%s\n' "$PWD" "$TMPDIR" "${CANARY_TOKEN-unset}" "$LANG"`}}
 	cmd, err := j.Command(context.Background(), "t", probe)
 	if err != nil {
 		t.Fatal(err)
@@ -405,9 +389,7 @@ func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 	if err := os.WriteFile(stale, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.Command(context.Background(), "t", func(Workspace) Process {
-		return Process{Argv: []string{"/nonexistent/bin"}}
-	}); err == nil {
+	if _, err := j.Command(context.Background(), "t", Process{Argv: []string{"/nonexistent/bin"}}); err == nil {
 		t.Fatal("nonexistent program accepted")
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
@@ -437,9 +419,7 @@ func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	if err := exec.Command(bin).Run(); err != nil { //nolint:gosec // control: the copy runs unconfined
 		t.Fatalf("control: the copy does not run unconfined: %v", err)
 	}
-	cmd, err := j.Command(context.Background(), "t", func(Workspace) Process {
-		return Process{Argv: []string{"sh", "-c", `"$0"`, bin}}
-	})
+	cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"sh", "-c", `"$0"`, bin}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,9 +439,7 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	}
 	ws := j.Workspace("t")
 	victim := realTempDir(t)
-	cmd, err := j.Command(context.Background(), "t", func(Workspace) Process {
-		return Process{Argv: []string{"sh", "-c", `rm -rf "$0"; mv "$0" "$0.moved"; ln -s "$1" "$0"; : > "$0/after"`, ws.Scratch, victim}}
-	})
+	cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"sh", "-c", `rm -rf "$0"; mv "$0" "$0.moved"; ln -s "$1" "$0"; : > "$0/after"`, ws.Scratch, victim}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +459,7 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(victim, "after")); err == nil {
 		t.Error("write landed in the symlink target")
 	}
-	if _, err := j.Command(context.Background(), "t", func(Workspace) Process { return Process{Argv: []string{"sh"}} }); err != nil {
+	if _, err := j.Command(context.Background(), "t", Process{Argv: []string{"sh"}}); err != nil {
 		t.Errorf("respawn after the attempt: %v", err)
 	}
 }
@@ -491,7 +469,7 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 func TestJailConfinesCanary(t *testing.T) {
 	b := requireBackend(t)
 	tree := realTempDir(t)
-	c := sandboxtest.Plant(t, tree)
+	c := plantCanary(t, tree)
 	j, err := Open(Trees{Root: tree}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
@@ -499,14 +477,12 @@ func TestJailConfinesCanary(t *testing.T) {
 	ws := j.Workspace("canary")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd, err := j.Command(ctx, "canary", func(Workspace) Process {
-		return Process{Argv: c.Command()}
-	})
+	cmd, err := j.Command(ctx, "canary", Process{Argv: c.command()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	out, err := cmd.CombinedOutput()
 	t.Logf("backend %+v; confined canary: err=%v out=%q", b, err, out)
-	c.AssertContained(t, ws.Scratch)
-	c.AssertEscaped(t)
+	c.assertContained(t, ws.Scratch)
+	c.assertEscaped(t)
 }
