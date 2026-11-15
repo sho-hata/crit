@@ -1095,8 +1095,15 @@
     document.addEventListener('scroll', onScroll, true);
   }
 
+  // lsp_extensions follows the focus: the server offers no language for a
+  // review it cannot run one on. An empty list switches every lookup off.
+  function setExtensions(extensions) {
+    if (st) st.extRe = makeExtensionMatcher(extensions);
+  }
+
   const api = {
     init: init,
+    setExtensions: setExtensions,
     serverErrorText: serverErrorText,
     textOffsetIn: textOffsetIn,
     lineHitFromPath: lineHitFromPath,
