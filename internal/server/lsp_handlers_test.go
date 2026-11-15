@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -962,10 +963,35 @@ func TestLSPConfigExposesAvailability(t *testing.T) {
 	}
 }
 
+// The availability check and the choice of root are separate steps, and the
+// focus can move to a PR between them. The step that picks the tree is the
+// one that must refuse it.
+func TestLSPRootRefusesAPRFocusWithoutABackend(t *testing.T) {
+	t.Parallel()
+	srv, sess, repo, _ := newRangeLSPTestServer(t, &fakeLSPProvider{})
+	srv.lsp.backend = func() sandbox.Backend { return sandbox.Backend{Reason: "no sandbox here"} }
+	sess.Focus.PRNumber = 42
+
+	if err := srv.syncLSPRoot(); !errors.Is(err, errLSPNeedsSandbox) {
+		t.Errorf("syncLSPRoot under an unconfinable PR focus: %v, want errLSPNeedsSandbox", err)
+	}
+	if root := srv.lspRoot(); root != repo {
+		t.Errorf("lspRoot() = %s, want the working tree %s: no checkout of the PR head", root, repo)
+	}
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=3&char=5"); w.Code != http.StatusNotFound {
+		t.Errorf("hover status = %d, want 404", w.Code)
+	}
+
+	srv.lsp.backend = func() sandbox.Backend { return sandbox.Backend{Name: "seatbelt"} }
+	if err := srv.syncLSPRoot(); err != nil {
+		t.Errorf("syncLSPRoot under a confinable PR focus: %v", err)
+	}
+}
+
 func TestPRFocusNeedsSandbox(t *testing.T) {
 	t.Parallel()
-	pr := &Session{Focus: Focus{Kind: FocusRange, PRNumber: 42}}
-	rng := &Session{Focus: Focus{Kind: FocusRange}}
+	pr := Focus{Kind: FocusRange, PRNumber: 42}
+	rng := Focus{Kind: FocusRange}
 	if !prFocusNeedsSandbox(pr, sandbox.Backend{}) {
 		t.Error("a PR review without a backend must offer no server")
 	}
@@ -997,6 +1023,11 @@ func TestLSPScratchDirLeavesTheRepo(t *testing.T) {
 	want := filepath.Join(home, ".crit", "reviews", "k2", "lsp-scratch")
 	if got := lspScratchDir(inside, repo); got != want {
 		t.Errorf("review folder inside the repo: scratch = %s, want %s", got, want)
+	}
+
+	atHome := filepath.Join(home, ".crit", "reviews", "k3")
+	if got := lspScratchDir(atHome, home); got != "" {
+		t.Errorf("repository at $HOME: scratch = %s, want none under the review folders", got)
 	}
 }
 
@@ -1264,5 +1295,35 @@ func TestLSPDefinitionLocalEnvNote(t *testing.T) {
 				t.Error("the note annotates a peek; the target must still carry its source")
 			}
 		})
+	}
+}
+
+// A repository rooted at $HOME (dotfiles) contains every directory crit
+// owns, so the scratch is a temp directory of the daemon's instead, one the
+// sandbox accepts, and it goes away with the daemon.
+func TestLSPScratchForARepositoryAtHome(t *testing.T) {
+	home := vcs.InitTestRepo(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sess := &Session{Mode: "git", RepoRoot: home, VCS: &vcs.GitVCS{}, ReviewRound: 1}
+	sess.InitTestChannels()
+	srv, err := NewServer(sess, FrontendFS, "", "test", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.reviewPath = filepath.Join(home, ".crit", "reviews", "k")
+
+	srv.lspManager()
+
+	scratch := srv.lsp.tempScratch
+	if scratch == "" {
+		t.Fatal("no temp scratch was made")
+	}
+	if _, err := sandbox.Open(sandbox.Trees{Root: home}, scratch); err != nil {
+		t.Errorf("the sandbox refuses the scratch: %v", err)
+	}
+	srv.ShutdownLSP()
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Errorf("temp scratch left behind after shutdown: %v", err)
 	}
 }
