@@ -323,9 +323,22 @@ test('renderHoverMarkdown: fenced code still renders as <pre><code>', function (
   assert.ok(html.includes('func main() {}'), html);
 });
 
-test('renderHoverMarkdown: a bare URL becomes a link', function () {
-  const html = lsp.renderHoverMarkdown('see https://example.com');
-  assert.ok(/<a href="https:\/\/example\.com">https:\/\/example\.com<\/a>/.test(html), html);
+// A link the reviewer could click would carry whatever the server read off
+// the machine, so every link form renders as text with its URL in view.
+test('renderHoverMarkdown: links render as text with the URL, never <a>', function () {
+  const cases = [
+    ['see https://example.com', 'see https://example.com'],
+    ['[docs](https://evil.example/?k=SECRET)', 'docs (https://evil.example/?k=SECRET)'],
+    ['[docs][r]\n\n[r]: https://evil.example/r', 'docs (https://evil.example/r)'],
+    ['<https://example.com/a>', 'https://example.com/a'],
+    ['[`fmt.Println` on pkg.go.dev](https://pkg.go.dev/fmt#Println)', '<code>fmt.Println</code> on pkg.go.dev (https://pkg.go.dev/fmt#Println)'],
+    ['[x](https://h/?a=1&b="2")', 'x (https://h/?a=1&amp;b=%222%22)'],
+  ];
+  for (const [md, want] of cases) {
+    const html = lsp.renderHoverMarkdown(md);
+    assert.ok(!/<a[\s>]/i.test(html), md + ' -> ' + html);
+    assert.ok(html.includes(want), md + ' -> ' + html);
+  }
 });
 
 test('renderHoverMarkdown: empty input renders to nothing', function () {

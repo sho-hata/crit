@@ -220,14 +220,24 @@
     return window.crit.shared.escapeHTML(s);
   }
 
-  // Hover documentation comes from a language server, which under range
-  // focus analyzes code the reviewer has not vetted, so it is rendered with
-  // raw HTML escaped and images off: an <img src> pointing off the machine
-  // would make the reviewer's browser carry out whatever the server could
-  // read, past the sandbox that keeps the server itself offline.
-  const hoverMd = typeof window !== 'undefined' && typeof window.markdownit === 'function'
-    ? window.markdownit({ html: false, linkify: true }).disable('image')
-    : null;
+  // Hover documentation comes from a language server, which may analyze code
+  // the reviewer has not vetted, so it is rendered with raw HTML escaped,
+  // images off and links as plain text with their URL beside them: an
+  // <img src> or a clicked link pointing off the machine would make the
+  // reviewer's browser carry out whatever the server could read, past the
+  // sandbox that keeps the server itself offline.
+  const hoverMd = (function () {
+    if (typeof window === 'undefined' || typeof window.markdownit !== 'function') return null;
+    const md = window.markdownit({ html: false }).disable('image');
+    md.renderer.rules.link_open = function () { return ''; };
+    md.renderer.rules.link_close = function (tokens, idx) {
+      let open = idx - 1;
+      while (open >= 0 && tokens[open].type !== 'link_open') open--;
+      if (open < 0 || tokens[open].markup === 'autolink') return '';
+      return ' (' + md.utils.escapeHtml(tokens[open].attrGet('href') || '') + ')';
+    };
+    return md;
+  })();
 
   function renderHoverMarkdown(text) {
     if (!hoverMd) return '<pre>' + esc(text || '') + '</pre>';
