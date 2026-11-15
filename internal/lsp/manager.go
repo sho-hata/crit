@@ -553,9 +553,7 @@ func (m *Manager) run(lang *Language) Run {
 		if m.jailErr != nil {
 			return nil, m.jailErr
 		}
-		return m.jail.Output(m.baseCtx, lang.Name, func(Workspace) sandbox.Process {
-			return sandbox.Process{Argv: argv}
-		})
+		return m.jail.Output(m.baseCtx, lang.Name, sandbox.Process{Argv: argv})
 	}
 }
 
@@ -634,19 +632,17 @@ func (m *Manager) startServer(ctx context.Context, lang *Language, initOpts, set
 	}
 	debug := debugEnabled()
 	ws := m.jail.Workspace(lang.Name)
-	cmd, err := m.jail.Command(ctx, lang.Name, func(Workspace) sandbox.Process {
-		p := sandbox.Process{Argv: slices.Clone(lang.Command), Stderr: io.Discard}
-		if lang.Args != nil {
-			p.Argv = append(p.Argv, lang.Args(ws)...)
-		}
-		if lang.Env != nil {
-			p.Env = lang.Env(ws)
-		}
-		if debug {
-			p.Stderr = &stderrLogger{name: lang.Name}
-		}
-		return p
-	})
+	p := sandbox.Process{Argv: slices.Clone(lang.Command), Stderr: io.Discard}
+	if lang.Args != nil {
+		p.Argv = append(p.Argv, lang.Args(ws)...)
+	}
+	if lang.Env != nil {
+		p.Env = lang.Env(ws)
+	}
+	if debug {
+		p.Stderr = &stderrLogger{name: lang.Name}
+	}
+	cmd, err := m.jail.Command(ctx, lang.Name, p)
 	if err != nil {
 		return nil, fmt.Errorf("lsp: %s: %w", lang.Command[0], err)
 	}
