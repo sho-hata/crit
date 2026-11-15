@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,7 +69,7 @@ func TestBuildEnv(t *testing.T) {
 func TestSecretsList(t *testing.T) {
 	t.Parallel()
 	home := filepath.Join(string(filepath.Separator), "home", "u")
-	got := secrets(home)
+	got := secrets(home, noEnv)
 	for _, rel := range []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".kube", ".docker", ".config/gh",
 		".git-credentials", ".config/git/credentials",
@@ -80,6 +79,7 @@ func TestSecretsList(t *testing.T) {
 		".bundle/config", ".pgpass", ".vault-token", ".password-store",
 		".local/share/keyrings", ".config/op", ".config/hub",
 		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
+		".zshrc", ".zshenv", ".profile", ".bashrc", ".yarnrc.yml",
 		".crit", ".crit.config.json",
 		"Library/Keychains", "Library/Application Support/pip",
 	} {
@@ -88,6 +88,39 @@ func TestSecretsList(t *testing.T) {
 		}
 	}
 }
+
+// A store moved by its environment variable is denied where it now lives.
+func TestSecretsFollowTheEnvironment(t *testing.T) {
+	t.Parallel()
+	base := realTempDir(t)
+	home := filepath.Join(base, "home", "u")
+	at := func(parts ...string) string { return filepath.Join(append([]string{base}, parts...)...) }
+	env := map[string]string{
+		"XDG_CONFIG_HOME":             at("xdg"),
+		"CARGO_HOME":                  at("cargo"),
+		"AWS_SHARED_CREDENTIALS_FILE": at("aws", "creds"),
+		"KUBECONFIG":                  at("kube", "a") + string(os.PathListSeparator) + at("kube", "b"),
+		"GNUPGHOME":                   "relative/gnupg",
+		"DOCKER_CONFIG":               filepath.Dir(home),
+		"NETRC":                       home,
+	}
+	got := secrets(home, func(k string) string { return env[k] })
+	for _, want := range []string{
+		at("xdg", "gh"), at("xdg", "git", "credentials"), at("cargo", "credentials.toml"),
+		at("aws", "creds"), at("kube", "a"), at("kube", "b"),
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("secrets lacks %s", want)
+		}
+	}
+	for _, not := range []string{"relative/gnupg", filepath.Dir(home), home, at("xdg"), at("cargo")} {
+		if slices.Contains(got, not) {
+			t.Errorf("secrets denies %s", not)
+		}
+	}
+}
+
+func noEnv(string) string { return "" }
 
 // The reviews directory (two levels above the scratch base) joins the deny
 // set, except where denying it would cover the root, the home, or a tree.
@@ -104,15 +137,15 @@ func TestDeniedAddsTheReviewsDir(t *testing.T) {
 	reviews := filepath.Join(base, "data", "reviews")
 	scratch := filepath.Join(reviews, "k", "lsp-scratch")
 
-	if got := denied(home, scratch, Trees{Root: repo}); !slices.Contains(got, reviews) {
+	if got := denied(home, scratch, Trees{Root: repo}, noEnv); !slices.Contains(got, reviews) {
 		t.Errorf("reviews dir %s not denied: %v", reviews, got)
 	}
-	if got := denied(home, scratch, Trees{Root: repo}); !slices.Contains(got, filepath.Join(home, ".ssh")) {
+	if got := denied(home, scratch, Trees{Root: repo}, noEnv); !slices.Contains(got, filepath.Join(home, ".ssh")) {
 		t.Error("the secrets must stay in the set")
 	}
 	// Range focus: the root is a worktree inside the reviews dir, the working
 	// tree is elsewhere; other reviews must stay unreadable.
-	if got := denied(home, scratch, Trees{Root: filepath.Join(reviews, "k", "lsp-worktree"), DepRoot: repo}); !slices.Contains(got, reviews) {
+	if got := denied(home, scratch, Trees{Root: filepath.Join(reviews, "k", "lsp-worktree"), DepRoot: repo}, noEnv); !slices.Contains(got, reviews) {
 		t.Errorf("reviews dir %s not denied under range focus: %v", reviews, got)
 	}
 	cases := []struct {
@@ -127,23 +160,13 @@ func TestDeniedAddsTheReviewsDir(t *testing.T) {
 		{"ancestor of the dep root", scratch, Trees{Root: repo, DepRoot: filepath.Join(reviews, "other")}},
 	}
 	for _, tc := range cases {
-		got := denied(home, tc.scratch, tc.trees)
+		got := denied(home, tc.scratch, tc.trees, noEnv)
 		reviews := filepath.Dir(filepath.Dir(tc.scratch))
 		if slices.Contains(got, reviews) {
 			t.Errorf("%s: %s must not be denied", tc.name, reviews)
 		}
 	}
 }
-
-type fakeEntry struct {
-	name string
-	dir  bool
-}
-
-func (e fakeEntry) Name() string               { return e.name }
-func (e fakeEntry) IsDir() bool                { return e.dir }
-func (e fakeEntry) Type() fs.FileMode          { return 0 }
-func (e fakeEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
 
 func TestProfileGolden(t *testing.T) {
 	t.Parallel()
@@ -233,6 +256,27 @@ func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 (deny file-read* (subpath (param "READ_DENY_0")) (subpath (param "READ_DENY_1")) (subpath (param "READ_DENY_2")))
 (allow file-read* (subpath (param "READ_ALLOW_1")))
 (allow file-read* (subpath (param "READ_ALLOW_2")))
+(allow file-read-metadata (vnode-type DIRECTORY))
+`
+	if !strings.HasSuffix(text, want) {
+		t.Errorf("profile =\n%s\nwant it to end with\n%s", text, want)
+	}
+}
+
+// A tree that is itself a listed secret (a review of ~/.password-store) is
+// allowed and not denied again; a secret strictly beneath a tree still is.
+func TestProfileKeepsATreeThatIsASecret(t *testing.T) {
+	t.Parallel()
+	text, _ := profile(policy{
+		readDeny:    []string{"/Users/u/.password-store", "/Users/u/.password-store/.ssh"},
+		trees:       []string{"/Users/u/.password-store"},
+		scratchBase: "/s",
+		scratch:     "/s/go/abc",
+	})
+	want := `(deny file-read* (subpath (param "READ_DENY_0")) (subpath (param "READ_DENY_1")))
+(allow file-read* (subpath (param "READ_ALLOW_0")))
+(deny file-read* (subpath (param "READ_DENY_1")))
+(allow file-read* (subpath (param "READ_ALLOW_1")))
 (allow file-read-metadata (vnode-type DIRECTORY))
 `
 	if !strings.HasSuffix(text, want) {
@@ -362,8 +406,10 @@ func TestCommandEnvironmentAndCwd(t *testing.T) {
 	if !slices.Equal(lines, want) {
 		t.Errorf("Command sees %q, want %q", lines, want)
 	}
-	if st, err := os.Stat(ws.Scratch); err != nil || st.Mode().Perm() != 0o700 {
-		t.Errorf("scratch %s: %v, mode %v, want 0700", ws.Scratch, err, st.Mode())
+	if st, err := os.Stat(ws.Scratch); err != nil {
+		t.Errorf("scratch %s: %v", ws.Scratch, err)
+	} else if st.Mode().Perm() != 0o700 {
+		t.Errorf("scratch %s: mode %v, want 0700", ws.Scratch, st.Mode())
 	}
 
 	out, err = j.Output(context.Background(), "t", probe)
@@ -394,6 +440,89 @@ func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Errorf("tmp/ not emptied: %v", err)
+	}
+}
+
+// What the last process left where tmp/ and cache/ belong (it may write
+// anywhere under its scratch) is replaced, not tripped over.
+func TestCommandReplacesPlantedScratchDirs(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs symlinks")
+	}
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := j.Workspace("t")
+	if err := os.MkdirAll(ws.Scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(ws.Scratch, "cache")
+	if err := os.Symlink(filepath.Join(ws.Scratch, "nowhere"), cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.Scratch, "tmp"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.Output(context.Background(), "t", Process{Argv: []string{"sh", "-c", ":"}}); err != nil {
+		t.Fatalf("spawn over planted entries: %v", err)
+	}
+	for _, dir := range []string{cache, filepath.Join(ws.Scratch, "tmp")} {
+		if st, err := os.Lstat(dir); err != nil || !st.IsDir() {
+			t.Errorf("%s is not a directory: %v", dir, err)
+		}
+	}
+}
+
+func TestCommandRefusesAScratchNameWithAPath(t *testing.T) {
+	t.Parallel()
+	base := realTempDir(t)
+	j, err := Open(Trees{Root: realTempDir(t)}, filepath.Join(base, "scratch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"", ".", "..", "../x", "a/b"} {
+		if _, err := j.Command(context.Background(), name, Process{Argv: []string{"sh"}}); err == nil {
+			t.Errorf("scratch name %q accepted", name)
+		}
+	}
+	if entries, _ := os.ReadDir(base); len(entries) != 0 {
+		t.Errorf("something was created outside the scratch base: %v", entries)
+	}
+}
+
+// A self-test that failed is not the absence of a backend: nothing runs
+// until it passes, and the next call tries it again.
+func TestCommandRefusesWhileTheSelfTestFails(t *testing.T) {
+	detectMu.Lock()
+	wasDetected, wasSettled, wasTest := detected, detectSettled, selfTest
+	fail := true
+	detectSettled = false
+	selfTest = func() (Backend, bool) {
+		if fail {
+			return Backend{Reason: "self-test failed"}, false
+		}
+		return Backend{Reason: "no sandbox here"}, true
+	}
+	detectMu.Unlock()
+	t.Cleanup(func() {
+		detectMu.Lock()
+		detected, detectSettled, selfTest = wasDetected, wasSettled, wasTest
+		detectMu.Unlock()
+	})
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The go tool, not sh: this one runs on Windows too.
+	p := Process{Argv: []string{"go", "version"}}
+	if _, err := j.Command(context.Background(), "t", p); err == nil || !strings.Contains(err.Error(), "self-test failed") {
+		t.Errorf("Command with a failing self-test: %v, want a refusal naming it", err)
+	}
+	fail = false
+	if _, err := j.Command(context.Background(), "t", p); err != nil {
+		t.Errorf("Command once the answer is final: %v", err)
 	}
 }
 

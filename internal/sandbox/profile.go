@@ -18,7 +18,9 @@ var baseProfile string
 // are denied, then each tree and the scratch are re-allowed, shallowest
 // first, with the secrets beneath each denied again, so a tree under ~/.crit
 // reads while a secret under a tree (a dotfiles repository at $HOME) does
-// not, and the scratch under ~/.crit still reads after that. Metadata is
+// not, and the scratch under ~/.crit still reads after that. A tree that is
+// itself a listed path (a review of ~/.password-store) stays allowed: only
+// what lies strictly beneath it is denied again. Metadata is
 // readable for directories only: path walks need it, file sizes under a
 // secret are nobody's business.
 func profile(p policy) (text string, params []string) {
@@ -49,7 +51,7 @@ func profile(p policy) (text string, params []string) {
 		fmt.Fprintf(&b, "(allow file-read* %s)\n", param(fmt.Sprintf("READ_ALLOW_%d", i), root))
 		var nested []string
 		for _, d := range p.readDeny {
-			if under(d, root) {
+			if d != root && under(d, root) {
 				nested = append(nested, denyFilter[d])
 			}
 		}

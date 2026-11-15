@@ -7,7 +7,8 @@
 // macOS uses /usr/bin/sandbox-exec (seatbelt). Elsewhere there is no
 // backend yet: a program runs plainly with the scrubbed environment, and the
 // caller decides whether the tree it would run on is trusted enough for
-// that (crit offers no language server for a PR review there).
+// that (crit offers no language server for a PR review there). A backend
+// whose self-test failed is not "no backend": nothing runs until it passes.
 //
 // Containment, not prevention: a confined process cannot execute or, on
 // macOS, load as native code any file from the tree or the scratch, but
@@ -37,6 +38,7 @@ var (
 	detectMu      sync.Mutex
 	detected      Backend
 	detectSettled bool
+	selfTest      = detect
 )
 
 // Detect reports the backend after a real self-test: a confined no-op must
@@ -46,12 +48,18 @@ var (
 // call, so one failed fork at startup does not leave the servers unconfined
 // for the daemon's life.
 func Detect() Backend {
+	b, _ := backend()
+	return b
+}
+
+// backend is Detect plus whether the answer is final.
+func backend() (Backend, bool) {
 	detectMu.Lock()
 	defer detectMu.Unlock()
 	if !detectSettled {
-		detected, detectSettled = detect()
+		detected, detectSettled = selfTest()
 	}
-	return detected
+	return detected, detectSettled
 }
 
 // Trees is the code under review: readable, never writable, never executable.
@@ -105,7 +113,7 @@ func Open(t Trees, scratchBase string) (*Jail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
 	}
-	return &Jail{trees: t, scratchBase: scratchBase, readDeny: denied(home, scratchBase, t)}, nil
+	return &Jail{trees: t, scratchBase: scratchBase, readDeny: denied(home, scratchBase, t, os.Getenv)}, nil
 }
 
 // Workspace names the scratch directory Command mints for name, so a
@@ -119,8 +127,10 @@ func (j *Jail) Workspace(name string) Workspace {
 }
 
 // Command returns a confined command for p, with Dir = Root. It mints the scratch directory (0700, tmp/ emptied). It refuses
-// when Argv[0] resolves under a tree or when the policy cannot be built.
-// Without a backend the command runs plainly, with the scrubbed environment.
+// when Argv[0] resolves under a tree, when the policy cannot be built, or
+// when the backend's self-test failed (the next call tries it again).
+// Where the OS has no backend the command runs plainly, with the scrubbed
+// environment.
 func (j *Jail) Command(ctx context.Context, name string, p Process) (*exec.Cmd, error) {
 	ws, err := j.mint(name, true)
 	if err != nil {
@@ -145,6 +155,11 @@ func (j *Jail) Output(ctx context.Context, name string, p Process) ([]byte, erro
 }
 
 func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
+	// name is one path element: anything else would put the scratch, and
+	// the cleanup below, outside the scratch base.
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return Workspace{}, fmt.Errorf("sandbox: %q is not a scratch name", name)
+	}
 	ws := j.Workspace(name)
 	tmp := filepath.Join(ws.Scratch, "tmp")
 	if emptyTmp {
@@ -153,6 +168,13 @@ func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
 		}
 	}
 	for _, dir := range []string{tmp, filepath.Join(ws.Scratch, "cache")} {
+		// The last process could write here: a file or a symlink it left
+		// in a directory's place must not fail every later spawn.
+		if st, err := os.Lstat(dir); err == nil && !st.IsDir() {
+			if err := os.Remove(dir); err != nil {
+				return Workspace{}, fmt.Errorf("sandbox: replacing %s: %w", dir, err)
+			}
+		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return Workspace{}, fmt.Errorf("sandbox: creating %s: %w", dir, err)
 		}
@@ -166,10 +188,15 @@ func (j *Jail) command(ctx context.Context, p Process, scratch, dir string) (*ex
 		return nil, err
 	}
 	var cmd *exec.Cmd
-	if Detect().Name == "" {
+	switch b, settled := backend(); {
+	case b.Name != "":
+		if cmd, err = confine(ctx, pol); err != nil {
+			return nil, err
+		}
+	case !settled:
+		return nil, fmt.Errorf("sandbox: not running %s unconfined: %s", pol.argv[0], b.Reason)
+	default:
 		cmd = exec.CommandContext(ctx, pol.argv[0], pol.argv[1:]...) //nolint:gosec // argv[0] is absolute and was refused under the trees by plan
-	} else if cmd, err = confine(ctx, pol); err != nil {
-		return nil, err
 	}
 	cmd.Dir = pol.dir
 	cmd.Env = pol.env

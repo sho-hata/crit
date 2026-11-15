@@ -61,8 +61,8 @@ func plan(t Trees, scratchBase, scratch, dir string, p Process, readDeny, enviro
 // other reviews' comments. The reviews directory is left out when denying
 // it would take the filesystem root or the reviewer's home with it, or when
 // a tree lies beneath it; the trees and the scratch are re-allowed anyway.
-func denied(home, scratchBase string, t Trees) []string {
-	out := secrets(home)
+func denied(home, scratchBase string, t Trees, getenv func(string) string) []string {
+	out := secrets(home, getenv)
 	reviews := filepath.Dir(filepath.Dir(scratchBase))
 	// Under range focus Root is a worktree inside the reviews directory and
 	// readAllow re-opens it, so only the working tree decides whether the
@@ -81,8 +81,10 @@ func denied(home, scratchBase string, t Trees) []string {
 // credential stores of the shipped toolchains (git, terraform, Composer,
 // npm, pip, bundler), cloud and cluster logins, agent and shell state,
 // and crit's own data. The tree under review and the scratch live under
-// ~/.crit, so readAllow re-opens them.
-func secrets(home string) []string {
+// ~/.crit, so readAllow re-opens them. Shell startup files are in: exported
+// tokens live there. A store moved by its environment variable is denied
+// where the variable points as well as at its default.
+func secrets(home string, getenv func(string) string) []string {
 	rel := []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".pypirc", ".kube", ".docker",
 		".config/gh", ".config/gcloud", ".azure",
@@ -95,6 +97,8 @@ func secrets(home string) []string {
 		".bundle/config", ".pgpass", ".vault-token", ".password-store",
 		".local/share/keyrings", ".config/op", ".config/hub",
 		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
+		".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc", ".bash_profile", ".profile",
+		".yarnrc", ".yarnrc.yml",
 		".crit", ".crit.config.json",
 		"Library/Keychains", "Library/Application Support/pip",
 	}
@@ -102,7 +106,42 @@ func secrets(home string) []string {
 	for _, r := range rel {
 		out = append(out, filepath.Join(home, filepath.FromSlash(r)))
 	}
+	for _, m := range moved {
+		for _, base := range filepath.SplitList(getenv(m.env)) {
+			// Home or above it would deny the toolchains too; a relative
+			// value names nothing the profile can match.
+			if !filepath.IsAbs(base) || Beneath(home, base) {
+				continue
+			}
+			if m.rel == nil {
+				out = append(out, filepath.Clean(base))
+			}
+			for _, r := range m.rel {
+				out = append(out, filepath.Join(base, filepath.FromSlash(r)))
+			}
+		}
+	}
 	return out
+}
+
+// moved is where an environment variable relocates a store secrets lists:
+// the value itself, or rel beneath it. KUBECONFIG is a path list, the rest
+// split into one.
+var moved = []struct {
+	env string
+	rel []string
+}{
+	{"XDG_CONFIG_HOME", []string{"gh", "gcloud", "git/credentials", "composer/auth.json", "pip", "op", "hub"}},
+	{"XDG_DATA_HOME", []string{"keyrings"}},
+	{"ZDOTDIR", []string{".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zsh_history"}},
+	{"CARGO_HOME", []string{"credentials", "credentials.toml"}},
+	{"COMPOSER_HOME", []string{"auth.json"}},
+	{"AWS_SHARED_CREDENTIALS_FILE", nil}, {"AWS_CONFIG_FILE", nil},
+	{"GOOGLE_APPLICATION_CREDENTIALS", nil}, {"CLOUDSDK_CONFIG", nil}, {"AZURE_CONFIG_DIR", nil},
+	{"KUBECONFIG", nil}, {"DOCKER_CONFIG", nil}, {"GNUPGHOME", nil}, {"PASSWORD_STORE_DIR", nil},
+	{"NETRC", nil}, {"NPM_CONFIG_USERCONFIG", nil}, {"PIP_CONFIG_FILE", nil},
+	{"BUNDLE_USER_CONFIG", nil}, {"TF_CLI_CONFIG_FILE", nil}, {"PGPASSFILE", nil},
+	{"CLAUDE_CONFIG_DIR", nil}, {"CODEX_HOME", nil}, {"HISTFILE", nil},
 }
 
 // envAllow is every variable a confined process inherits from crit, by exact
