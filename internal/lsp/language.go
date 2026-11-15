@@ -110,18 +110,23 @@ type Language struct {
 	Env func(ws Workspace) []string
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
-	// per crit process in the background after the server first spawns, with
-	// the server's workspace; nil for none.
+	// per scratch in this process, in the background after a server spawns
+	// there, with the server's workspace; nil for none.
 	CacheSweep func(ws Workspace)
 
-	sweepOnce sync.Once
+	// swept holds the scratch directories already swept: the cache lives in
+	// the scratch, and a focus change moves the server to another one.
+	swept sync.Map
 }
 
 // sweepCacheOnce starts CacheSweep in the background the first time it is
-// called in this process.
+// called for ws.Scratch in this process.
 func (l *Language) sweepCacheOnce(ws Workspace) {
-	if l.CacheSweep != nil {
-		l.sweepOnce.Do(func() { go l.CacheSweep(ws) })
+	if l.CacheSweep == nil {
+		return
+	}
+	if _, done := l.swept.LoadOrStore(ws.Scratch, struct{}{}); !done {
+		go l.CacheSweep(ws)
 	}
 }
 
