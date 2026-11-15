@@ -567,6 +567,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// those servers cover.
 		"lsp_available":  s.lspAvailable(),
 		"lsp_extensions": s.lspExtensions(),
+		// lsp_sandbox names the confinement every language server runs
+		// under ("seatbelt", "" for none; without one a --pr review has
+		// lsp_available false).
+		"lsp_sandbox": s.lspBackend().Name,
 		// Initial view for files with a Document/Diff toggle (markdown) in
 		// git mode: "document" forces document view, anything else keeps the
 		// historical default (diff in git mode, document in file mode).

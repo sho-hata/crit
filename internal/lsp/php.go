@@ -68,7 +68,7 @@ func composerVendor(dir string) string {
 //     and classes (strlen, ArrayObject) land
 //
 // Each source is optional; only a lookup that finds nothing at all is nil.
-func phpExtraRoots(root string) []PeekRoot {
+func phpExtraRoots(root string, _ Run) []PeekRoot {
 	var roots []PeekRoot
 	if v := composerVendor(root); v != "" {
 		roots = append(roots, PeekRoot{Path: v, Label: "$VENDOR", LocalEnv: true})

@@ -1104,19 +1104,7 @@
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
 
-    // LSP hover / go-to-definition. Only wired when the server reports a
-    // language server available + enabled; lsp_extensions says which file
-    // extensions it covers. The module owns all its listeners.
-    if (configRes.lsp_available && window.crit.lsp) {
-      window.crit.lsp.init({
-        jumpToLocation: lspJumpToLocation,
-        mountLineWidget: mountPierreLineWidget,
-        unmountLineWidget: unmountPierreLineWidget,
-        languageForPath: pierreLanguageForPath,
-        toast: function (message) { showMiniToast(message); },
-        extensions: configRes.lsp_extensions,
-      });
-    }
+    applyLspConfig(configRes);
     promptTrustConfig = {
       project_prompts_untrusted: !!configRes.project_prompts_untrusted,
       project_prompt_sources: configRes.project_prompt_sources || [],
@@ -4464,6 +4452,47 @@
       if (m) suffix = m[1];
     }
     return '@@ -' + oldStart + ',' + oldCount + ' +' + newStart + ',' + newCount + ' @@' + suffix;
+  }
+
+  // ===== LSP =====
+
+  // applyLspConfig wires hover / go-to-definition to what /api/config
+  // reports. Both lsp_available and lsp_extensions depend on the focus (a PR
+  // review offers no server where nothing can confine one), so this runs on
+  // load and again after every focus change. crit-lsp owns its listeners
+  // and init is idempotent; an empty extension list switches it off.
+  function applyLspConfig(config) {
+    if (!window.crit.lsp) return;
+    const extensions = config.lsp_available && Array.isArray(config.lsp_extensions) ? config.lsp_extensions : [];
+    if (extensions.length) {
+      window.crit.lsp.init({
+        jumpToLocation: lspJumpToLocation,
+        mountLineWidget: mountPierreLineWidget,
+        unmountLineWidget: unmountPierreLineWidget,
+        languageForPath: pierreLanguageForPath,
+        toast: function (message) { showMiniToast(message); },
+        extensions: extensions,
+      });
+    }
+    window.crit.lsp.setExtensions(extensions);
+  }
+
+  // Lookups are switched off until the answer arrives: one still pending
+  // would act on the previous focus, and a failed refresh must not leave
+  // them on for a review the server may refuse. A second focus change can
+  // overtake the first one's response; only the latest request is applied.
+  let lspConfigRequest = 0;
+  function refreshLspConfig() {
+    if (window.crit.lsp) window.crit.lsp.setExtensions([]);
+    const request = ++lspConfigRequest;
+    fetch('/api/config').then(function (r) {
+      if (!r.ok) throw new Error('config: ' + r.status);
+      return r.json();
+    }).then(function (config) {
+      if (request === lspConfigRequest) applyLspConfig(config);
+    }).catch(function (err) {
+      console.error('refreshing LSP availability:', err);
+    });
   }
 
   // ===== LSP definition jump =====
@@ -7834,6 +7863,7 @@
       } catch (err) {
         console.error('focus-changed parse:', err);
       }
+      refreshLspConfig();
       // Reuse the same refresh path as base-changed.
       reloadForScope();
       fetchCommits();

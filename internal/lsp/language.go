@@ -9,7 +9,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sho-hata/crit/internal/sandbox"
 )
+
+// Workspace is what a server's hooks see: the root it runs in and the one
+// directory it may write (sandbox.Workspace).
+type Workspace = sandbox.Workspace
+
+// Run executes a helper command confined, with cwd in the language's
+// scratch, and returns its stdout.
+type Run func(argv ...string) ([]byte, error)
 
 // PeekRoot is one directory tree outside the workspace root that definition
 // and reference peeks are allowed to read, with the display prefix the UI
@@ -40,9 +50,10 @@ type Language struct {
 	// source and project files the server needs, not the rest of the tree.
 	SparsePatterns []string
 	// InitOptions returns the initializationOptions for a server rooted at
-	// root whose first request is about absPath, or nil. Runs on the request
-	// path (once per server spawn) — keep it filesystem-cheap.
-	InitOptions func(root, absPath string) map[string]any
+	// ws.Root whose first request is about absPath, or nil. ws.Scratch is
+	// where a server's own writes (an index, a cache) must be pointed. Runs
+	// on the request path (once per server spawn) — keep it filesystem-cheap.
+	InitOptions func(ws Workspace, absPath string) map[string]any
 	// ConfigSettings answers workspace/configuration pulls, keyed by section
 	// name ("python"). Some servers take settings only this way (pyright
 	// ignores initializationOptions), hence separate from InitOptions. A nil
@@ -90,10 +101,13 @@ type Language struct {
 	// TypeScript). root is the tree the language's dependencies live in — the
 	// workspace root, or the working tree backing it under range/PR focus —
 	// for languages whose roots depend on the project rather than the
-	// machine. May run external commands; the Manager caches successful
-	// results per root. A nil result means the lookup failed and may be
-	// retried.
-	ExtraRoots func(root string) []PeekRoot
+	// machine. External commands go through run, which confines them with
+	// cwd outside the tree; the Manager caches successful results per root.
+	// A nil result means the lookup failed and may be retried.
+	ExtraRoots func(root string, run Run) []PeekRoot
+	// Env adds server environment, used to steer a tool's writes into
+	// ws.Scratch (GOCACHE). It may not set PATH, HOME or the temp dirs.
+	Env func(ws Workspace) []string
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
 	// per crit process in the background after the server first spawns, with
@@ -169,9 +183,10 @@ var languages = []*Language{
 		Command:        []string{"terraform-ls", "serve"},
 		IDByExt:        map[string]string{"tf": "terraform", "tfvars": "terraform-vars"},
 		SparsePatterns: []string{"*.tf", "*.tfvars"},
-		InitOptions:    tfInitOptions,
-		NoResult:       tfNoResult,
-		SkipReadyWait:  true,
+		// Static once terraform.path points at /dev/null (tfInitOptions).
+		InitOptions:   tfInitOptions,
+		NoResult:      tfNoResult,
+		SkipReadyWait: true,
 	},
 	{
 		Name:    "php",
@@ -192,8 +207,8 @@ var languages = []*Language{
 // belongs to the owning package (frontend/node_modules/typescript), not the
 // repo root crit anchors the workspace to. nil leaves the server's own
 // resolution in charge (single-package repo, global typescript).
-func tsInitOptions(root, absPath string) map[string]any {
-	tsserver := findTSServer(root, absPath)
+func tsInitOptions(ws Workspace, absPath string) map[string]any {
+	tsserver := findTSServer(ws.Root, absPath)
 	if tsserver == "" {
 		return nil
 	}
@@ -284,8 +299,8 @@ func walkUpWithin(root, absPath string, found func(dir string) bool) bool {
 }
 
 // goExtraRoots ignores root: GOROOT and GOMODCACHE are machine-wide.
-func goExtraRoots(_ string) []PeekRoot {
-	out, err := exec.Command("go", "env", "GOROOT", "GOMODCACHE").Output()
+func goExtraRoots(_ string, run Run) []PeekRoot {
+	out, err := run("go", "env", "GOROOT", "GOMODCACHE")
 	if err != nil {
 		return nil
 	}
@@ -306,8 +321,8 @@ func goExtraRoots(_ string) []PeekRoot {
 // npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
 // installed globally (the README's install command) and the repo has no
 // local typescript. Machine-wide, so root is ignored.
-func npmGlobalRoots(_ string) []PeekRoot {
-	out, err := exec.Command("npm", "root", "-g").Output()
+func npmGlobalRoots(_ string, run Run) []PeekRoot {
+	out, err := run("npm", "root", "-g")
 	if err != nil {
 		return nil
 	}
@@ -359,6 +374,18 @@ type availableEntry struct {
 // Available reports whether the language's server binary is on PATH.
 func (l *Language) Available() bool {
 	return l.availableAt(time.Now())
+}
+
+// SandboxStatus is the one line `crit check` prints about confinement.
+func SandboxStatus() string {
+	b := sandbox.Detect()
+	if b.Name != "" {
+		if b.Reason != "" {
+			return b.Name + " (" + b.Reason + ")"
+		}
+		return b.Name
+	}
+	return "none (" + b.Reason + "); servers run unconfined for working-tree and --range reviews and are not offered for --pr reviews"
 }
 
 func (l *Language) availableAt(now time.Time) bool {
