@@ -26,3 +26,10 @@ func ReviewPathsFor(identity string) ReviewPaths {
 // Derived on demand: ReviewPathsFor runs on every save and load, which
 // never need it.
 func (p ReviewPaths) LSPScratch() string { return filepath.Join(p.Folder, "lsp-scratch") }
+
+// reviewLockPath is the review write lock file for a review identity. It is
+// not a ReviewPaths field: ReviewPathsFor runs on every review save and load,
+// and only the lock code needs this path.
+func reviewLockPath(identity string) string {
+	return filepath.Join(identity, "review.lock")
+}

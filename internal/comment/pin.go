@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sho-hata/crit/internal/review"
 	"github.com/sho-hata/crit/internal/session"
 )
 
@@ -26,19 +25,40 @@ func (e BulkCommentEntry) pinRoute() string {
 }
 
 // addPinComment appends a DOM pin to a live or preview review and writes it.
+// The live page is fetched before the review lock is taken.
 func addPinComment(critPath, selector, route, body, author, userID string) (session.Comment, error) {
-	cj, err := review.LoadCritJSON(critPath)
-	if err != nil {
-		return session.Comment{}, err
+	var routes []string
+	if wantsPinFetch(selector, body) {
+		routes = []string{route}
 	}
-	c, err := appendPin(&cj, selector, route, body, author, userID, nil)
+	pages := prefetchLivePages(critPath, routes)
+	var c session.Comment
+	err := updateCritJSON(critPath, func(cj *session.CritJSON) error {
+		var err error
+		c, err = appendPin(cj, selector, route, body, author, userID, pages)
+		return err
+	})
 	if err != nil {
-		return session.Comment{}, err
-	}
-	if err := review.SaveCritJSON(critPath, cj); err != nil {
 		return session.Comment{}, err
 	}
 	return c, nil
+}
+
+// wantsPinFetch reports whether appendPin will get as far as reading the
+// page, so prefetching skips pins it would reject first.
+func wantsPinFetch(selector, body string) bool {
+	return strings.TrimSpace(selector) != "" && strings.TrimSpace(body) != ""
+}
+
+// bulkPinRoutes lists the routes of the bulk entries that are pins.
+func bulkPinRoutes(entries []BulkCommentEntry) []string {
+	var routes []string
+	for _, e := range entries {
+		if e.ReplyTo == "" && wantsPinFetch(e.pinSelector(), e.Body) {
+			routes = append(routes, e.pinRoute())
+		}
+	}
+	return routes
 }
 
 // appendPin adds a live-mode pin to cj. The file key is the page route, matching

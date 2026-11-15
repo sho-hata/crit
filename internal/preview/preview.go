@@ -6,9 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 
 	"github.com/sho-hata/crit/internal/browser"
 	"github.com/sho-hata/crit/internal/clicmd"
@@ -128,7 +126,7 @@ func RunPreview(args []string) {
 		fmt.Fprintf(os.Stderr, "[crit] open %s/preview\n", entry.BaseURL())
 	}
 
-	installDaemonSignalHandler(entry.PID)
+	daemon.StopOnSignal(entry, daemon.TerminationSignals()...)
 
 	// Daemon owns the initial browser open (same as crit live after #768).
 	// Opening here too doubles the tab on cold start.
@@ -145,17 +143,4 @@ func buildPreviewStartArgs(absPath string, port int, host, publicURL string, all
 		NoOpen:                      noOpen,
 		Quiet:                       quiet,
 	})
-}
-
-func installDaemonSignalHandler(pid int) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		proc, err := os.FindProcess(pid)
-		if err == nil {
-			_ = daemon.TerminateProcess(proc)
-		}
-		os.Exit(0)
-	}()
 }

@@ -110,6 +110,21 @@ type Language struct {
 	// Env adds server environment, used to steer a tool's writes into
 	// ws.Scratch (GOCACHE). It may not set PATH, HOME or the temp dirs.
 	Env func(ws Workspace) []string
+	// CacheSweep is housekeeping for a server's on-disk cache that the server
+	// would do itself if crit's idle shutdown didn't stop it first. Run once
+	// per crit process in the background after the server first spawns, with
+	// the server's workspace; nil for none.
+	CacheSweep func(ws Workspace)
+
+	sweepOnce sync.Once
+}
+
+// sweepCacheOnce starts CacheSweep in the background the first time it is
+// called in this process.
+func (l *Language) sweepCacheOnce(ws Workspace) {
+	if l.CacheSweep != nil {
+		l.sweepOnce.Do(func() { go l.CacheSweep(ws) })
+	}
 }
 
 // node_modules, .venv, .terraform and vendor are untracked, so a range-focus
@@ -129,6 +144,7 @@ var languages = []*Language{
 		// gopls only ever runs the go toolchain, never a program from the tree.
 		Env:        goEnv,
 		ExtraRoots: goExtraRoots,
+		CacheSweep: sweepGoplsCache,
 	},
 	{
 		Name:            "typescript",
@@ -201,12 +217,10 @@ var languages = []*Language{
 // goEnv keeps gopls's caches in scratch. The shared GOCACHE is the
 // reviewer's own: a confined server may write only where nothing but crit
 // reads, or a poisoned entry would run in their next unconfined build.
-// GOPLSCACHE is gopls's own file cache, whose default under the user cache
-// dir is unwritable here.
 func goEnv(ws Workspace) []string {
 	return []string{
 		"GOCACHE=" + filepath.Join(ws.Scratch, "gocache"),
-		"GOPLSCACHE=" + filepath.Join(ws.Scratch, "goplscache"),
+		"GOPLSCACHE=" + goplsCacheDir(ws),
 	}
 }
 

@@ -8,19 +8,14 @@ import (
 	"strings"
 )
 
-// baseProfile is every rule but the reads; see the file for what it allows.
-//
 //go:embed profile.sb
 var baseProfile string
 
 // profile renders a policy as a seatbelt profile: profile.sb, then the read
-// rules, which depend on how the paths nest and so are generated. The secrets
-// are denied, then each tree and the scratch are re-allowed, shallowest
-// first, with the secrets beneath each denied again, so a tree under ~/.crit
-// reads while a secret under a tree (a dotfiles repository at $HOME) does
-// not, and the scratch under ~/.crit still reads after that. Metadata is
-// readable for directories only: path walks need it, file sizes under a
-// secret are nobody's business.
+// rules, generated because rules are last-match-wins and the paths nest. The
+// secrets are denied, then each tree and the scratch re-allowed, shallowest
+// first, each followed by a denial of the secrets strictly beneath it.
+// Metadata is readable for directories only: path walks need it.
 func profile(p policy) (text string, params []string) {
 	params = []string{
 		"ROOT=" + p.trees[0],
@@ -49,7 +44,7 @@ func profile(p policy) (text string, params []string) {
 		fmt.Fprintf(&b, "(allow file-read* %s)\n", param(fmt.Sprintf("READ_ALLOW_%d", i), root))
 		var nested []string
 		for _, d := range p.readDeny {
-			if under(d, root) {
+			if d != root && under(d, root) {
 				nested = append(nested, denyFilter[d])
 			}
 		}

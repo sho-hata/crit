@@ -13,11 +13,12 @@ import (
 func TestParseNameStatus(t *testing.T) {
 	t.Parallel()
 
-	input := "M\tserver.go\nA\tnew.go\nD\told.go\nR100\told_name.go\tnew_name.go"
+	input := "M\x00server.go\x00A\x00new.go\x00D\x00old.go\x00R100\x00old_name.go\x00new_name.go\x00" +
+		"C75\x00src.go\x00copy.go\x00M\x00after.go\x00"
 	changes := parseNameStatus(input)
 
-	if len(changes) != 4 {
-		t.Fatalf("expected 4 changes, got %d", len(changes))
+	if len(changes) != 6 {
+		t.Fatalf("expected 6 changes, got %d", len(changes))
 	}
 	if changes[0].Path != "server.go" || changes[0].Status != "modified" {
 		t.Errorf("changes[0] = %+v", changes[0])
@@ -30,6 +31,30 @@ func TestParseNameStatus(t *testing.T) {
 	}
 	if changes[3].Path != "new_name.go" || changes[3].OldPath != "old_name.go" || changes[3].Status != "renamed" {
 		t.Errorf("changes[3] = %+v", changes[3])
+	}
+	if changes[4].Path != "copy.go" || changes[4].OldPath != "" || changes[4].Status != "added" {
+		t.Errorf("changes[4] = %+v", changes[4])
+	}
+	// The copy's second path must not shift the records that follow it.
+	if changes[5].Path != "after.go" || changes[5].Status != "modified" {
+		t.Errorf("changes[5] = %+v", changes[5])
+	}
+}
+
+func TestParseNumstatOutput(t *testing.T) {
+	// -z records: a rename has an empty path, then the old and new paths;
+	// the old path's tabs must not be read as a record of their own.
+	out := "3\t1\tmain.go\x00-\t-\timage.png\x00" +
+		"2\t0\t\x00dir/a\tb\tc.md\x00dir/new.md\x00" +
+		"1\t1\twith\ttab.md\x00"
+	want := map[string]NumstatEntry{
+		"main.go":      {Additions: 3, Deletions: 1},
+		"image.png":    {},
+		"dir/new.md":   {Additions: 2},
+		"with\ttab.md": {Additions: 1, Deletions: 1},
+	}
+	if got := parseNumstatOutput([]byte(out)); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
 
@@ -1877,5 +1902,84 @@ func TestFileDiffForCommit_FileNotInCommit(t *testing.T) {
 	}
 	if len(hunks) != 0 {
 		t.Errorf("expected 0 hunks for file not in commit, got %d", len(hunks))
+	}
+}
+
+// Without -z, git C-quotes paths with non-ASCII bytes ("d\303\251but.md"), so
+// every listing that reads paths from git must ask for them verbatim.
+func TestPathListings_NonASCIIPaths(t *testing.T) {
+	dir := testutil.InitTestRepo(t)
+	t.Chdir(dir)
+
+	testutil.WriteFile(t, filepath.Join(dir, "début.md"), "a\n")
+	testutil.WriteFile(t, filepath.Join(dir, "réflexion/vérification.md"), "a\nb\nc\n")
+	testutil.Git(t, dir, "add", ".")
+	testutil.Git(t, dir, "commit", "-m", "accented paths")
+	base := testutil.Git(t, dir, "rev-parse", "HEAD")
+
+	testutil.Git(t, dir, "checkout", "-b", "feature/accents")
+	testutil.WriteFile(t, filepath.Join(dir, "début.md"), "a\nb\n")
+	testutil.Git(t, dir, "mv", "réflexion/vérification.md", "réflexion/vérifié.md")
+	testutil.Git(t, dir, "commit", "-am", "edit and rename")
+	head := testutil.Git(t, dir, "rev-parse", "HEAD")
+	testutil.WriteFile(t, filepath.Join(dir, "à-lire.md"), "new\n")
+
+	edited := FileChange{Path: "début.md", Status: "modified"}
+	renamed := FileChange{Path: "réflexion/vérifié.md", OldPath: "réflexion/vérification.md", Status: "renamed"}
+	untracked := FileChange{Path: "à-lire.md", Status: "untracked"}
+	tests := []struct {
+		name string
+		list func() ([]FileChange, error)
+		want []FileChange
+	}{
+		{"branch", func() ([]FileChange, error) { return changedFilesBranch(base) }, []FileChange{edited, renamed}},
+		{"between SHAs", func() ([]FileChange, error) { return ChangedFilesBetweenSHAs(base, head, dir) }, []FileChange{edited, renamed}},
+		{"base to working tree", func() ([]FileChange, error) { return changedFilesFromBase(base) }, []FileChange{edited, renamed, untracked}},
+		// diff-tree is plumbing: no rename detection unless asked.
+		{"commit", func() ([]FileChange, error) { return ChangedFilesForCommit(head, dir) }, []FileChange{
+			edited,
+			{Path: "réflexion/vérification.md", Status: "deleted"},
+			{Path: "réflexion/vérifié.md", Status: "added"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.list()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+
+	stats, err := DiffNumstatDir(base, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, ok := stats["début.md"]; !ok || s.Additions != 1 || s.Deletions != 0 {
+		t.Errorf("numstat début.md = %+v (found %v), want +1/-0; stats = %+v", s, ok, stats)
+	}
+	if _, ok := stats["réflexion/vérifié.md"]; !ok {
+		t.Errorf("numstat missing the renamed file; stats = %+v", stats)
+	}
+
+	files, err := AllTrackedFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, f := range files {
+		listed[f] = true
+	}
+	for _, want := range []string{"début.md", "réflexion/vérifié.md", "à-lire.md"} {
+		if !listed[want] {
+			t.Errorf("AllTrackedFiles missing %q: %q", want, files)
+		}
+	}
+
+	if got := fileStatusInRepo("réflexion/vérifié.md", dir, base); got != "added" {
+		t.Errorf("fileStatusInRepo = %q, want added", got)
 	}
 }

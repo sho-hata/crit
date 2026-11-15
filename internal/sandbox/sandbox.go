@@ -7,7 +7,8 @@
 // macOS uses /usr/bin/sandbox-exec (seatbelt). Elsewhere there is no
 // backend yet: a program runs plainly with the scrubbed environment, and the
 // caller decides whether the tree it would run on is trusted enough for
-// that (crit offers no language server for a PR review there).
+// that (crit offers no language server for a PR review there). A backend
+// whose self-test failed is not "no backend": nothing runs until it passes.
 //
 // Containment, not prevention: a confined process cannot execute or, on
 // macOS, load as native code any file from the tree or the scratch, but
@@ -37,21 +38,25 @@ var (
 	detectMu      sync.Mutex
 	detected      Backend
 	detectSettled bool
+	selfTest      = detect
 )
 
-// Detect reports the backend after a real self-test: a confined no-op must
-// run. A definitive answer (no sandbox on this OS, no sandbox-exec) is kept
-// for the process.
-// A failed self-test is reported as no backend and tried again on the next
-// call, so one failed fork at startup does not leave the servers unconfined
-// for the daemon's life.
+// Detect reports the backend after a self-test. A failed self-test is
+// reported as no backend and tried again on the next call; any other answer
+// is kept for the process.
 func Detect() Backend {
+	b, _ := backend()
+	return b
+}
+
+// backend is Detect plus whether the answer is final.
+func backend() (Backend, bool) {
 	detectMu.Lock()
 	defer detectMu.Unlock()
 	if !detectSettled {
-		detected, detectSettled = detect()
+		detected, detectSettled = selfTest()
 	}
-	return detected
+	return detected, detectSettled
 }
 
 // Trees is the code under review: readable, never writable, never executable.
@@ -65,8 +70,7 @@ func (t Trees) list() []string {
 	return []string{t.Root, t.DepRoot}
 }
 
-// Workspace is what a language's hooks see: the root the server runs in and
-// the one directory it may write. Only a Jail mints a Scratch.
+// Workspace is the root a server runs in and the one directory it may write.
 type Workspace struct{ Root, Scratch string }
 
 // Process is one program to run. Argv[0] is a bare name resolved on the
@@ -86,8 +90,8 @@ type Jail struct {
 	readDeny    []string
 }
 
-// Open validates the paths (absolute and clean, scratchBase outside the
-// trees) and fixes the read-deny set.
+// Open refuses a path that is not absolute and clean, and a scratchBase
+// under a tree.
 func Open(t Trees, scratchBase string) (*Jail, error) {
 	for _, p := range append(t.list(), scratchBase) {
 		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
@@ -105,7 +109,7 @@ func Open(t Trees, scratchBase string) (*Jail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
 	}
-	return &Jail{trees: t, scratchBase: scratchBase, readDeny: denied(home, scratchBase, t)}, nil
+	return &Jail{trees: t, scratchBase: scratchBase, readDeny: denied(home, scratchBase, t, os.Getenv)}, nil
 }
 
 // Workspace names the scratch directory Command mints for name, so a
@@ -118,9 +122,9 @@ func (j *Jail) Workspace(name string) Workspace {
 	}
 }
 
-// Command returns a confined command for p, with Dir = Root. It mints the scratch directory (0700, tmp/ emptied). It refuses
-// when Argv[0] resolves under a tree or when the policy cannot be built.
-// Without a backend the command runs plainly, with the scrubbed environment.
+// Command returns a confined command for p, with Dir = Root, and empties the
+// scratch's tmp/. Where the OS has no backend the command runs plainly, with
+// the scrubbed environment; while a backend's self-test fails it is refused.
 func (j *Jail) Command(ctx context.Context, name string, p Process) (*exec.Cmd, error) {
 	ws, err := j.mint(name, true)
 	if err != nil {
@@ -145,6 +149,11 @@ func (j *Jail) Output(ctx context.Context, name string, p Process) ([]byte, erro
 }
 
 func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
+	// name is one path element: anything else would put the scratch, and
+	// the cleanup below, outside the scratch base.
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return Workspace{}, fmt.Errorf("sandbox: %q is not a scratch name", name)
+	}
 	ws := j.Workspace(name)
 	tmp := filepath.Join(ws.Scratch, "tmp")
 	if emptyTmp {
@@ -153,6 +162,13 @@ func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
 		}
 	}
 	for _, dir := range []string{tmp, filepath.Join(ws.Scratch, "cache")} {
+		// The last process could write here: a file or a symlink it left
+		// in a directory's place must not fail every later spawn.
+		if st, err := os.Lstat(dir); err == nil && !st.IsDir() {
+			if err := os.Remove(dir); err != nil {
+				return Workspace{}, fmt.Errorf("sandbox: replacing %s: %w", dir, err)
+			}
+		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return Workspace{}, fmt.Errorf("sandbox: creating %s: %w", dir, err)
 		}
@@ -166,10 +182,15 @@ func (j *Jail) command(ctx context.Context, p Process, scratch, dir string) (*ex
 		return nil, err
 	}
 	var cmd *exec.Cmd
-	if Detect().Name == "" {
+	switch b, settled := backend(); {
+	case b.Name != "":
+		if cmd, err = confine(ctx, pol); err != nil {
+			return nil, err
+		}
+	case !settled:
+		return nil, fmt.Errorf("sandbox: not running %s unconfined: %s", pol.argv[0], b.Reason)
+	default:
 		cmd = exec.CommandContext(ctx, pol.argv[0], pol.argv[1:]...) //nolint:gosec // argv[0] is absolute and was refused under the trees by plan
-	} else if cmd, err = confine(ctx, pol); err != nil {
-		return nil, err
 	}
 	cmd.Dir = pol.dir
 	cmd.Env = pol.env
@@ -240,15 +261,43 @@ func beneath(path, root string) bool {
 
 // realPath resolves symlinks through the deepest ancestor that exists, so
 // a path under a symlinked directory, or a secret not created yet, still
-// names what the kernel will see (/private/var, not /var).
+// names what the kernel will see (/private/var, not /var). A symlink whose
+// target is missing is followed too: the target may appear later (a secret
+// on a volume not mounted yet), and the kernel will see that, not the link.
 func realPath(p string) string {
 	p = filepath.Clean(p)
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r
 	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p
+	// Component by component, as the kernel walks: a ".." in a link's
+	// target applies to what the components before it resolve to, so the
+	// target is never cleaned first.
+	const maxLinks = 32
+	sep := string(filepath.Separator)
+	vol := filepath.VolumeName(p)
+	dir, rest := vol+sep, strings.Split(p[len(vol):], sep)
+	for links := 0; len(rest) > 0; {
+		c := rest[0]
+		rest = rest[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			dir = filepath.Dir(dir)
+			continue
+		}
+		next := filepath.Join(dir, c)
+		target, err := os.Readlink(next)
+		if err != nil || links >= maxLinks {
+			dir = next
+			continue
+		}
+		links++
+		if filepath.IsAbs(target) {
+			vol = filepath.VolumeName(target)
+			dir, target = vol+sep, target[len(vol):]
+		}
+		rest = append(strings.Split(filepath.FromSlash(target), sep), rest...)
 	}
-	return filepath.Join(realPath(parent), filepath.Base(p))
+	return dir
 }

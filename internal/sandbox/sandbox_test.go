@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,8 +52,8 @@ func TestBuildEnv(t *testing.T) {
 	if got["TMPDIR"] != tmp || got["TMP"] != tmp || got["TEMP"] != tmp {
 		t.Errorf("temp dirs = %q %q %q, want %q", got["TMPDIR"], got["TMP"], got["TEMP"], tmp)
 	}
-	if got["XDG_CACHE_HOME"] != filepath.Join(scratch, "cache") || got["GOTOOLCHAIN"] != "local" {
-		t.Errorf("cache/toolchain = %q %q", got["XDG_CACHE_HOME"], got["GOTOOLCHAIN"])
+	if got["XDG_CACHE_HOME"] != filepath.Join(scratch, "cache") || got["GOTOOLCHAIN"] != "local" || got["GIT_CONFIG_GLOBAL"] != os.DevNull {
+		t.Errorf("cache/toolchain/git = %q %q %q", got["XDG_CACHE_HOME"], got["GOTOOLCHAIN"], got["GIT_CONFIG_GLOBAL"])
 	}
 	if got["GOCACHE"] != filepath.Join(scratch, "gocache") {
 		t.Errorf("Process.Env not appended: GOCACHE = %q", got["GOCACHE"])
@@ -70,16 +69,17 @@ func TestBuildEnv(t *testing.T) {
 func TestSecretsList(t *testing.T) {
 	t.Parallel()
 	home := filepath.Join(string(filepath.Separator), "home", "u")
-	got := secrets(home)
+	got := secrets(home, noEnv)
 	for _, rel := range []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".kube", ".docker", ".config/gh",
-		".git-credentials", ".config/git/credentials",
+		".git-credentials", ".gitconfig", ".config/git",
 		".terraform.d/credentials.tfrc.json", ".terraformrc",
 		".composer/auth.json", ".config/composer/auth.json",
 		".config/pip", ".pip",
 		".bundle/config", ".pgpass", ".vault-token", ".password-store",
 		".local/share/keyrings", ".config/op", ".config/hub",
 		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
+		".zshrc", ".zshenv", ".profile", ".bashrc", ".yarnrc.yml",
 		".crit", ".crit.config.json",
 		"Library/Keychains", "Library/Application Support/pip",
 	} {
@@ -89,8 +89,38 @@ func TestSecretsList(t *testing.T) {
 	}
 }
 
-// The reviews directory (two levels above the scratch base) joins the deny
-// set, except where denying it would cover the root, the home, or a tree.
+func TestSecretsFollowTheEnvironment(t *testing.T) {
+	t.Parallel()
+	base := realTempDir(t)
+	home := filepath.Join(base, "home", "u")
+	at := func(parts ...string) string { return filepath.Join(append([]string{base}, parts...)...) }
+	env := map[string]string{
+		"XDG_CONFIG_HOME":             at("xdg"),
+		"CARGO_HOME":                  at("cargo"),
+		"AWS_SHARED_CREDENTIALS_FILE": at("aws", "creds"),
+		"KUBECONFIG":                  at("kube", "a") + string(os.PathListSeparator) + at("kube", "b"),
+		"GNUPGHOME":                   "relative/gnupg",
+		"DOCKER_CONFIG":               filepath.Dir(home),
+		"NETRC":                       home,
+	}
+	got := secrets(home, func(k string) string { return env[k] })
+	for _, want := range []string{
+		at("xdg", "gh"), at("xdg", "git"), at("cargo", "credentials.toml"),
+		at("aws", "creds"), at("kube", "a"), at("kube", "b"),
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("secrets lacks %s", want)
+		}
+	}
+	for _, not := range []string{"relative/gnupg", filepath.Dir(home), home, at("xdg"), at("cargo")} {
+		if slices.Contains(got, not) {
+			t.Errorf("secrets denies %s", not)
+		}
+	}
+}
+
+func noEnv(string) string { return "" }
+
 func TestDeniedAddsTheReviewsDir(t *testing.T) {
 	t.Parallel()
 	base := realTempDir(t)
@@ -104,15 +134,15 @@ func TestDeniedAddsTheReviewsDir(t *testing.T) {
 	reviews := filepath.Join(base, "data", "reviews")
 	scratch := filepath.Join(reviews, "k", "lsp-scratch")
 
-	if got := denied(home, scratch, Trees{Root: repo}); !slices.Contains(got, reviews) {
+	if got := denied(home, scratch, Trees{Root: repo}, noEnv); !slices.Contains(got, reviews) {
 		t.Errorf("reviews dir %s not denied: %v", reviews, got)
 	}
-	if got := denied(home, scratch, Trees{Root: repo}); !slices.Contains(got, filepath.Join(home, ".ssh")) {
+	if got := denied(home, scratch, Trees{Root: repo}, noEnv); !slices.Contains(got, filepath.Join(home, ".ssh")) {
 		t.Error("the secrets must stay in the set")
 	}
 	// Range focus: the root is a worktree inside the reviews dir, the working
 	// tree is elsewhere; other reviews must stay unreadable.
-	if got := denied(home, scratch, Trees{Root: filepath.Join(reviews, "k", "lsp-worktree"), DepRoot: repo}); !slices.Contains(got, reviews) {
+	if got := denied(home, scratch, Trees{Root: filepath.Join(reviews, "k", "lsp-worktree"), DepRoot: repo}, noEnv); !slices.Contains(got, reviews) {
 		t.Errorf("reviews dir %s not denied under range focus: %v", reviews, got)
 	}
 	cases := []struct {
@@ -127,23 +157,13 @@ func TestDeniedAddsTheReviewsDir(t *testing.T) {
 		{"ancestor of the dep root", scratch, Trees{Root: repo, DepRoot: filepath.Join(reviews, "other")}},
 	}
 	for _, tc := range cases {
-		got := denied(home, tc.scratch, tc.trees)
+		got := denied(home, tc.scratch, tc.trees, noEnv)
 		reviews := filepath.Dir(filepath.Dir(tc.scratch))
 		if slices.Contains(got, reviews) {
 			t.Errorf("%s: %s must not be denied", tc.name, reviews)
 		}
 	}
 }
-
-type fakeEntry struct {
-	name string
-	dir  bool
-}
-
-func (e fakeEntry) Name() string               { return e.name }
-func (e fakeEntry) IsDir() bool                { return e.dir }
-func (e fakeEntry) Type() fs.FileMode          { return 0 }
-func (e fakeEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
 
 func TestProfileGolden(t *testing.T) {
 	t.Parallel()
@@ -188,9 +208,8 @@ func TestProfileGolden(t *testing.T) {
 	}
 }
 
-// profile.sb and profile.go agree on the parameters: each one the text reads
-// is passed, and each one passed is read. sandbox-exec refuses an unset one
-// at spawn, which only the macOS job would see.
+// sandbox-exec refuses an unset parameter at spawn, which only the macOS job
+// would see.
 func TestProfileParamsMatch(t *testing.T) {
 	t.Parallel()
 	text, params := profile(policy{
@@ -216,9 +235,6 @@ func TestProfileParamsMatch(t *testing.T) {
 	}
 }
 
-// A secret beneath a tree (a dotfiles repository checked out at $HOME) is
-// denied again right after the tree is allowed, and a deeper allow (the
-// scratch under ~/.crit) still comes after that.
 func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 	t.Parallel()
 	pol := policy{
@@ -240,7 +256,25 @@ func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 	}
 }
 
-// requireBackend skips without a sandbox backend, or fails when CI demands one.
+func TestProfileKeepsATreeThatIsASecret(t *testing.T) {
+	t.Parallel()
+	text, _ := profile(policy{
+		readDeny:    []string{"/Users/u/.password-store", "/Users/u/.password-store/.ssh"},
+		trees:       []string{"/Users/u/.password-store"},
+		scratchBase: "/s",
+		scratch:     "/s/go/abc",
+	})
+	want := `(deny file-read* (subpath (param "READ_DENY_0")) (subpath (param "READ_DENY_1")))
+(allow file-read* (subpath (param "READ_ALLOW_0")))
+(deny file-read* (subpath (param "READ_DENY_1")))
+(allow file-read* (subpath (param "READ_ALLOW_1")))
+(allow file-read-metadata (vnode-type DIRECTORY))
+`
+	if !strings.HasSuffix(text, want) {
+		t.Errorf("profile =\n%s\nwant it to end with\n%s", text, want)
+	}
+}
+
 func requireBackend(t *testing.T) Backend {
 	t.Helper()
 	b := Detect()
@@ -260,6 +294,42 @@ func realTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func TestRealPathFollowsADanglingSymlink(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs symlinks")
+	}
+	base := realTempDir(t)
+	link := func(target, name string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(base, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link(filepath.Join(base, "vault", "ssh"), "abs")
+	link(filepath.Join("vault", "ssh"), "rel")
+	link("abs", "chain")
+	link("loop", "loop")
+	// pivot/.. is vault, not links: the ".." applies after pivot resolves.
+	if err := os.MkdirAll(filepath.Join(base, "vault", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "links"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link(filepath.Join(base, "vault", "sub"), filepath.Join("links", "pivot"))
+	link(filepath.Join(base, "links", "pivot")+"/../ssh", "dotdot")
+	want := filepath.Join(base, "vault", "ssh")
+	for _, name := range []string{"abs", "rel", "chain", "dotdot"} {
+		if got := realPath(filepath.Join(base, name, "id")); got != filepath.Join(want, "id") {
+			t.Errorf("realPath(%s/id) = %s, want %s/id", name, got, want)
+		}
+	}
+	if got := realPath(filepath.Join(base, "loop")); got != filepath.Join(base, "loop") {
+		t.Errorf("realPath(loop) = %s", got)
+	}
 }
 
 func TestOpenRejectsBadPaths(t *testing.T) {
@@ -285,7 +355,6 @@ func TestOpenRejectsBadPaths(t *testing.T) {
 	}
 }
 
-// No home, no secrets to name: refused rather than left readable.
 func TestOpenRefusesWithoutAHome(t *testing.T) {
 	homeVar := "HOME"
 	if runtime.GOOS == "windows" {
@@ -334,8 +403,6 @@ func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 	}
 }
 
-// The process sees the scrubbed environment and the scratch temp dir
-// whether or not a backend exists; Command and Output differ in cwd.
 func TestCommandEnvironmentAndCwd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs sh")
@@ -362,8 +429,10 @@ func TestCommandEnvironmentAndCwd(t *testing.T) {
 	if !slices.Equal(lines, want) {
 		t.Errorf("Command sees %q, want %q", lines, want)
 	}
-	if st, err := os.Stat(ws.Scratch); err != nil || st.Mode().Perm() != 0o700 {
-		t.Errorf("scratch %s: %v, mode %v, want 0700", ws.Scratch, err, st.Mode())
+	if st, err := os.Stat(ws.Scratch); err != nil {
+		t.Errorf("scratch %s: %v", ws.Scratch, err)
+	} else if st.Mode().Perm() != 0o700 {
+		t.Errorf("scratch %s: mode %v, want 0700", ws.Scratch, st.Mode())
 	}
 
 	out, err = j.Output(context.Background(), "t", probe)
@@ -397,8 +466,85 @@ func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 	}
 }
 
-// A file one server wrote into its own scratch does not run from another
-// server's jail either: the scratch base as a whole is exec-denied.
+func TestCommandReplacesPlantedScratchDirs(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs symlinks")
+	}
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := j.Workspace("t")
+	if err := os.MkdirAll(ws.Scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(ws.Scratch, "cache")
+	if err := os.Symlink(filepath.Join(ws.Scratch, "nowhere"), cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.Scratch, "tmp"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.Output(context.Background(), "t", Process{Argv: []string{"sh", "-c", ":"}}); err != nil {
+		t.Fatalf("spawn over planted entries: %v", err)
+	}
+	for _, dir := range []string{cache, filepath.Join(ws.Scratch, "tmp")} {
+		if st, err := os.Lstat(dir); err != nil || !st.IsDir() {
+			t.Errorf("%s is not a directory: %v", dir, err)
+		}
+	}
+}
+
+func TestCommandRefusesAScratchNameWithAPath(t *testing.T) {
+	t.Parallel()
+	base := realTempDir(t)
+	j, err := Open(Trees{Root: realTempDir(t)}, filepath.Join(base, "scratch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"", ".", "..", "../x", "a/b"} {
+		if _, err := j.Command(context.Background(), name, Process{Argv: []string{"sh"}}); err == nil {
+			t.Errorf("scratch name %q accepted", name)
+		}
+	}
+	if entries, _ := os.ReadDir(base); len(entries) != 0 {
+		t.Errorf("something was created outside the scratch base: %v", entries)
+	}
+}
+
+func TestCommandRefusesWhileTheSelfTestFails(t *testing.T) {
+	detectMu.Lock()
+	wasDetected, wasSettled, wasTest := detected, detectSettled, selfTest
+	fail := true
+	detectSettled = false
+	selfTest = func() (Backend, bool) {
+		if fail {
+			return Backend{Reason: "self-test failed"}, false
+		}
+		return Backend{Reason: "no sandbox here"}, true
+	}
+	detectMu.Unlock()
+	t.Cleanup(func() {
+		detectMu.Lock()
+		detected, detectSettled, selfTest = wasDetected, wasSettled, wasTest
+		detectMu.Unlock()
+	})
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The go tool, not sh: this one runs on Windows too.
+	p := Process{Argv: []string{"go", "version"}}
+	if _, err := j.Command(context.Background(), "t", p); err == nil || !strings.Contains(err.Error(), "self-test failed") {
+		t.Errorf("Command with a failing self-test: %v, want a refusal naming it", err)
+	}
+	fail = false
+	if _, err := j.Command(context.Background(), "t", p); err != nil {
+		t.Errorf("Command once the answer is final: %v", err)
+	}
+}
+
 func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	requireBackend(t)
 	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
@@ -428,9 +574,6 @@ func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	}
 }
 
-// A confined process may write under its scratch but not replace the scratch
-// itself: a symlink there would aim the next spawn's cleanup and write grant
-// elsewhere.
 func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	requireBackend(t)
 	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
@@ -452,7 +595,6 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	if _, err := os.Lstat(ws.Scratch + ".moved"); err == nil {
 		t.Error("scratch renamed away")
 	}
-	// Writes under the scratch still land, in the scratch and not the victim.
 	if _, err := os.Stat(filepath.Join(ws.Scratch, "after")); err != nil {
 		t.Errorf("write under the scratch denied: %v", err)
 	}
@@ -464,8 +606,8 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	}
 }
 
-// TestJailConfinesCanary is the contract: the same script escapes when run
-// plainly (the control) and is contained through the Jail.
+// The contract: the same script escapes when run plainly (the control) and
+// is contained through the Jail.
 func TestJailConfinesCanary(t *testing.T) {
 	b := requireBackend(t)
 	tree := realTempDir(t)

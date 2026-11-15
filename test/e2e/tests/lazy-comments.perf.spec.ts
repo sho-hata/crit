@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadPage, clearAllComments, addComment } from './helpers';
+import { loadPage, clearAllComments, addComment, waitForScrollStable } from './helpers';
 
 // Comments on files past the eager load limit (25) must show on open, before
 // the file's diff loads (#1032). plan-big.md sorts last in the 301-file perf
@@ -103,4 +103,86 @@ test('a comments refresh during lazy load is not overwritten', async ({ page, re
   await expect(page.locator(`#filesContainer .comment-card[data-comment-id="${first.id}"]`)).toBeVisible();
   await expect(badge).toHaveText('1');
   await expect(page.locator('#commentCountNumber')).toHaveText('1');
+});
+
+// The review conversation heads the list. Coming back to it from a comment
+// at the far end must not stop partway up while files mount on the way.
+test('a review comment card in the panel scrolls back from the bottom', async ({ page, request }) => {
+  await expect(await request.post('/api/comments', { data: { body: 'Review-level note' } })).toBeOK();
+  const tail = await addComment(request, TAIL_FILE, 1, 'At the bottom');
+  await loadPage(page);
+
+  await page.keyboard.press('Shift+C');
+  const cards = page.locator('.panel-comment-block .comment-card');
+  await cards.filter({ hasText: 'At the bottom' }).click();
+  await expect(page.locator(`#filesContainer .comment-card[data-comment-id="${tail.id}"]`)).toBeInViewport();
+
+  await cards.filter({ hasText: 'Review-level note' }).click();
+  await expect(page.locator('#reviewConversation .comment-card')).toBeInViewport();
+});
+
+test('a file jump still loading does not pull a review comment away', async ({ page, request }) => {
+  await expect(await request.post('/api/comments', { data: { body: 'Review-level note' } })).toBeOK();
+  await addComment(request, TAIL_FILE, 1, 'At the bottom');
+  await loadPage(page);
+
+  // Hold the lazy file's diff so its jump is still in flight.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let fetchStarted!: () => void;
+  const started = new Promise<void>((resolve) => { fetchStarted = resolve; });
+  await page.route((url) => url.pathname === '/api/file/diff' && url.searchParams.get('path') === TAIL_FILE, async (route) => {
+    fetchStarted();
+    await held;
+    await route.continue();
+  });
+
+  await page.keyboard.press('Shift+C');
+  const cards = page.locator('.panel-comment-block .comment-card');
+  await cards.filter({ hasText: 'At the bottom' }).click();
+  await started;
+  await cards.filter({ hasText: 'Review-level note' }).click();
+  const reviewCard = page.locator('#reviewConversation .comment-card');
+  await expect(reviewCard).toBeInViewport();
+
+  const loaded = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/file/diff' && new URL(r.url()).searchParams.get('path') === TAIL_FILE);
+  release();
+  await loaded;
+  await waitForScrollStable(page);
+  await expect(reviewCard).toBeInViewport();
+});
+
+test('a jump right after a review comment is not pulled back to the top', async ({ page, request }) => {
+  await expect(await request.post('/api/comments', { data: { body: 'Review-level note' } })).toBeOK();
+  // An eager file a few screens down: its jump scrolls at once, while the
+  // review comment's alignment frames are still running.
+  const session = await (await request.get('/api/session')).json();
+  const eager = session.files[12].path;
+  const target = await addComment(request, eager, 1, 'Further down');
+  await loadPage(page);
+
+  await page.keyboard.press('Shift+C');
+  const cards = page.locator('.panel-comment-block .comment-card');
+  await cards.filter({ hasText: 'Review-level note' }).click();
+  await cards.filter({ hasText: 'Further down' }).click();
+  await waitForScrollStable(page);
+  await expect(page.locator(`#filesContainer .comment-card[data-comment-id="${target.id}"]`)).toBeInViewport();
+});
+
+// A ref chip at the far end that points at a review comment scrolls the whole
+// way up to the conversation, which heads the list, without stopping partway.
+test('a ref chip at the bottom to a review comment scrolls back to it', async ({ page, request }) => {
+  const res = await request.post('/api/comments', { data: { body: 'Review-level note' } });
+  await expect(res).toBeOK();
+  const review = await res.json();
+  const tail = await addComment(request, TAIL_FILE, 1, `See ${review.id}`);
+  await loadPage(page);
+
+  await page.keyboard.press('Shift+C');
+  await page.locator('.panel-comment-block .comment-card').filter({ hasText: 'See' }).click();
+  const chip = page.locator(`#filesContainer .comment-card[data-comment-id="${tail.id}"] .comment-ref`);
+  await expect(chip).toBeInViewport();
+
+  await chip.click();
+  await expect(page.locator('#reviewConversation .comment-card')).toBeInViewport();
 });

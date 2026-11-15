@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -196,7 +197,7 @@ func runStoryE(args []string) error {
 
 	// --clear: drop the story and save. No-op if none present.
 	if f.clear {
-		return clearStory(f, critPath, cj)
+		return clearStory(f, critPath)
 	}
 
 	// --prep: write the prep text + snapshot scope, print path, exit 0.
@@ -222,7 +223,7 @@ func runStoryE(args []string) error {
 	}
 }
 
-func clearStory(f storyFlags, critPath string, cj review.CritJSON) error {
+func clearStory(f storyFlags, critPath string) error {
 	key, _, keyErr := storyReviewSessionKey(f)
 	if keyErr == nil {
 		if entry, alive := storyDaemonAlive(key); alive {
@@ -234,8 +235,7 @@ func clearStory(f storyFlags, critPath string, cj review.CritJSON) error {
 			}
 		}
 	}
-	cj.Story = nil
-	if err := review.SaveCritJSON(critPath, cj); err != nil {
+	if err := setStory(critPath, nil); err != nil {
 		return clicmd.ExitError{Code: 1, Err: err}
 	}
 	fmt.Fprintln(os.Stderr, "Cleared story from review.")
@@ -509,7 +509,7 @@ func runStoryIngestFile(f storyFlags, critPath string, cj review.CritJSON) error
 		return clicmd.ExitError{Code: 1, Err: ingestErr}
 	}
 
-	return saveStory(f, critPath, cj, &st)
+	return saveStory(f, critPath, &st)
 }
 
 // runStorySkipLLM writes a stub story with all hunks in a single support entry
@@ -547,7 +547,7 @@ func runStorySkipLLM(f storyFlags, critPath string, cj review.CritJSON) error {
 		},
 	}
 	printCoverage(st.Coverage)
-	return saveStory(f, critPath, cj, &st)
+	return saveStory(f, critPath, &st)
 }
 
 // runStoryLLM is the default path: exec agent_cmd with a prompt-by-reference
@@ -612,7 +612,7 @@ func runStoryLLM(f storyFlags, critPath string, cj review.CritJSON) error {
 		return clicmd.ExitError{Code: 1, Err: ingestErr}
 	}
 
-	return saveStory(f, critPath, cj, st)
+	return saveStory(f, critPath, st)
 }
 
 // generateStory execs agent_cmd with the story prompt, extracts+parses the JSON
@@ -753,14 +753,27 @@ func resolveStorySessionKey(scopeArgs []string) string {
 // then runs the post-ingest flow (§4.1): notify a running daemon so the open
 // review re-renders, or spawn the daemon detached and open the browser. It
 // never blocks — the post-ingest step is best-effort and returns exit 0.
-func saveStory(f storyFlags, critPath string, cj review.CritJSON, st *session.Story) error {
-	cj.Story = st
-	if err := review.SaveCritJSON(critPath, cj); err != nil {
+func saveStory(f storyFlags, critPath string, st *session.Story) error {
+	if err := setStory(critPath, st); err != nil {
 		return clicmd.ExitError{Code: 1, Err: err}
 	}
 	fmt.Fprintln(os.Stderr, "Story saved.")
 	postIngest(f, st)
 	return nil
+}
+
+// setStory writes st as the review's story (nil clears it). It reloads the
+// review file under the review lock, so comments saved since the story
+// command first read the file are kept.
+func setStory(critPath string, st *session.Story) error {
+	return session.WithReviewWriteLock(critPath, func() error {
+		cj, err := review.LoadCritJSON(critPath)
+		if err != nil {
+			return err
+		}
+		cj.Story = st
+		return review.SaveCritJSON(critPath, cj)
+	})
 }
 
 // storyURLFragment is appended to the review URL so the browser lands directly
@@ -788,11 +801,12 @@ func storyReviewSessionKey(f storyFlags) (key, cwd string, err error) {
 
 // postIngest connects the freshly-saved story to a review surface (§4.1). If a
 // daemon for this session key is already running, it POSTs the story so the
-// open page live-updates via the story-updated SSE event. Otherwise it spawns
-// the daemon detached (same path as first-run `crit`) and opens the browser at
-// the story view, respecting --no-open / config. Any failure is logged, not
-// fatal: the story is already on disk, so the next `crit story`/`crit` picks it
-// up.
+// open page live-updates via the story-updated SSE event, then opens #story
+// when nothing is already connected (same check as resume and spawn). Otherwise
+// it spawns the daemon detached (same path as first-run `crit`) and opens the
+// browser at the story view, respecting --no-open / config. Any failure is
+// logged, not fatal: the story is already on disk, so the next `crit story`/`crit`
+// picks it up.
 func postIngest(f storyFlags, st *session.Story) {
 	key, cwd, err := storyReviewSessionKey(f)
 	if err != nil {
@@ -806,6 +820,9 @@ func postIngest(f storyFlags, st *session.Story) {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "Updated the open review at %s\n", entry.BaseURL())
+		if !storyNoOpen(f, cwd) && !storyDaemonHasBrowser(entry) {
+			openBrowser(entry.BaseURL()+storyURLFragment, config.LoadConfig(cwd).OpenCmd)
+		}
 		return
 	}
 
@@ -933,13 +950,13 @@ func waitDaemonReady(base string) error {
 	}
 }
 
-// storyDaemonArgs strips story-only flags from the scope args so the spawned
-// daemon runs a plain review over the same diff scope. The scope args are
-// already free of story-only flags (parseStoryFlags separates them), so this
-// is currently a passthrough — kept as a seam in case the daemon needs a
-// dedicated story flag later.
+// storyDaemonArgs builds the spawned daemon's args: the scope args (already
+// free of story-only flags, which parseStoryFlags separates) plus --no-open.
+// The story CLI owns the browser open — it opens the #story view and honours
+// --no-open / config — so the daemon must never open its own tab at the
+// review root.
 func storyDaemonArgs(scopeArgs []string) []string {
-	return scopeArgs
+	return append(slices.Clone(scopeArgs), "--no-open")
 }
 
 // storyNoOpen reports whether the browser must NOT be opened: the CLI/config

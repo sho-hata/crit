@@ -10,6 +10,9 @@ const FIND = process.platform === 'darwin' ? 'Meta+f' : 'Control+f';
 const bar = (page: Page) => page.locator('.crit-find-bar');
 const input = (page: Page) => page.locator('.crit-find-input');
 const count = (page: Page) => page.locator('.crit-find-count');
+// A trailing '…' means other lazy files are still loading. The match is
+// already final, so don't wait for all 300 files (slow on Windows runners).
+const ONE_MATCH = /^1 of 1…?$/;
 
 // Path, line and text of the current-match highlight, or null.
 function currentMatch(page: Page) {
@@ -32,27 +35,111 @@ async function openFind(page: Page) {
   await expect(input(page)).toBeFocused();
 }
 
-test.beforeEach(async ({ request }) => {
+test.beforeEach(async ({ page, request }) => {
   await clearAllComments(request);
+  // A slow runner can miss the 5s worker start limit, and the list rebuilt by
+  // that fallback can lose a find jump. Log it, so a failure here shows whether
+  // the fallback ran and when.
+  const start = Date.now();
+  page.on('console', (m) => {
+    if (m.text().includes('Highlight workers unavailable')) {
+      console.log(`highlight worker fallback ${Date.now() - start}ms into: ${test.info().title}`);
+    }
+  });
 });
 
 test('finds and reveals a match in a lazy, off-screen file', async ({ page }) => {
+  // The list is in path order (file1, file10, file100, ...), so file40.go is
+  // at index 235 and find loads most lazy files before it reaches the match.
+  // On a slow runner that alone can take most of the default 30s.
+  test.slow();
   await loadPage(page);
   await openFind(page);
-  await input(page).fill('Goodbye287()');
+  await input(page).fill('Goodbye40()');
 
-  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
-  await expect.poll(() => currentMatch(page), { timeout: 10_000 }).toMatchObject({
-    path: 'file287.go', text: 'Goodbye287()', visible: true,
+  // Wait for the jump, not for a plain "1 of 1": that only shows once every
+  // lazy file has been searched ("1 of 1…" until then).
+  await expect.poll(() => currentMatch(page), { timeout: 60_000 }).toMatchObject({
+    path: 'file40.go', text: 'Goodbye40()', visible: true,
   });
-  await expect(page.locator('.tree-file[data-tree-path="file287.go"]')).toHaveClass(/active/);
+  await expect(count(page)).toHaveText(/^1 of 1/);
+  await expect(page.locator('.tree-file[data-tree-path="file40.go"]')).toHaveClass(/active/);
+});
+
+test('a match found while the highlight workers start stays on screen when they fail', async ({ page }) => {
+  // Never answer the worker script, so the workers miss their 5s start limit
+  // and the page falls back to rendering without them, building a new list.
+  // Track fallback in-page so the jump-vs-fallback race is checked atomically
+  // (a Node-side flag read after toHaveText can miss a jump that already happened).
+  await page.addInitScript(() => {
+    const w = window as unknown as { __critWorkerFellBack?: boolean; __critJumpedBeforeFallback?: boolean };
+    w.__critWorkerFellBack = false;
+    w.__critJumpedBeforeFallback = false;
+    const warn = console.warn.bind(console);
+    console.warn = (...args: unknown[]) => {
+      if (String(args[0] ?? '').includes('Highlight workers unavailable')) {
+        // Snapshot the count in the same turn as the fallback warn — a later
+        // Playwright poll can miss a jump that already happened on the old list.
+        const text = document.querySelector('.crit-find-count')?.textContent ?? '';
+        if (/^1 of 1/.test(text)) w.__critJumpedBeforeFallback = true;
+        w.__critWorkerFellBack = true;
+      }
+      warn(...args);
+    };
+  });
+  await page.route('**/pierre/pierre-worker.js', () => {});
+  await loadPage(page);
+  await openFind(page);
+  await input(page).fill('Goodbye130()');
+  // Wait for the fallback. Skip when find had not jumped yet — the jump would
+  // land on the new list and there is nothing to test.
+  await expect.poll(
+    () => page.evaluate(() => !!(window as unknown as { __critWorkerFellBack?: boolean }).__critWorkerFellBack),
+    { timeout: 30_000 },
+  ).toBe(true);
+  const jumpedBefore = await page.evaluate(
+    () => !!(window as unknown as { __critJumpedBeforeFallback?: boolean }).__critJumpedBeforeFallback,
+  );
+  test.skip(!jumpedBefore, 'the fallback came before the match was found');
+
+  await expect.poll(() => currentMatch(page), { timeout: 10_000 }).toMatchObject({
+    path: 'file130.go', text: 'Goodbye130()', visible: true,
+  });
+});
+
+test('keeps the found file active in the tree until it scrolls out of view', async ({ page }) => {
+  const treeRow = (path: string) => page.locator(`.tree-file[data-tree-path="${path}"]`);
+  const scrollList = (by: number) => page.locator('#filesContainer').evaluate(async (el, by) => {
+    el.scrollTop += by;
+    // The scroll event and the tree sync it queues each take a frame.
+    for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame);
+  }, by);
+
+  await loadPage(page);
+  await openFind(page);
+  // file125.go is lazy and off screen, but the first lazy files load first.
+  // A match deeper in the list waits for ~180 lazy files to load, which can
+  // outrun the poll on a slow runner.
+  await input(page).fill('Goodbye125()');
+  await expect.poll(() => currentMatch(page), { timeout: 30_000 }).toMatchObject({ path: 'file125.go', visible: true });
+  await expect(treeRow('file125.go')).toHaveClass(/active/);
+
+  // The centered match leaves file124.go at the top of the list. A scroll
+  // after the tree's 400ms post-jump window (on a slow runner, the jump's
+  // own) must not hand the tree to it.
+  await page.waitForTimeout(500);
+  await scrollList(1);
+  await expect(treeRow('file125.go')).toHaveClass(/active/);
+
+  await scrollList(2000);
+  await expect(treeRow('file125.go')).not.toHaveClass(/active/);
 });
 
 test('Esc closes the bar, clears highlights and stays put', async ({ page }) => {
   await loadPage(page);
   await openFind(page);
   await input(page).fill('Goodbye3()');
-  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
+  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
 
   // Typing then Esc inside the debounce must not jump the list afterwards.
   await input(page).fill('Goodbye290(');
@@ -72,7 +159,7 @@ test('collapsed files are not searched', async ({ page }) => {
   await loadPage(page);
   await openFind(page);
   await input(page).fill('Goodbye1()');
-  await expect(count(page)).toHaveText('1 of 1', { timeout: 30_000 });
+  await expect(count(page)).toHaveText(ONE_MATCH, { timeout: 30_000 });
   await page.keyboard.press('Escape');
 
   await page.locator('.pierre-file-header[data-file-path="file1.go"] .file-header-chevron').click();

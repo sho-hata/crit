@@ -56,13 +56,12 @@ func plan(t Trees, scratchBase, scratch, dir string, p Process, readDeny, enviro
 	return pol, nil
 }
 
-// denied is the read-deny set: the secrets, plus crit's own reviews
-// directory (two levels above the scratch base) so a server cannot read
-// other reviews' comments. The reviews directory is left out when denying
-// it would take the filesystem root or the reviewer's home with it, or when
-// a tree lies beneath it; the trees and the scratch are re-allowed anyway.
-func denied(home, scratchBase string, t Trees) []string {
-	out := secrets(home)
+// denied is the read-deny set: the secrets, plus crit's reviews directory
+// (two levels above the scratch base) so a server cannot read other reviews'
+// comments, unless denying it would cover the root, the home or the working
+// tree.
+func denied(home, scratchBase string, t Trees, getenv func(string) string) []string {
+	out := secrets(home, getenv)
 	reviews := filepath.Dir(filepath.Dir(scratchBase))
 	// Under range focus Root is a worktree inside the reviews directory and
 	// readAllow re-opens it, so only the working tree decides whether the
@@ -77,24 +76,25 @@ func denied(home, scratchBase string, t Trees) []string {
 	return append(out, reviews)
 }
 
-// secrets lists what a confined process must not read, relative to home:
-// credential stores of the shipped toolchains (git, terraform, Composer,
-// npm, pip, bundler), cloud and cluster logins, agent and shell state,
-// and crit's own data. The tree under review and the scratch live under
-// ~/.crit, so readAllow re-opens them.
-func secrets(home string) []string {
+// secrets lists what a confined process must not read: credential stores,
+// shell startup files (exported tokens live there), agent state and crit's
+// own data, at their defaults under home and where an environment variable
+// moves them.
+func secrets(home string, getenv func(string) string) []string {
 	rel := []string{
 		".ssh", ".aws", ".gnupg", ".netrc", ".npmrc", ".pypirc", ".kube", ".docker",
 		".config/gh", ".config/gcloud", ".azure",
 		".cargo/credentials", ".cargo/credentials.toml", ".gem/credentials",
 		".m2/settings.xml", ".gradle/gradle.properties",
-		".git-credentials", ".config/git/credentials",
+		".git-credentials", ".gitconfig", ".config/git",
 		".terraform.d/credentials.tfrc.json", ".terraformrc",
 		".composer/auth.json", ".config/composer/auth.json",
 		".config/pip", ".pip",
 		".bundle/config", ".pgpass", ".vault-token", ".password-store",
 		".local/share/keyrings", ".config/op", ".config/hub",
 		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
+		".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc", ".bash_profile", ".profile",
+		".yarnrc", ".yarnrc.yml",
 		".crit", ".crit.config.json",
 		"Library/Keychains", "Library/Application Support/pip",
 	}
@@ -102,14 +102,46 @@ func secrets(home string) []string {
 	for _, r := range rel {
 		out = append(out, filepath.Join(home, filepath.FromSlash(r)))
 	}
+	for _, m := range moved {
+		for _, base := range filepath.SplitList(getenv(m.env)) {
+			// Home or above it would deny the toolchains too; a relative
+			// value names nothing the profile can match.
+			if !filepath.IsAbs(base) || Beneath(home, base) {
+				continue
+			}
+			if m.rel == nil {
+				out = append(out, filepath.Clean(base))
+			}
+			for _, r := range m.rel {
+				out = append(out, filepath.Join(base, filepath.FromSlash(r)))
+			}
+		}
+	}
 	return out
 }
 
-// envAllow is every variable a confined process inherits from crit, by exact
-// name: locale and identity, toolchain locators, TLS roots. The Windows
-// entries are what node, python and .cmd shims need to start at all; they
-// are absent elsewhere. GOPROXY is left out: its URL can carry credentials
-// (https://user:token@proxy) and the jail has no network to use it on.
+// moved is where an environment variable relocates a store: the value
+// itself (a path list, for KUBECONFIG), or rel beneath it.
+var moved = []struct {
+	env string
+	rel []string
+}{
+	{"XDG_CONFIG_HOME", []string{"gh", "gcloud", "git", "composer/auth.json", "pip", "op", "hub"}},
+	{"XDG_DATA_HOME", []string{"keyrings"}},
+	{"ZDOTDIR", []string{".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zsh_history"}},
+	{"CARGO_HOME", []string{"credentials", "credentials.toml"}},
+	{"COMPOSER_HOME", []string{"auth.json"}},
+	{"AWS_SHARED_CREDENTIALS_FILE", nil}, {"AWS_CONFIG_FILE", nil},
+	{"GOOGLE_APPLICATION_CREDENTIALS", nil}, {"CLOUDSDK_CONFIG", nil}, {"AZURE_CONFIG_DIR", nil},
+	{"KUBECONFIG", nil}, {"DOCKER_CONFIG", nil}, {"GNUPGHOME", nil}, {"PASSWORD_STORE_DIR", nil},
+	{"NETRC", nil}, {"NPM_CONFIG_USERCONFIG", nil}, {"PIP_CONFIG_FILE", nil},
+	{"BUNDLE_USER_CONFIG", nil}, {"TF_CLI_CONFIG_FILE", nil}, {"PGPASSFILE", nil},
+	{"GIT_CONFIG_GLOBAL", nil}, {"CLAUDE_CONFIG_DIR", nil}, {"CODEX_HOME", nil}, {"HISTFILE", nil},
+}
+
+// envAllow is every variable a confined process inherits, by exact name.
+// The Windows entries are what node, python and .cmd shims need to start.
+// GOPROXY is left out: its URL can carry credentials.
 var envAllow = []string{
 	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TZ",
 	"LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
@@ -126,11 +158,10 @@ var envAllow = []string{
 // envReserved is what Process.Env may not override: the jail owns them.
 var envReserved = []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP"}
 
-// buildEnv is the allowlist, PATH without relative or in-tree entries, the
-// temp variables and XDG_CACHE_HOME pointed into scratch, then Process.Env.
-// Everything else is dropped. macOS ignores XDG_CACHE_HOME (os.UserCacheDir
-// is ~/Library/Caches there, unwritable), so a program that caches says where
-// through Process.Env (gopls: GOCACHE, GOPLSCACHE).
+// buildEnv is the allowlist with a scrubbed PATH, the temp variables and
+// XDG_CACHE_HOME pointed into scratch, then Process.Env. macOS ignores
+// XDG_CACHE_HOME, so a program that caches is told where through Process.Env
+// (gopls: GOCACHE, GOPLSCACHE).
 func buildEnv(environ []string, t Trees, scratch string, p Process) ([]string, error) {
 	for _, kv := range p.Env {
 		if k, _, _ := strings.Cut(kv, "="); slices.ContainsFunc(envReserved, func(r string) bool { return strings.EqualFold(r, k) }) {
@@ -153,6 +184,9 @@ func buildEnv(environ []string, t Trees, scratch string, p Process) ([]string, e
 		"TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp,
 		"XDG_CACHE_HOME="+filepath.Join(scratch, "cache"),
 		"GOTOOLCHAIN=local",
+		// The reviewer's git config can hold tokens and is unreadable in the
+		// jail, where git dies on a config it cannot open.
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
 	)
 	return append(env, p.Env...), nil
 }

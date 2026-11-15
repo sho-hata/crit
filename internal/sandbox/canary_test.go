@@ -29,16 +29,12 @@ type canary struct {
 	accepted atomic.Int32
 }
 
-// connect is TCP; udp proves the denial is of the socket, not of a TCP
-// connect alone (a connectionless connect
-// always succeeds unconfined). copy-exec copies the tree's binary into the
-// scratch and runs it from there: the one writable place must not be an
-// executable one.
+// udp proves the denial is of the socket, not of a TCP connect alone.
+// copy-exec runs the tree's binary from the scratch: the one writable place
+// must not be an executable one.
 var steps = []string{"outside-write", "tree-write", "connect", "udp", "exec", "copy-exec", "secret"}
 
-// plantCanary writes canary.sh and an executable bin/canary into tree, points HOME
-// at a fresh directory holding .ssh/id_canary (so call it before
-// sandbox.Open), starts the listener, and records the tree's content hash.
+// plantCanary points HOME at a fresh directory, so call it before Open.
 func plantCanary(t testing.TB, tree string) *canary {
 	t.Helper()
 	home := t.TempDir()
@@ -103,13 +99,8 @@ if cat %q >/dev/null 2>&1; then note secret ok; else note secret denied; fi
 `, c.marker, filepath.Join(c.tree, "canary-wrote"), c.port, c.port, c.port, c.port, filepath.Join(c.tree, "bin", "canary"), filepath.Join(c.tree, "bin", "canary"), c.secret)
 }
 
-// command is the argv to run: sh resolved by the jail, never from the tree.
 func (c *canary) command() []string { return []string{"sh", c.script} }
 
-// assertContained checks a confined run that had TMPDIR under scratch: every
-// probe ran and was denied (the copy itself landed, only its run did not),
-// nothing landed outside scratch, the tree is byte-identical, and the
-// listener saw no connection.
 func (c *canary) assertContained(t testing.TB, scratch string) {
 	t.Helper()
 	results := readLog(t, filepath.Join(scratch, "tmp", "probe.log"))
