@@ -670,6 +670,6 @@ func (m *Manager) startServer(ctx context.Context, lang *Language, initOpts, set
 		return nil, fmt.Errorf("lsp: initializing %s (%s): %w", lang.Command[0], under, err)
 	}
 	debugf(debug, lang.Name, "initialized in %s", roundDuration(time.Since(initStart)))
-	lang.sweepCacheOnce(m.root)
+	lang.sweepCacheOnce(ws)
 	return client, nil
 }
