@@ -169,7 +169,11 @@ var languages = []*Language{
 			"*.js", "*.mjs", "*.cjs", "*.jsx",
 			"package.json", "tsconfig*.json", "jsconfig.json",
 		},
+		// tsserver loads the repository's own node_modules/typescript (see
+		// tsInitOptions) and its compilerOptions.plugins: tree code, which is
+		// why a PR review offers no server without the sandbox.
 		InitOptions: tsInitOptions,
+		Env:         nodeEnv,
 		ExtraRoots:  npmGlobalRoots,
 	},
 	{
@@ -218,12 +222,24 @@ func goEnv(ws Workspace) []string {
 	}
 }
 
+// nodeEnv keeps node's module compile cache, which tsserver (TypeScript
+// 5.7+) turns on under os.tmpdir(), in the scratch's cache rather than its
+// tmp, which every start empties; a cold cache costs the next start the
+// compile of the whole server (about 75 ms for tsserver, measured).
+func nodeEnv(ws Workspace) []string {
+	return []string{"NODE_COMPILE_CACHE=" + filepath.Join(ws.Scratch, "cache", "node-compile-cache")}
+}
+
 // tsInitOptions pins the nearest TypeScript install. typescript-language-server
 // resolves "typescript" from its workspace root and exits during initialize
 // when it finds none — the ordinary monorepo layout, where the dependency
 // belongs to the owning package (frontend/node_modules/typescript), not the
 // repo root crit anchors the workspace to. nil leaves the server's own
 // resolution in charge (single-package repo, global typescript).
+//
+// Pin or no pin, the server loads the repository's own typescript package
+// when one is installed: tree code, which is why the language requires a
+// sandbox backend.
 func tsInitOptions(ws Workspace, absPath string) map[string]any {
 	tsserver := findTSServer(ws.Root, absPath)
 	if tsserver == "" {
@@ -337,17 +353,60 @@ func goExtraRoots(_ string, run Run) []PeekRoot {
 
 // npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
 // installed globally (the README's install command) and the repo has no
-// local typescript. Machine-wide, so root is ignored.
-func npmGlobalRoots(_ string, run Run) []PeekRoot {
-	out, err := run("npm", "root", "-g")
-	if err != nil {
-		return nil
+// local typescript: the node_modules the server that will run is installed
+// in. `npm root -g` alone is not that: the npm on PATH can belong to another
+// prefix than the server's, and in the sandbox it cannot read a prefix set
+// in ~/.npmrc. It is asked only when the binary's path does not tell, behind
+// a version manager's shim. root is the tree the server must not come from.
+func npmGlobalRoots(root string, run Run) []PeekRoot {
+	dir := serverNodeModules("typescript-language-server", root)
+	if dir == "" {
+		out, err := run("npm", "root", "-g")
+		if err != nil {
+			return nil
+		}
+		dir = strings.TrimSpace(string(out))
 	}
-	dir := strings.TrimSpace(string(out))
 	if dir == "" {
 		return nil
 	}
 	return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+}
+
+// serverNodeModules is the node_modules directory the npm-installed server
+// name on PATH lives in, "" when its path does not show one. PATH is read as
+// the sandbox reads it, without relative entries and entries under tree, so
+// this is the binary that will run and not a copy in the repository's
+// node_modules/.bin.
+func serverNodeModules(name, tree string) string {
+	var bin string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if !filepath.IsAbs(dir) || (tree != "" && sandbox.Beneath(dir, tree)) {
+			continue
+		}
+		if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+			bin = p
+			break
+		}
+	}
+	if bin == "" {
+		return ""
+	}
+	// npm links the bin into <prefix>/bin on Unix and writes a .cmd shim
+	// beside node_modules on Windows.
+	real, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		return ""
+	}
+	for dir := filepath.Dir(real); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if filepath.Base(dir) == "node_modules" {
+			return dir
+		}
+	}
+	if dir := filepath.Join(filepath.Dir(real), "node_modules"); isDir(filepath.Join(dir, name)) {
+		return dir
+	}
+	return ""
 }
 
 func pathExt(path string) string {
