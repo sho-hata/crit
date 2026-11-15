@@ -27,7 +27,7 @@ func TestBuildEnv(t *testing.T) {
 		"PATH=" + strings.Join([]string{usrBin, filepath.Join(root, "node_modules", ".bin"), "relative/bin"}, string(os.PathListSeparator)),
 		"HOME=/home/u", "LANG=C.UTF-8", "GOFLAGS=-mod=mod",
 		"GITHUB_TOKEN=ghp_x", "AWS_SECRET_ACCESS_KEY=k", "NPM_TOKEN=t", "EDITOR=vim", "TMPDIR=/tmp/outside",
-		"MY_SDK=/opt/sdk",
+		"MY_SDK=/opt/sdk", "GOPROXY=https://user:token@proxy.example",
 	}
 
 	env, err := buildEnv(environ, trees, scratch, Process{Env: []string{"GOCACHE=" + filepath.Join(scratch, "gocache")}})
@@ -42,7 +42,7 @@ func TestBuildEnv(t *testing.T) {
 	if got["PATH"] != usrBin {
 		t.Errorf("PATH = %q, want only %q (in-tree and relative entries dropped)", got["PATH"], usrBin)
 	}
-	for _, k := range []string{"GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "NPM_TOKEN", "EDITOR", "MY_SDK"} {
+	for _, k := range []string{"GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "NPM_TOKEN", "EDITOR", "MY_SDK", "GOPROXY"} {
 		if _, ok := got[k]; ok {
 			t.Errorf("%s leaked through the allowlist", k)
 		}
@@ -77,9 +77,10 @@ func TestSecretsList(t *testing.T) {
 		".git-credentials", ".config/git/credentials",
 		".terraform.d/credentials.tfrc.json", ".terraformrc",
 		".composer/auth.json", ".config/composer/auth.json",
+		".config/pip", ".pip",
 		".bundle/config", ".pgpass", ".vault-token", ".password-store",
 		".local/share/keyrings", ".config/op", ".config/hub",
-		".claude", ".claude.json", ".zsh_history", ".bash_history",
+		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
 		".crit", ".crit.config.json",
 	} {
 		if !slices.Contains(got, filepath.Join(home, filepath.FromSlash(rel))) {
@@ -89,8 +90,10 @@ func TestSecretsList(t *testing.T) {
 	if slices.Contains(got, filepath.Join(home, "Library", "Keychains")) {
 		t.Error("Keychains is darwin-only")
 	}
-	if !slices.Contains(secrets(home, "darwin"), filepath.Join(home, "Library", "Keychains")) {
-		t.Error("darwin must deny Library/Keychains")
+	for _, rel := range []string{"Library/Keychains", "Library/Application Support/pip"} {
+		if !slices.Contains(secrets(home, "darwin"), filepath.Join(home, filepath.FromSlash(rel))) {
+			t.Errorf("darwin must deny %s", rel)
+		}
 	}
 	if secrets("", "linux") != nil {
 		t.Error("no home, no home-relative secrets")
@@ -185,6 +188,7 @@ func TestProfileGolden(t *testing.T) {
 (allow file-read* (subpath (param "READ_ALLOW_1")))
 (allow file-read-metadata (vnode-type DIRECTORY))
 (allow file-write* (subpath (param "SCRATCH_0")))
+(deny file-write* (literal (param "SCRATCH_0")))
 (allow file-write-data (literal "/dev/null") (literal "/dev/zero"))
 (allow file-ioctl (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/dtracehelper"))
 `
@@ -230,6 +234,19 @@ func TestProfileRedeniesSecretsUnderATree(t *testing.T) {
 	}
 }
 
+// requireBackend skips without a sandbox backend, or fails when CI demands one.
+func requireBackend(t *testing.T) Backend {
+	t.Helper()
+	b := Detect()
+	if b.Name == "" {
+		if os.Getenv("CRIT_REQUIRE_SANDBOX") != "" {
+			t.Fatalf("CRIT_REQUIRE_SANDBOX is set and there is no backend: %s", b.Reason)
+		}
+		t.Skipf("no sandbox backend: %s", b.Reason)
+	}
+	return b
+}
+
 func realTempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -262,6 +279,18 @@ func TestOpenRejectsBadPaths(t *testing.T) {
 	}
 }
 
+// No home, no secrets to name: refused rather than left readable.
+func TestOpenRefusesWithoutAHome(t *testing.T) {
+	homeVar := "HOME"
+	if runtime.GOOS == "windows" {
+		homeVar = "USERPROFILE"
+	}
+	t.Setenv(homeVar, "")
+	if _, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t)); err == nil {
+		t.Error("Open without a home directory accepted")
+	}
+}
+
 func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 	root := realTempDir(t)
 	evil := filepath.Join(root, "evil")
@@ -284,6 +313,56 @@ func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 	}
 	if _, err := j.Command(context.Background(), "t", proc("sub/evil")); err == nil {
 		t.Error("relative path accepted")
+	}
+	if runtime.GOOS != "windows" {
+		// /outside/link -> <tree>/sub, so /outside/link/../evil is <tree>/evil
+		// to the kernel and /outside/evil once cleaned.
+		if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(realTempDir(t), "link")
+		if err := os.Symlink(filepath.Join(root, "sub"), link); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := j.Command(context.Background(), "t", proc(link+"/../evil")); err == nil {
+			t.Error("unclean absolute path into the tree accepted")
+		}
+	}
+}
+
+// A scratch that is no longer a directory (a confined process swapped it for
+// a symlink) is refused before tmp/ is emptied through the link.
+func TestCommandRefusesReplacedScratch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs symlinks")
+	}
+	t.Parallel()
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := j.Workspace("t")
+	victim := realTempDir(t)
+	keep := filepath.Join(victim, "tmp", "keep")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(ws.Scratch), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, ws.Scratch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.Command(context.Background(), "t", func(Workspace) Process {
+		return Process{Argv: []string{"sh"}}
+	}); err == nil {
+		t.Error("symlinked scratch accepted")
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("cleanup followed the link into %s: %v", victim, err)
 	}
 }
 
@@ -357,13 +436,7 @@ func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 // A file one server wrote into its own scratch does not run from another
 // server's jail either: the scratch base as a whole is exec-denied.
 func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
-	b := Detect()
-	if b.Name == "" {
-		if os.Getenv("CRIT_REQUIRE_SANDBOX") != "" {
-			t.Fatalf("CRIT_REQUIRE_SANDBOX is set and there is no backend: %s", b.Reason)
-		}
-		t.Skipf("no sandbox backend: %s", b.Reason)
-	}
+	requireBackend(t)
 	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
@@ -393,16 +466,48 @@ func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	}
 }
 
+// A confined process may write under its scratch but not replace the scratch
+// itself: a symlink there would aim the next spawn's cleanup and write grant
+// elsewhere.
+func TestJailKeepsTheScratchInPlace(t *testing.T) {
+	requireBackend(t)
+	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := j.Workspace("t")
+	victim := realTempDir(t)
+	cmd, err := j.Command(context.Background(), "t", func(Workspace) Process {
+		return Process{Argv: []string{"sh", "-c", `rm -rf "$0"; mv "$0" "$0.moved"; ln -s "$1" "$0"; : > "$0/after"`, ws.Scratch, victim}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if st, err := os.Lstat(ws.Scratch); err != nil || !st.IsDir() {
+		t.Fatalf("scratch %s replaced: %v %v", ws.Scratch, err, st)
+	}
+	if _, err := os.Lstat(ws.Scratch + ".moved"); err == nil {
+		t.Error("scratch renamed away")
+	}
+	// Writes under the scratch still land, in the scratch and not the victim.
+	if _, err := os.Stat(filepath.Join(ws.Scratch, "after")); err != nil {
+		t.Errorf("write under the scratch denied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(victim, "after")); err == nil {
+		t.Error("write landed in the symlink target")
+	}
+	if _, err := j.Command(context.Background(), "t", func(Workspace) Process { return Process{Argv: []string{"sh"}} }); err != nil {
+		t.Errorf("respawn after the attempt: %v", err)
+	}
+}
+
 // TestJailConfinesCanary is the contract: the same script escapes when run
 // plainly (the control) and is contained through the Jail.
 func TestJailConfinesCanary(t *testing.T) {
-	b := Detect()
-	if b.Name == "" {
-		if os.Getenv("CRIT_REQUIRE_SANDBOX") != "" {
-			t.Fatalf("CRIT_REQUIRE_SANDBOX is set and there is no backend: %s", b.Reason)
-		}
-		t.Skipf("no sandbox backend: %s", b.Reason)
-	}
+	b := requireBackend(t)
 	tree := realTempDir(t)
 	c := sandboxtest.Plant(t, tree)
 	j, err := Open(Trees{Root: tree}, realTempDir(t))

@@ -57,7 +57,10 @@ func profile(p policy) (text string, params []string) {
 		}
 	}
 	b.WriteString("(allow file-read-metadata (vnode-type DIRECTORY))\n")
-	fmt.Fprintf(&b, "(allow file-write* %s)\n", scratch)
+	// Everything under the scratch, not the scratch itself: a process that
+	// could replace it with a symlink would steer the next spawn's cleanup
+	// and write grant to wherever the link points.
+	fmt.Fprintf(&b, "(allow file-write* %s)\n(deny file-write* (literal (param \"SCRATCH_0\")))\n", scratch)
 	b.WriteString(`(allow file-write-data (literal "/dev/null") (literal "/dev/zero"))
 (allow file-ioctl (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom") (literal "/dev/dtracehelper"))
 (allow sysctl-read)

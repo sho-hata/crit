@@ -97,13 +97,14 @@ func secrets(home, goos string) []string {
 		".git-credentials", ".config/git/credentials",
 		".terraform.d/credentials.tfrc.json", ".terraformrc",
 		".composer/auth.json", ".config/composer/auth.json",
+		".config/pip", ".pip",
 		".bundle/config", ".pgpass", ".vault-token", ".password-store",
 		".local/share/keyrings", ".config/op", ".config/hub",
-		".claude", ".claude.json", ".zsh_history", ".bash_history",
+		".claude", ".claude.json", ".codex", ".zsh_history", ".bash_history",
 		".crit", ".crit.config.json",
 	}
 	if goos == "darwin" {
-		rel = append(rel, "Library/Keychains")
+		rel = append(rel, "Library/Keychains", "Library/Application Support/pip")
 	}
 	out := make([]string, 0, len(rel))
 	for _, r := range rel {
@@ -115,11 +116,12 @@ func secrets(home, goos string) []string {
 // envAllow is every variable a confined process inherits from crit, by exact
 // name: locale and identity, toolchain locators, TLS roots. The Windows
 // entries are what node, python and .cmd shims need to start at all; they
-// are absent elsewhere.
+// are absent elsewhere. GOPROXY is left out: its URL can carry credentials
+// (https://user:token@proxy) and the jail has no network to use it on.
 var envAllow = []string{
 	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TZ",
 	"LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
-	"GOROOT", "GOPATH", "GOMODCACHE", "GOFLAGS", "GOPROXY", "GONOPROXY", "GONOSUMDB", "GOPRIVATE", "GOWORK",
+	"GOROOT", "GOPATH", "GOMODCACHE", "GOFLAGS", "GONOPROXY", "GONOSUMDB", "GOPRIVATE", "GOWORK",
 	"JAVA_HOME", "NODE_PATH", "NVM_DIR", "VIRTUAL_ENV", "CONDA_PREFIX", "PYENV_ROOT",
 	"CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "GEM_HOME", "GEM_PATH", "RBENV_ROOT",
 	"PUB_CACHE", "FLUTTER_ROOT", "SDKMAN_DIR", "DOTNET_ROOT", "PERL5LIB",

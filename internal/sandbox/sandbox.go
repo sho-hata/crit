@@ -99,8 +99,12 @@ func Open(t Trees, scratchBase string) (*Jail, error) {
 			return nil, fmt.Errorf("sandbox: scratch %s lies under the tree %s", scratchBase, tree)
 		}
 	}
-	// A process without a home has no home-relative secrets to deny.
-	home, _ := os.UserHomeDir()
+	// Without a home the secrets cannot be named, and the profile reads
+	// everything else: refuse rather than confine nothing.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: %w", err)
+	}
 	return &Jail{trees: t, scratchBase: scratchBase, readDeny: denied(home, scratchBase, t)}, nil
 }
 
@@ -143,6 +147,12 @@ func (j *Jail) Output(ctx context.Context, name string, build func(Workspace) Pr
 
 func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
 	ws := j.Workspace(name)
+	// The profile keeps a confined process from replacing the scratch; this
+	// refuses one that was replaced anyway, before RemoveAll and the write
+	// grant follow the link.
+	if st, err := os.Lstat(ws.Scratch); err == nil && !st.IsDir() {
+		return Workspace{}, fmt.Errorf("sandbox: scratch %s is not a directory (%v)", ws.Scratch, st.Mode().Type())
+	}
 	tmp := filepath.Join(ws.Scratch, "tmp")
 	if emptyTmp {
 		if err := os.RemoveAll(tmp); err != nil {
@@ -184,6 +194,12 @@ func resolveArgv0(argv []string, dirs []string, trees []string) (string, error) 
 	var bin string
 	switch {
 	case filepath.IsAbs(name):
+		// Beneath cleans before it resolves symlinks, the kernel resolves
+		// first: /link/../tool with /link -> <tree>/sub would pass the check
+		// as /tool and run <tree>/tool.
+		if filepath.Clean(name) != name {
+			return "", fmt.Errorf("sandbox: %q must be a clean path", name)
+		}
 		p, err := exec.LookPath(name)
 		if err != nil {
 			return "", fmt.Errorf("sandbox: %w", err)
