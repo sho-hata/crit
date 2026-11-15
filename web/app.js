@@ -4477,10 +4477,13 @@
     window.crit.lsp.setExtensions(extensions);
   }
 
-  // A second focus change can overtake the first one's response; only the
-  // latest request is applied.
+  // Lookups are switched off until the answer arrives: one still pending
+  // would act on the previous focus, and a failed refresh must not leave
+  // them on for a review the server may refuse. A second focus change can
+  // overtake the first one's response; only the latest request is applied.
   let lspConfigRequest = 0;
   function refreshLspConfig() {
+    if (window.crit.lsp) window.crit.lsp.setExtensions([]);
     const request = ++lspConfigRequest;
     fetch('/api/config').then(function (r) {
       if (!r.ok) throw new Error('config: ' + r.status);
