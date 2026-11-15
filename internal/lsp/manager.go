@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -632,10 +631,7 @@ func (m *Manager) startServer(ctx context.Context, lang *Language, initOpts, set
 	}
 	debug := debugEnabled()
 	ws := m.jail.Workspace(lang.Name)
-	p := sandbox.Process{Argv: slices.Clone(lang.Command), Stderr: io.Discard}
-	if lang.Args != nil {
-		p.Argv = append(p.Argv, lang.Args(ws)...)
-	}
+	p := sandbox.Process{Argv: lang.Command, Stderr: io.Discard}
 	if lang.Env != nil {
 		p.Env = lang.Env(ws)
 	}

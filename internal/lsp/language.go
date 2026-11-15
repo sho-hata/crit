@@ -105,8 +105,6 @@ type Language struct {
 	// cwd outside the tree; the Manager caches successful results per root.
 	// A nil result means the lookup failed and may be retried.
 	ExtraRoots func(root string, run Run) []PeekRoot
-	// Args appends per-workspace argv (a data directory under ws.Scratch).
-	Args func(ws Workspace) []string
 	// Env adds server environment, used to steer a tool's writes into
 	// ws.Scratch (GOCACHE). It may not set PATH, HOME or the temp dirs.
 	Env func(ws Workspace) []string
