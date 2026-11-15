@@ -77,7 +77,7 @@ func TestRealPyrightResolvesInTreeVenv(t *testing.T) {
 	dir := t.TempDir()
 	app := writePyProject(t, dir, true)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	start := time.Now()
@@ -118,7 +118,7 @@ func TestRealPyrightWithoutVenvCannotResolveThirdParty(t *testing.T) {
 	dir := t.TempDir()
 	app := writePyProject(t, dir, false)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	got, err := m.Hover(app, pyGreetLine, pyGreetChar)
@@ -141,7 +141,7 @@ func TestRealPyrightResolvesVenvFromDepRoot(t *testing.T) {
 	app := writePyProject(t, worktree, false)
 	writePyProject(t, depRoot, true)
 
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	got, err := m.Hover(app, pyGreetLine, pyGreetChar)
@@ -183,7 +183,7 @@ func TestRealPyrightStdlibDefinitionIsPeekable(t *testing.T) {
 	dir := t.TempDir()
 	app := writePyProject(t, dir, true)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	// `json.dumps` on line 8 (0-based 7): "    print(json.dumps(" — dumps at 15.

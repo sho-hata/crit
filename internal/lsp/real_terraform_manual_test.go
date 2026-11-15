@@ -99,7 +99,7 @@ func TestRealTerraformLS(t *testing.T) {
 	dir := t.TempDir()
 	main := writeTFProject(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	// A reference inside a resource body only resolves once the provider's
@@ -205,7 +205,7 @@ func TestRealTerraformLSNeverRunsTerraform(t *testing.T) {
 	dir := t.TempDir()
 	main := writeInitedTFProject(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	got, err := m.Hover(main, tfRegionUseLine, tfRegionUseChar)
@@ -249,7 +249,8 @@ func TestRealTerraformLSRunsTerraformByDefault(t *testing.T) {
 	dir := t.TempDir()
 	main := writeInitedTFProject(t, dir)
 
-	c, err := startServer(context.Background(), dir, LanguageForPath(main), nil, nil)
+	m := NewManager(dir, "", t.TempDir(), context.Background())
+	c, err := m.startServer(context.Background(), LanguageForPath(main), nil, nil)
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}
