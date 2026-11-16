@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/flock"
 )
 
 // planStorageDir returns the managed storage directory for a plan session.
@@ -220,7 +221,7 @@ func acquirePlanSessionsLock(path string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening plan sessions lock: %w", err)
 	}
-	if err := flockExclusive(f); err != nil {
+	if err := flock.Lock(f); err != nil {
 		f.Close()
 		return nil, fmt.Errorf("acquiring plan sessions lock: %w", err)
 	}
@@ -229,7 +230,7 @@ func acquirePlanSessionsLock(path string) (*os.File, error) {
 
 // releasePlanSessionsLock releases the advisory lock and closes the file.
 func releasePlanSessionsLock(f *os.File) {
-	_ = funlock(f)
+	_ = flock.Unlock(f)
 	f.Close()
 }
 

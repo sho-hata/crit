@@ -3,6 +3,8 @@ package session
 import (
 	"fmt"
 	"os"
+
+	"github.com/sho-hata/crit/internal/flock"
 )
 
 // WithReviewWriteLock serializes read-modify-write transactions on review.json.
@@ -14,7 +16,7 @@ func WithReviewWriteLock(identity string, fn func() error) error {
 		return err
 	}
 	defer func() {
-		_ = funlock(f)
+		_ = flock.Unlock(f)
 		_ = f.Close()
 	}()
 	return fn()
@@ -49,14 +51,14 @@ func lockIdentityFile(identity, lockPath, name string) (*os.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opening %s: %w", name, err)
 		}
-		if err := flockExclusive(f); err != nil {
+		if err := flock.Lock(f); err != nil {
 			_ = f.Close()
 			return nil, fmt.Errorf("acquiring %s: %w", name, err)
 		}
 		if lockFileCurrent(f, lockPath) {
 			return f, nil
 		}
-		_ = funlock(f)
+		_ = flock.Unlock(f)
 		_ = f.Close()
 	}
 	return nil, fmt.Errorf("acquiring %s: lock file kept being replaced", name)
