@@ -162,7 +162,7 @@ func RunPull(args []string) error { //nolint:gocyclo
 		}
 		added = MergeGHCommentsScoped(&cj, ghComments, session.PullScopeFor(daemonFocus, &cj), threadResolved)
 		if f.viewed {
-			viewedAdded = mergeRemoteViewed(&cj, id.Number, remoteViewed)
+			viewedAdded = mergeRemoteViewed(&cj, id, remoteViewed)
 		}
 		if added == 0 && viewedAdded == 0 {
 			return nil

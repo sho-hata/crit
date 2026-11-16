@@ -35,8 +35,7 @@ func TestPlanViewedPush(t *testing.T) {
 		{name: "changed since viewed", entry: mark(true), remote: "DISMISSED", stale: always, want: viewedPushPlan{stale: []string{"a.go"}}},
 		{name: "stale untick keeps newer github tick", entry: mark(false), remote: "VIEWED", stale: always, want: viewedPushPlan{stale: []string{"a.go"}}},
 		{name: "auto marked", entry: session.ViewedFile{Viewed: true, Auto: true, HeadSHA: head, ChangeNumber: pr}, remote: "UNVIEWED", stale: never},
-		{name: "marked outside a pr", entry: session.ViewedFile{Viewed: true}, remote: "UNVIEWED", stale: never},
-		{name: "marked on another pr", entry: session.ViewedFile{Viewed: true, HeadSHA: head, ChangeNumber: 8}, remote: "UNVIEWED", stale: never},
+		{name: "not pinned to a revision", entry: session.ViewedFile{Viewed: true}, remote: "UNVIEWED", stale: never},
 		{name: "file not in pr", entry: mark(true), stale: never},
 	}
 	for _, tt := range tests {
@@ -45,7 +44,7 @@ func TestPlanViewedPush(t *testing.T) {
 			if tt.remote != "" {
 				remote.files["a.go"] = tt.remote
 			}
-			got := planViewedPush(map[string]session.ViewedFile{"a.go": tt.entry}, pr, remote, tt.stale)
+			got := planViewedPush(map[string]session.ViewedFile{"a.go": tt.entry}, remote, tt.stale)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("got %+v, want %+v", got, tt.want)
 			}
@@ -60,16 +59,17 @@ func TestMergeRemoteViewed_ReplacesTickFromAnotherRevision(t *testing.T) {
 		want  int
 	}{
 		{"old head", session.ViewedFile{Viewed: true, HeadSHA: "old", ChangeNumber: 7}, 1},
-		{"another pr", session.ViewedFile{Viewed: true, HeadSHA: "head", ChangeNumber: 8}, 1},
 		{"not pinned", session.ViewedFile{Viewed: true}, 1},
 		{"current", session.ViewedFile{Viewed: true, HeadSHA: "head", ChangeNumber: 7}, 0},
 		{"untick on old head", session.ViewedFile{HeadSHA: "old", ChangeNumber: 7}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cj := session.CritJSON{ViewedFiles: map[string]session.ViewedFile{"a.go": tt.entry}}
+			cj := session.CritJSON{ChangeViewedFiles: map[string]map[string]session.ViewedFile{
+				"pr:7": {"a.go": tt.entry},
+			}}
 			remote := prViewedState{headSHA: "head", files: map[string]string{"a.go": "VIEWED"}}
-			if got := mergeRemoteViewed(&cj, 7, remote); got != tt.want {
+			if got := mergeRemoteViewed(&cj, ChangeID{Number: 7}, remote); got != tt.want {
 				t.Fatalf("added %d, want %d", got, tt.want)
 			}
 		})
@@ -77,8 +77,8 @@ func TestMergeRemoteViewed_ReplacesTickFromAnotherRevision(t *testing.T) {
 }
 
 func TestMergeRemoteViewed(t *testing.T) {
-	cj := session.CritJSON{ViewedFiles: map[string]session.ViewedFile{
-		"unticked.go": {Viewed: false},
+	cj := session.CritJSON{ChangeViewedFiles: map[string]map[string]session.ViewedFile{
+		"pr:7": {"unticked.go": {Viewed: false}},
 	}}
 	remote := prViewedState{headSHA: "head", files: map[string]string{
 		"new.go":       "VIEWED",
@@ -86,18 +86,19 @@ func TestMergeRemoteViewed(t *testing.T) {
 		"dismissed.go": "DISMISSED",
 		"unviewed.go":  "UNVIEWED",
 	}}
-	if got := mergeRemoteViewed(&cj, 7, remote); got != 1 {
+	if got := mergeRemoteViewed(&cj, ChangeID{Number: 7}, remote); got != 1 {
 		t.Fatalf("added %d, want 1", got)
 	}
+	marks := cj.ChangeViewedFiles["pr:7"]
 	want := session.ViewedFile{Viewed: true, HeadSHA: "head", ChangeNumber: 7}
-	if cj.ViewedFiles["new.go"] != want {
-		t.Fatalf("got %+v", cj.ViewedFiles["new.go"])
+	if marks["new.go"] != want {
+		t.Fatalf("got %+v", marks["new.go"])
 	}
-	if cj.ViewedFiles["unticked.go"].Viewed {
+	if marks["unticked.go"].Viewed {
 		t.Fatal("pull overrode a local untick")
 	}
-	if len(cj.ViewedFiles) != 2 {
-		t.Fatalf("only VIEWED files are added: %+v", cj.ViewedFiles)
+	if len(marks) != 2 || len(cj.ViewedFiles) != 0 {
+		t.Fatalf("only VIEWED files are added, under the PR: %+v", cj)
 	}
 }
 
@@ -169,11 +170,11 @@ func TestCompareChangedFiles(t *testing.T) {
 
 func TestBuildViewedPushPlan_ComparesEachRevisionOnce(t *testing.T) {
 	log := installViewedFakeGH(t, `echo '{"status":"ahead","files":[{"filename":"changed.go"}]}'`)
-	cj := session.CritJSON{ViewedFiles: map[string]session.ViewedFile{
+	cj := session.CritJSON{ChangeViewedFiles: map[string]map[string]session.ViewedFile{"pr:7": {
 		"changed.go": {Viewed: true, HeadSHA: "old", ChangeNumber: 7},
 		"same.go":    {Viewed: true, HeadSHA: "old", ChangeNumber: 7},
 		"current.go": {Viewed: true, HeadSHA: "head", ChangeNumber: 7},
-	}}
+	}}}
 	remote := prViewedState{headSHA: "head", files: map[string]string{
 		"changed.go": "DISMISSED", "same.go": "UNVIEWED", "current.go": "UNVIEWED",
 	}}
@@ -242,8 +243,8 @@ func viewedOnlyReview(t *testing.T) (dir, critPath string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cj := session.CritJSON{ReviewRound: 1, Files: map[string]session.CritJSONFile{}, ViewedFiles: map[string]session.ViewedFile{
-		"local.go": {Viewed: true, HeadSHA: "head", ChangeNumber: 7},
+	cj := session.CritJSON{ReviewRound: 1, Files: map[string]session.CritJSONFile{}, ChangeViewedFiles: map[string]map[string]session.ViewedFile{
+		"pr:7": {"local.go": {Viewed: true, HeadSHA: "head", ChangeNumber: 7}},
 	}}
 	if err := session.SaveCritJSON(critPath, cj); err != nil {
 		t.Fatal(err)
@@ -295,7 +296,40 @@ func TestRunPull_ViewedSavesWithoutComments(t *testing.T) {
 	}
 	cj := readCritJSONForPull(critPath)
 	want := session.ViewedFile{Viewed: true, HeadSHA: "head", ChangeNumber: 7}
-	if cj.ViewedFiles["remote.go"] != want {
-		t.Fatalf("got %+v", cj.ViewedFiles)
+	if cj.ChangeViewedFiles["pr:7"]["remote.go"] != want {
+		t.Fatalf("got %+v", cj.ChangeViewedFiles)
+	}
+}
+
+func TestMergeRemoteViewed_KeepsLayersApart(t *testing.T) {
+	// Layer 8 unticked a.go; pulling layer 7 must not touch that mark.
+	cj := session.CritJSON{ChangeViewedFiles: map[string]map[string]session.ViewedFile{
+		"pr:8": {"a.go": {Viewed: false, HeadSHA: "h8", ChangeNumber: 8}},
+	}}
+	remote := prViewedState{headSHA: "h7", files: map[string]string{"a.go": "VIEWED"}}
+	if got := mergeRemoteViewed(&cj, ChangeID{Number: 7}, remote); got != 1 {
+		t.Fatalf("added %d, want 1", got)
+	}
+	if cj.ChangeViewedFiles["pr:8"]["a.go"].Viewed {
+		t.Fatal("pull of PR 7 changed PR 8's mark")
+	}
+	if !cj.ChangeViewedFiles["pr:7"]["a.go"].Viewed {
+		t.Fatalf("PR 7 mark missing: %+v", cj.ChangeViewedFiles)
+	}
+}
+
+func TestViewedMarksFor_CaseVariantsAreDeterministic(t *testing.T) {
+	cj := session.CritJSON{ChangeViewedFiles: map[string]map[string]session.ViewedFile{
+		"pr:Acme/Widget#7": {"a.go": {Viewed: false}},
+		"pr:ACME/widget#7": {"a.go": {Viewed: false}},
+		"pr:acme/widget#7": {"a.go": {Viewed: true}},
+	}}
+	for i := 0; i < 50; i++ {
+		if !viewedMarksFor(cj, []string{"pr:acme/widget#7"})["a.go"].Viewed {
+			t.Fatal("the exact-case bucket must win")
+		}
+		if viewedMarksFor(cj, []string{"pr:aCME/WIDGET#7"})["a.go"].Viewed {
+			t.Fatal("folded matches must be read in sorted order")
+		}
 	}
 }
