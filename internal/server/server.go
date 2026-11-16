@@ -196,6 +196,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/review-comment/", s.withReady(s.handleReviewCommentByID))
 	mux.HandleFunc("/api/files/list", s.withReady(s.handleFilesList))
 	mux.HandleFunc("/api/files/comments", s.withReady(s.handleAllFileComments))
+	mux.HandleFunc("/api/viewed", s.withReady(s.handleViewed))
 	mux.HandleFunc("/api/story", s.withReady(s.handleStory))
 
 	// File-scoped endpoints (use ?path= query param)
@@ -566,6 +567,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// those servers cover.
 		"lsp_available":  s.lspAvailable(),
 		"lsp_extensions": s.lspExtensions(),
+		// lsp_sandbox names the confinement every language server runs
+		// under ("seatbelt", "" for none; without one a --pr review has
+		// lsp_available false).
+		"lsp_sandbox": s.lspBackend().Name,
 		// Initial view for files with a Document/Diff toggle (markdown) in
 		// git mode: "document" forces document view, anything else keeps the
 		// historical default (diff in git mode, document in file mode).

@@ -17,8 +17,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/sho-hata/crit/internal/daemon"
 	"github.com/sho-hata/crit/internal/lsp"
 	"github.com/sho-hata/crit/internal/pathsafe"
+	"github.com/sho-hata/crit/internal/sandbox"
+	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -89,6 +92,19 @@ type lspState struct {
 	idleTimeout   time.Duration
 	newProvider   func() lspProvider
 	langAvailable func(*lsp.Language) bool
+	backend       func() sandbox.Backend
+
+	// tempScratch is lspTempScratchLocked's directory, "" until needed.
+	tempScratch string
+}
+
+var errLSPNeedsSandbox = errors.New("a PR review needs a sandbox to run language servers, and none is available")
+
+func (s *Server) lspBackend() sandbox.Backend {
+	if s.lsp.backend != nil {
+		return s.lsp.backend()
+	}
+	return sandbox.Detect()
 }
 
 func (s *Server) lspAvailable() bool {
@@ -99,10 +115,30 @@ func (s *Server) lspAvailable() bool {
 	if sess == nil || sess.RepoRoot == "" {
 		return false
 	}
-	if sess.Focus.Kind == FocusRange && !rangeLSPSupported(sess) {
+	focus := lspFocus(sess)
+	if focus.Kind == FocusRange && !rangeLSPSupported(sess) {
+		return false
+	}
+	if prFocusNeedsSandbox(focus, s.lspBackend()) {
 		return false
 	}
 	return lsp.Any(s.lspLangAvailable())
+}
+
+// lspFocus is one consistent copy of the focus: SetFocus replaces it under
+// the session lock while requests are being served.
+func lspFocus(sess *Session) Focus {
+	sess.RLock()
+	defer sess.RUnlock()
+	return sess.Focus
+}
+
+// prFocusNeedsSandbox: a PR review runs language servers on a branch the
+// reviewer did not write, so where no backend can confine them crit offers
+// none. Working-tree and --range reviews are the reviewer's own commits and
+// run as before.
+func prFocusNeedsSandbox(f Focus, b sandbox.Backend) bool {
+	return f.PRNumber > 0 && b.Name == ""
 }
 
 func (s *Server) lspLangAvailable() func(*lsp.Language) bool {
@@ -166,14 +202,21 @@ func (s *Server) syncLSPRoot() error {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
 
-	if sess.Focus.Kind != FocusRange {
+	// Decided here, on the focus the root is about to be built from, and not
+	// only in lspAvailable: the focus can move to a PR between that check
+	// and this call.
+	focus := lspFocus(sess)
+	if prFocusNeedsSandbox(focus, s.lspBackend()) {
+		return errLSPNeedsSandbox
+	}
+	if focus.Kind != FocusRange {
 		if s.lsp.worktree != nil {
 			s.dropLSPRootLocked(sess, lspWorktreeRemoveTimeout)
 		}
 		return nil
 	}
 	patterns := s.lspSparsePatterns(sess)
-	if wt := s.lsp.worktree; wt != nil && wt.sha == sess.Focus.HeadSHA && slices.Equal(wt.patterns, patterns) {
+	if wt := s.lsp.worktree; wt != nil && wt.sha == focus.HeadSHA && slices.Equal(wt.patterns, patterns) {
 		s.touchLSPIdleLocked()
 		return nil
 	}
@@ -183,7 +226,7 @@ func (s *Server) syncLSPRoot() error {
 	s.dropLSPRootLocked(sess, lspWorktreeRemoveTimeout)
 
 	if limitMB := s.cfg.LSPWorktreeSizeLimitMB(); limitMB > 0 {
-		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, patterns)
+		size, err := vcs.SparseTreeSize(s.shutdownCtx, sess.RepoRoot, focus.HeadSHA, patterns)
 		if err != nil {
 			return fmt.Errorf("estimating lsp worktree size: %w", err)
 		}
@@ -192,16 +235,16 @@ func (s *Server) syncLSPRoot() error {
 		}
 	}
 
-	slot, err := s.checkoutLSPWorktree(sess, patterns)
+	slot, err := s.checkoutLSPWorktree(sess, focus.HeadSHA, patterns)
 	if err != nil {
 		return err
 	}
-	s.lsp.worktree = &lspWorktree{slot: slot, sha: sess.Focus.HeadSHA, patterns: patterns}
+	s.lsp.worktree = &lspWorktree{slot: slot, sha: focus.HeadSHA, patterns: patterns}
 	s.touchLSPIdleLocked()
 	return nil
 }
 
-func (s *Server) checkoutLSPWorktree(sess *Session, patterns []string) (*lsp.WorktreeSlot, error) {
+func (s *Server) checkoutLSPWorktree(sess *Session, headSHA string, patterns []string) (*lsp.WorktreeSlot, error) {
 	pool, err := lsp.WorktreePoolFor(sess.RepoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("locating lsp worktree pool: %w", err)
@@ -222,7 +265,7 @@ func (s *Server) checkoutLSPWorktree(sess *Session, patterns []string) (*lsp.Wor
 		return nil, err
 	}
 	_ = pool.Sweep(remove)
-	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, sess.Focus.HeadSHA, slot.Dir, patterns); err != nil {
+	if err := vcs.AddSparseWorktree(s.shutdownCtx, sess.RepoRoot, headSHA, slot.Dir, patterns); err != nil {
 		slot.Release()
 		return nil, fmt.Errorf("preparing lsp worktree: %w", err)
 	}
@@ -291,7 +334,11 @@ func (s *Server) lspManager() lspProvider {
 			if sess := s.session.Load(); sess != nil {
 				repoRoot = sess.RepoRoot
 			}
-			mgr := lsp.NewManager(s.lspRootLocked(), repoRoot, s.shutdownCtx)
+			scratch := lspScratchDir(s.reviewPath, repoRoot)
+			if scratch == "" {
+				scratch = s.lspTempScratchLocked()
+			}
+			mgr := lsp.NewManager(s.lspRootLocked(), repoRoot, scratch, s.shutdownCtx)
 			mgr.SetSessionFiles(s.lspSessionFiles)
 			s.lsp.prov = mgr
 		}
@@ -316,11 +363,57 @@ func (s *Server) lspSessionFiles() []string {
 	return paths
 }
 
+// lspScratchDir is the one directory the review's language servers may
+// write: the review folder's lsp-scratch, so it shares the review's cleanup.
+// When the review folder lies inside the repository (a project `output`
+// pointing into the tree) a server could write into the code under review
+// and sandbox.Open refuses, so the scratch moves under crit's own reviews
+// directory instead, keyed by the review folder's name. "" when that lies
+// inside the repository too (a dotfiles repository at $HOME).
+func lspScratchDir(reviewPath, repoRoot string) string {
+	scratch := session.ReviewPathsFor(reviewPath).LSPScratch()
+	if repoRoot == "" || !sandbox.Beneath(scratch, repoRoot) {
+		return scratch
+	}
+	reviews, err := daemon.ReviewsDir()
+	if err != nil {
+		return ""
+	}
+	scratch = session.ReviewPathsFor(filepath.Join(reviews, filepath.Base(reviewPath))).LSPScratch()
+	if sandbox.Beneath(scratch, repoRoot) {
+		return ""
+	}
+	return scratch
+}
+
+// lspTempScratchLocked is the scratch when the repository contains every
+// directory crit owns: a temp directory of this daemon's, made on first use
+// and removed by ShutdownLSP. MkdirTemp, not a name derived from the review:
+// the system temp directory can be shared, and a predictable name there
+// could be prepared by somebody else. Caller holds s.lsp.mu.
+func (s *Server) lspTempScratchLocked() string {
+	if s.lsp.tempScratch == "" {
+		dir, err := os.MkdirTemp("", "crit-lsp-scratch-")
+		if err != nil {
+			log.Printf("lsp: no scratch directory outside the repository: %v", err)
+			return ""
+		}
+		s.lsp.tempScratch = dir
+	}
+	return s.lsp.tempScratch
+}
+
 // ShutdownLSP is called on daemon shutdown.
 func (s *Server) ShutdownLSP() {
 	s.lsp.mu.Lock()
 	defer s.lsp.mu.Unlock()
 	s.dropLSPRootLocked(s.session.Load(), lspShutdownRemoveTimeout)
+	if s.lsp.tempScratch != "" {
+		if err := os.RemoveAll(s.lsp.tempScratch); err != nil {
+			log.Printf("lsp: removing %s: %v", s.lsp.tempScratch, err)
+		}
+		s.lsp.tempScratch = ""
+	}
 }
 
 // parseLSPParams: line is 1-based (the UI's NewNum); char is a 0-based
@@ -336,6 +429,10 @@ func (s *Server) parseLSPParams(w http.ResponseWriter, r *http.Request) (absPath
 		return "", 0, 0, false
 	}
 	if err := s.syncLSPRoot(); err != nil {
+		if errors.Is(err, errLSPNeedsSandbox) {
+			http.Error(w, "LSP not available", http.StatusNotFound)
+			return "", 0, 0, false
+		}
 		http.Error(w, fmt.Sprintf("lsp workspace: %v", err), http.StatusBadGateway)
 		return "", 0, 0, false
 	}
