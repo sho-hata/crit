@@ -324,7 +324,7 @@ func TestViewedMarksFor_CaseVariantsAreDeterministic(t *testing.T) {
 		"pr:ACME/widget#7": {"a.go": {Viewed: false}},
 		"pr:acme/widget#7": {"a.go": {Viewed: true}},
 	}}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		if !viewedMarksFor(cj, []string{"pr:acme/widget#7"})["a.go"].Viewed {
 			t.Fatal("the exact-case bucket must win")
 		}

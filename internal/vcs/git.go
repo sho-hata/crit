@@ -406,7 +406,7 @@ func CommitLog(baseRef, headRef, dir string) ([]CommitInfo, error) {
 		return nil, fmt.Errorf("git log failed: %w", err)
 	}
 	var commits []CommitInfo
-	for _, rec := range strings.Split(string(out), "\x1e") {
+	for rec := range strings.SplitSeq(string(out), "\x1e") {
 		rec = strings.TrimLeft(rec, "\n")
 		if strings.TrimSpace(rec) == "" {
 			continue

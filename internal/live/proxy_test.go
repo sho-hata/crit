@@ -1032,7 +1032,7 @@ func TestBindProxyServer_AllowsPublicURLHost(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	for attempt := 0; attempt < 20; attempt++ {
+	for attempt := range 20 {
 		apiLn, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
