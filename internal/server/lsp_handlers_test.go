@@ -1012,21 +1012,22 @@ func TestLSPScratchDirLeavesTheRepo(t *testing.T) {
 	repo := t.TempDir()
 
 	outside := filepath.Join(t.TempDir(), "reviews", "k1")
-	if got, want := lspScratchDir(outside, repo), session.ReviewPathsFor(outside).LSPScratch(); got != want {
-		t.Errorf("review folder outside the repo: scratch = %s, want %s", got, want)
+	want := session.ReviewPathsFor(outside).LSPScratch()
+	if got, ok := lspScratchDir(outside, repo); !ok || got != want {
+		t.Errorf("review folder outside the repo: scratch = %s (%v), want %s", got, ok, want)
 	}
-	if got, want := lspScratchDir(outside, ""), session.ReviewPathsFor(outside).LSPScratch(); got != want {
-		t.Errorf("no repo root: scratch = %s, want %s", got, want)
+	if got, ok := lspScratchDir(outside, ""); !ok || got != want {
+		t.Errorf("no repo root: scratch = %s (%v), want %s", got, ok, want)
 	}
 
 	inside := filepath.Join(repo, ".crit-data", "reviews", "k2")
-	want := filepath.Join(home, ".crit", "reviews", "k2", "lsp-scratch")
-	if got := lspScratchDir(inside, repo); got != want {
-		t.Errorf("review folder inside the repo: scratch = %s, want %s", got, want)
+	want = filepath.Join(home, ".crit", "reviews", "k2", "lsp-scratch")
+	if got, ok := lspScratchDir(inside, repo); !ok || got != want {
+		t.Errorf("review folder inside the repo: scratch = %s (%v), want %s", got, ok, want)
 	}
 
 	atHome := filepath.Join(home, ".crit", "reviews", "k3")
-	if got := lspScratchDir(atHome, home); got != "" {
+	if got, ok := lspScratchDir(atHome, home); ok {
 		t.Errorf("repository at $HOME: scratch = %s, want none under the review folders", got)
 	}
 }

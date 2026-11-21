@@ -31,7 +31,7 @@ type canary struct {
 // must not be an executable one.
 var steps = []string{"outside-write", "tree-write", "connect", "udp", "exec", "copy-exec", "secret"}
 
-func plantCanary(t testing.TB, tree string) *canary {
+func plantCanary(t testing.TB, tree, scratchBase string) (*canary, *Sandbox) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -66,7 +66,11 @@ func plantCanary(t testing.TB, tree string) *canary {
 	mustWrite(t, filepath.Join(tree, "bin", "canary"), "#!/bin/sh\n: > \"${TMPDIR:?}/exec-ran\"\n", 0o755)
 	mustWrite(t, c.script, c.scriptText(), 0o644)
 	c.treeHash = hashTree(t, tree)
-	return c
+	sb, err := New(Trees{Root: tree}, scratchBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, sb
 }
 
 // The subshells keep a failed redirection from exiting a POSIX sh.

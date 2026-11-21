@@ -611,11 +611,7 @@ func TestSandboxKeepsTheScratchInPlace(t *testing.T) {
 func TestSandboxConfinesCanary(t *testing.T) {
 	b := requireBackend(t)
 	tree := realTempDir(t)
-	c := plantCanary(t, tree)
-	sb, err := New(Trees{Root: tree}, realTempDir(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	c, sb := plantCanary(t, tree, realTempDir(t))
 	ws := sb.Workspace("canary")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
