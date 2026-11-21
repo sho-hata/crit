@@ -1319,7 +1319,7 @@ func TestLSPScratchForARepositoryAtHome(t *testing.T) {
 	if scratch == "" {
 		t.Fatal("no temp scratch was made")
 	}
-	if _, err := sandbox.Open(sandbox.Trees{Root: home}, scratch); err != nil {
+	if _, err := sandbox.New(sandbox.Trees{Root: home}, scratch); err != nil {
 		t.Errorf("the sandbox refuses the scratch: %v", err)
 	}
 	srv.ShutdownLSP()

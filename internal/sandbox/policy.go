@@ -155,7 +155,7 @@ var envAllow = []string{
 	"HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
 }
 
-// envReserved is what Process.Env may not override: the jail owns them.
+// envReserved is what Process.Env may not override: the sandbox owns them.
 var envReserved = []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP"}
 
 // buildEnv is the allowlist with a scrubbed PATH, the temp variables and
@@ -185,7 +185,7 @@ func buildEnv(environ []string, t Trees, scratch string, p Process) ([]string, e
 		"XDG_CACHE_HOME="+filepath.Join(scratch, "cache"),
 		"GOTOOLCHAIN=local",
 		// The reviewer's git config can hold tokens and is unreadable in the
-		// jail, where git dies on a config it cannot open.
+		// sandbox, where git dies on a config it cannot open.
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 	)
 	return append(env, p.Env...), nil

@@ -339,7 +339,7 @@ func (s *Server) lspSessionFiles() []string {
 // write: the review folder's lsp-scratch, so it shares the review's cleanup.
 // When the review folder lies inside the repository (a project `output`
 // pointing into the tree) a server could write into the code under review
-// and sandbox.Open refuses, so the scratch moves under crit's own reviews
+// and sandbox.New refuses, so the scratch moves under crit's own reviews
 // directory instead, keyed by the review folder's name. "" when that lies
 // inside the repository too (a dotfiles repository at $HOME).
 func lspScratchDir(reviewPath, repoRoot string) string {
