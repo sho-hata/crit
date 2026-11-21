@@ -16,9 +16,6 @@ import (
 	"testing"
 )
 
-// canary is one planted probe set bound to a listener on 127.0.0.1. It tries,
-// from inside the sandbox, everything the sandbox must prevent; assertEscaped runs
-// it unconfined, the control that proves the probes are live.
 type canary struct {
 	tree     string
 	script   string
@@ -34,7 +31,6 @@ type canary struct {
 // must not be an executable one.
 var steps = []string{"outside-write", "tree-write", "connect", "udp", "exec", "copy-exec", "secret"}
 
-// plantCanary points HOME at a fresh directory, so call it before New.
 func plantCanary(t testing.TB, tree string) *canary {
 	t.Helper()
 	home := t.TempDir()
@@ -73,9 +69,7 @@ func plantCanary(t testing.TB, tree string) *canary {
 	return c
 }
 
-// Each probe appends "<step> ok|denied" to $TMPDIR/probe.log; the sandbox sets
-// TMPDIR under its scratch, the only place a confined write may land. The
-// subshells keep a failed redirection from exiting a POSIX sh.
+// The subshells keep a failed redirection from exiting a POSIX sh.
 func (c *canary) scriptText() string {
 	return fmt.Sprintf(`#!/bin/sh
 log="${TMPDIR:?}/probe.log"

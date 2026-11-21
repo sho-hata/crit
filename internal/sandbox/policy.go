@@ -155,7 +155,6 @@ var envAllow = []string{
 	"HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
 }
 
-// envReserved is what Process.Env may not override: the sandbox owns them.
 var envReserved = []string{"PATH", "HOME", "TMPDIR", "TMP", "TEMP"}
 
 // buildEnv is the allowlist with a scrubbed PATH, the temp variables and

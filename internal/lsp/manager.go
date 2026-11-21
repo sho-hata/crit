@@ -63,10 +63,7 @@ type Manager struct {
 	// only — node_modules and .venv are absent — so a language whose handshake
 	// needs a dependency resolves it from depRoot at the same repo-relative
 	// path.
-	depRoot string
-	// sandbox is the only way a server or helper process gets started.
-	// sandboxErr is New's failure, surfaced on every spawn rather than
-	// worked around.
+	depRoot     string
 	sandbox     *sandbox.Sandbox
 	sandboxErr  error
 	baseCtx     context.Context
