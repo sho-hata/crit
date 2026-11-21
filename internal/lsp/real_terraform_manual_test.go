@@ -183,8 +183,8 @@ func fakeTerraformOnPath(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-func tfMarker(m *Manager) string {
-	return filepath.Join(m.sandbox.Workspace("terraform").Scratch, "tmp", "terraform-ran")
+func tfMarker(t *testing.T, m *Manager) string {
+	return filepath.Join(testSandbox(t, m).Workspace("terraform").Scratch, "tmp", "terraform-ran")
 }
 
 // writeInitedTFProject is writeTFProject plus the .terraform/ that
@@ -212,7 +212,7 @@ func TestRealTerraformLSNeverRunsTerraform(t *testing.T) {
 
 	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
-	marker := tfMarker(m)
+	marker := tfMarker(t, m)
 
 	got, err := m.Hover(main, tfRegionUseLine, tfRegionUseChar)
 	if err != nil {
@@ -256,7 +256,7 @@ func TestRealTerraformLSRunsTerraformByDefault(t *testing.T) {
 	main := writeInitedTFProject(t, dir)
 
 	m := NewManager(dir, "", t.TempDir(), context.Background())
-	marker := tfMarker(m)
+	marker := tfMarker(t, m)
 	c, err := m.startServer(context.Background(), LanguageForPath(main), nil, nil)
 	if err != nil {
 		t.Fatalf("startServer: %v", err)

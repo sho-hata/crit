@@ -64,8 +64,7 @@ type Manager struct {
 	// needs a dependency resolves it from depRoot at the same repo-relative
 	// path.
 	depRoot     string
-	sandbox     *sandbox.Sandbox
-	sandboxErr  error
+	sandbox     func() (*sandbox.Sandbox, error)
 	baseCtx     context.Context
 	idleTimeout time.Duration
 	start       startFunc
@@ -100,8 +99,7 @@ func NewManager(root, depRoot, scratchBase string, baseCtx context.Context) *Man
 	m := &Manager{
 		root:        root,
 		depRoot:     depRoot,
-		sandbox:     sb,
-		sandboxErr:  err,
+		sandbox:     func() (*sandbox.Sandbox, error) { return sb, err },
 		baseCtx:     baseCtx,
 		idleTimeout: DefaultIdleTimeout,
 		servers:     make(map[string]*serverState),
@@ -288,12 +286,13 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 		srv.files = make(map[string]fileState)
 		srv.reviewDocs = make(map[string]bool)
 	}
-	if m.sandboxErr != nil {
-		return fmt.Errorf("lsp: %w", m.sandboxErr)
+	sb, err := m.sandbox()
+	if err != nil {
+		return fmt.Errorf("lsp: %w", err)
 	}
 	// The scratch is named before the spawn so an InitOptions hook can point
 	// the server's own writes at it; Command creates it.
-	scratch := m.sandbox.Workspace(lang.Name).Scratch
+	scratch := sb.Workspace(lang.Name).Scratch
 	var initOpts map[string]any
 	if lang.InitOptions != nil {
 		initOpts = m.handshake(func(root, absPath string) map[string]any {
@@ -547,10 +546,11 @@ func (m *Manager) PeekRoots() []PeekRoot {
 // like its server, with cwd in its scratch rather than the tree.
 func (m *Manager) run(lang *Language) Run {
 	return func(argv ...string) ([]byte, error) {
-		if m.sandboxErr != nil {
-			return nil, m.sandboxErr
+		sb, err := m.sandbox()
+		if err != nil {
+			return nil, err
 		}
-		return m.sandbox.Output(m.baseCtx, lang.Name, sandbox.Process{Argv: argv})
+		return sb.Output(m.baseCtx, lang.Name, sandbox.Process{Argv: argv})
 	}
 }
 
@@ -627,8 +627,12 @@ func (m *Manager) startServer(ctx context.Context, lang *Language, initOpts, set
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
 	}
+	sb, err := m.sandbox()
+	if err != nil {
+		return nil, fmt.Errorf("lsp: %w", err)
+	}
 	debug := debugEnabled()
-	ws := m.sandbox.Workspace(lang.Name)
+	ws := sb.Workspace(lang.Name)
 	p := sandbox.Process{Argv: lang.Command, Stderr: io.Discard}
 	if lang.Env != nil {
 		p.Env = lang.Env(ws)
@@ -636,7 +640,7 @@ func (m *Manager) startServer(ctx context.Context, lang *Language, initOpts, set
 	if debug {
 		p.Stderr = &stderrLogger{name: lang.Name}
 	}
-	cmd, err := m.sandbox.Command(ctx, lang.Name, p)
+	cmd, err := sb.Command(ctx, lang.Name, p)
 	if err != nil {
 		return nil, fmt.Errorf("lsp: %s: %w", lang.Command[0], err)
 	}

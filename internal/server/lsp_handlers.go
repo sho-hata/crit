@@ -306,8 +306,8 @@ func (s *Server) lspManager() lspProvider {
 			if sess := s.session.Load(); sess != nil {
 				repoRoot = sess.RepoRoot
 			}
-			scratch := lspScratchDir(s.reviewPath, repoRoot)
-			if scratch == "" {
+			scratch, ok := lspScratchDir(s.reviewPath, repoRoot)
+			if !ok {
 				scratch = s.lspTempScratchLocked()
 			}
 			mgr := lsp.NewManager(s.lspRootLocked(), repoRoot, scratch, s.shutdownCtx)
@@ -335,20 +335,20 @@ func (s *Server) lspSessionFiles() []string {
 	return paths
 }
 
-func lspScratchDir(reviewPath, repoRoot string) string {
+func lspScratchDir(reviewPath, repoRoot string) (string, bool) {
 	scratch := session.ReviewPathsFor(reviewPath).LSPScratch()
 	if repoRoot == "" || !sandbox.Beneath(scratch, repoRoot) {
-		return scratch
+		return scratch, true
 	}
 	reviews, err := daemon.ReviewsDir()
 	if err != nil {
-		return ""
+		return "", false
 	}
 	scratch = session.ReviewPathsFor(filepath.Join(reviews, filepath.Base(reviewPath))).LSPScratch()
 	if sandbox.Beneath(scratch, repoRoot) {
-		return ""
+		return "", false
 	}
-	return scratch
+	return scratch, true
 }
 
 // lspTempScratchLocked is the scratch when the repository contains every
