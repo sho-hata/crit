@@ -335,13 +335,13 @@ func TestRealPathFollowsADanglingSymlink(t *testing.T) {
 func TestOpenRejectsBadPaths(t *testing.T) {
 	t.Parallel()
 	root := realTempDir(t)
-	if _, err := Open(Trees{Root: "relative"}, realTempDir(t)); err == nil {
+	if _, err := New(Trees{Root: "relative"}, realTempDir(t)); err == nil {
 		t.Error("relative root accepted")
 	}
-	if _, err := Open(Trees{Root: root}, filepath.Join(root, "scratch")); err == nil {
+	if _, err := New(Trees{Root: root}, filepath.Join(root, "scratch")); err == nil {
 		t.Error("scratch under the tree accepted")
 	}
-	if _, err := Open(Trees{Root: root + string(filepath.Separator)}, realTempDir(t)); err == nil {
+	if _, err := New(Trees{Root: root + string(filepath.Separator)}, realTempDir(t)); err == nil {
 		t.Error("unclean root accepted")
 	}
 	if runtime.GOOS != "windows" {
@@ -349,7 +349,7 @@ func TestOpenRejectsBadPaths(t *testing.T) {
 		if err := os.Symlink(root, link); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Open(Trees{Root: root}, filepath.Join(link, "scratch")); err == nil {
+		if _, err := New(Trees{Root: root}, filepath.Join(link, "scratch")); err == nil {
 			t.Error("scratch reached through a symlink into the tree accepted")
 		}
 	}
@@ -361,8 +361,8 @@ func TestOpenRefusesWithoutAHome(t *testing.T) {
 		homeVar = "USERPROFILE"
 	}
 	t.Setenv(homeVar, "")
-	if _, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t)); err == nil {
-		t.Error("Open without a home directory accepted")
+	if _, err := New(Trees{Root: realTempDir(t)}, realTempDir(t)); err == nil {
+		t.Error("New without a home directory accepted")
 	}
 }
 
@@ -372,19 +372,19 @@ func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 	if err := os.WriteFile(evil, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	j, err := Open(Trees{Root: root}, realTempDir(t))
+	sb, err := New(Trees{Root: root}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	proc := func(argv ...string) Process { return Process{Argv: argv} }
-	if _, err := j.Command(context.Background(), "t", proc(evil)); err == nil {
+	if _, err := sb.Command(context.Background(), "t", proc(evil)); err == nil {
 		t.Error("absolute path into the tree accepted")
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if _, err := j.Command(context.Background(), "t", proc("evil")); err == nil {
+	if _, err := sb.Command(context.Background(), "t", proc("evil")); err == nil {
 		t.Error("bare name found through an in-tree PATH entry accepted")
 	}
-	if _, err := j.Command(context.Background(), "t", proc("sub/evil")); err == nil {
+	if _, err := sb.Command(context.Background(), "t", proc("sub/evil")); err == nil {
 		t.Error("relative path accepted")
 	}
 	if runtime.GOOS != "windows" {
@@ -397,7 +397,7 @@ func TestCommandRefusesProgramFromTheTree(t *testing.T) {
 		if err := os.Symlink(filepath.Join(root, "sub"), link); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := j.Command(context.Background(), "t", proc(link+"/../evil")); err == nil {
+		if _, err := sb.Command(context.Background(), "t", proc(link+"/../evil")); err == nil {
 			t.Error("unclean absolute path into the tree accepted")
 		}
 	}
@@ -410,13 +410,13 @@ func TestCommandEnvironmentAndCwd(t *testing.T) {
 	t.Setenv("CANARY_TOKEN", "leak")
 	t.Setenv("LANG", "C")
 	root := realTempDir(t)
-	j, err := Open(Trees{Root: root}, realTempDir(t))
+	sb, err := New(Trees{Root: root}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := j.Workspace("t")
+	ws := sb.Workspace("t")
 	probe := Process{Argv: []string{"sh", "-c", `printf '%s\n%s\n%s\n%s\n' "$PWD" "$TMPDIR" "${CANARY_TOKEN-unset}" "$LANG"`}}
-	cmd, err := j.Command(context.Background(), "t", probe)
+	cmd, err := sb.Command(context.Background(), "t", probe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestCommandEnvironmentAndCwd(t *testing.T) {
 		t.Errorf("scratch %s: mode %v, want 0700", ws.Scratch, st.Mode())
 	}
 
-	out, err = j.Output(context.Background(), "t", probe)
+	out, err = sb.Output(context.Background(), "t", probe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,11 +446,11 @@ func TestCommandEnvironmentAndCwd(t *testing.T) {
 
 func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 	t.Parallel()
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := j.Workspace("t")
+	ws := sb.Workspace("t")
 	stale := filepath.Join(ws.Scratch, "tmp", "stale")
 	if err := os.MkdirAll(filepath.Dir(stale), 0o700); err != nil {
 		t.Fatal(err)
@@ -458,7 +458,7 @@ func TestCommandEmptiesTmpOnEachSpawn(t *testing.T) {
 	if err := os.WriteFile(stale, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.Command(context.Background(), "t", Process{Argv: []string{"/nonexistent/bin"}}); err == nil {
+	if _, err := sb.Command(context.Background(), "t", Process{Argv: []string{"/nonexistent/bin"}}); err == nil {
 		t.Fatal("nonexistent program accepted")
 	}
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
@@ -471,11 +471,11 @@ func TestCommandReplacesPlantedScratchDirs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs symlinks")
 	}
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := j.Workspace("t")
+	ws := sb.Workspace("t")
 	if err := os.MkdirAll(ws.Scratch, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +486,7 @@ func TestCommandReplacesPlantedScratchDirs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws.Scratch, "tmp"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := j.Output(context.Background(), "t", Process{Argv: []string{"sh", "-c", ":"}}); err != nil {
+	if _, err := sb.Output(context.Background(), "t", Process{Argv: []string{"sh", "-c", ":"}}); err != nil {
 		t.Fatalf("spawn over planted entries: %v", err)
 	}
 	for _, dir := range []string{cache, filepath.Join(ws.Scratch, "tmp")} {
@@ -499,12 +499,12 @@ func TestCommandReplacesPlantedScratchDirs(t *testing.T) {
 func TestCommandRefusesAScratchNameWithAPath(t *testing.T) {
 	t.Parallel()
 	base := realTempDir(t)
-	j, err := Open(Trees{Root: realTempDir(t)}, filepath.Join(base, "scratch"))
+	sb, err := New(Trees{Root: realTempDir(t)}, filepath.Join(base, "scratch"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"", ".", "..", "../x", "a/b"} {
-		if _, err := j.Command(context.Background(), name, Process{Argv: []string{"sh"}}); err == nil {
+		if _, err := sb.Command(context.Background(), name, Process{Argv: []string{"sh"}}); err == nil {
 			t.Errorf("scratch name %q accepted", name)
 		}
 	}
@@ -530,28 +530,28 @@ func TestCommandRefusesWhileTheSelfTestFails(t *testing.T) {
 		detected, detectSettled, selfTest = wasDetected, wasSettled, wasTest
 		detectMu.Unlock()
 	})
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The go tool, not sh: this one runs on Windows too.
 	p := Process{Argv: []string{"go", "version"}}
-	if _, err := j.Command(context.Background(), "t", p); err == nil || !strings.Contains(err.Error(), "self-test failed") {
+	if _, err := sb.Command(context.Background(), "t", p); err == nil || !strings.Contains(err.Error(), "self-test failed") {
 		t.Errorf("Command with a failing self-test: %v, want a refusal naming it", err)
 	}
 	fail = false
-	if _, err := j.Command(context.Background(), "t", p); err != nil {
+	if _, err := sb.Command(context.Background(), "t", p); err != nil {
 		t.Errorf("Command once the answer is final: %v", err)
 	}
 }
 
 func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	requireBackend(t)
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(j.Workspace("other").Scratch, "true")
+	bin := filepath.Join(sb.Workspace("other").Scratch, "true")
 	data, err := os.ReadFile("/usr/bin/true")
 	if err != nil {
 		t.Fatal(err)
@@ -565,24 +565,24 @@ func TestCommandRefusesExecFromAnotherScratch(t *testing.T) {
 	if err := exec.Command(bin).Run(); err != nil { //nolint:gosec // control: the copy runs unconfined
 		t.Fatalf("control: the copy does not run unconfined: %v", err)
 	}
-	cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"sh", "-c", `"$0"`, bin}})
+	cmd, err := sb.Command(context.Background(), "t", Process{Argv: []string{"sh", "-c", `"$0"`, bin}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out, err := cmd.CombinedOutput(); err == nil {
-		t.Errorf("%s ran from another scratch under the jail (%q)", bin, out)
+		t.Errorf("%s ran from another scratch under the sandbox (%q)", bin, out)
 	}
 }
 
-func TestJailKeepsTheScratchInPlace(t *testing.T) {
+func TestSandboxKeepsTheScratchInPlace(t *testing.T) {
 	requireBackend(t)
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := j.Workspace("t")
+	ws := sb.Workspace("t")
 	victim := realTempDir(t)
-	cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"sh", "-c", `rm -rf "$0"; mv "$0" "$0.moved"; ln -s "$1" "$0"; : > "$0/after"`, ws.Scratch, victim}})
+	cmd, err := sb.Command(context.Background(), "t", Process{Argv: []string{"sh", "-c", `rm -rf "$0"; mv "$0" "$0.moved"; ln -s "$1" "$0"; : > "$0/after"`, ws.Scratch, victim}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,25 +601,25 @@ func TestJailKeepsTheScratchInPlace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(victim, "after")); err == nil {
 		t.Error("write landed in the symlink target")
 	}
-	if _, err := j.Command(context.Background(), "t", Process{Argv: []string{"sh"}}); err != nil {
+	if _, err := sb.Command(context.Background(), "t", Process{Argv: []string{"sh"}}); err != nil {
 		t.Errorf("respawn after the attempt: %v", err)
 	}
 }
 
 // The contract: the same script escapes when run plainly (the control) and
-// is contained through the Jail.
-func TestJailConfinesCanary(t *testing.T) {
+// is contained through the Sandbox.
+func TestSandboxConfinesCanary(t *testing.T) {
 	b := requireBackend(t)
 	tree := realTempDir(t)
 	c := plantCanary(t, tree)
-	j, err := Open(Trees{Root: tree}, realTempDir(t))
+	sb, err := New(Trees{Root: tree}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := j.Workspace("canary")
+	ws := sb.Workspace("canary")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd, err := j.Command(ctx, "canary", Process{Argv: c.command()})
+	cmd, err := sb.Command(ctx, "canary", Process{Argv: c.command()})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -184,7 +184,7 @@ func fakeTerraformOnPath(t *testing.T) {
 }
 
 func tfMarker(m *Manager) string {
-	return filepath.Join(m.jail.Workspace("terraform").Scratch, "tmp", "terraform-ran")
+	return filepath.Join(m.sandbox.Workspace("terraform").Scratch, "tmp", "terraform-ran")
 }
 
 // writeInitedTFProject is writeTFProject plus the .terraform/ that
