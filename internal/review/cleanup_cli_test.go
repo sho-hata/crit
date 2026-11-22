@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -77,6 +78,38 @@ func TestFindStaleReviews_FolderForm(t *testing.T) {
 	}
 	if stale[0].path != staleFolder {
 		t.Errorf("path = %q, want %q", stale[0].path, staleFolder)
+	}
+}
+
+// A review that was only hovered leaves its LSP scratch and no review.json;
+// `crit cleanup` must reclaim it like the background sweep does.
+func TestFindStaleReviews_LSPScratchOnlyFolder(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	mk := func(name string, age time.Duration) string {
+		folder := filepath.Join(dir, name)
+		if err := os.MkdirAll(session.ReviewPathsFor(folder).LSPScratch(), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Now().Add(-age)
+		if err := os.Chtimes(folder, at, at); err != nil {
+			t.Fatal(err)
+		}
+		return folder
+	}
+	old := mk("oldscratch", 60*24*time.Hour)
+	recent := mk("newscratch", 24*time.Hour)
+
+	var got []string
+	for _, s := range findStaleReviews(dir, 7) {
+		got = append(got, s.path)
+	}
+	if !slices.Contains(got, old) {
+		t.Errorf("old scratch-only folder not collected: %v", got)
+	}
+	if slices.Contains(got, recent) {
+		t.Errorf("recent scratch-only folder collected: %v", got)
 	}
 }
 
