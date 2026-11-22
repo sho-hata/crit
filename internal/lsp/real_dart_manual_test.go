@@ -1,14 +1,5 @@
 package lsp
 
-// Opt-in integration tests against a real Dart analysis server (same
-// CRIT_LSP_REAL gate as the other real-server tests). Skipped unless enabled:
-//
-//	CRIT_LSP_REAL=1 go test ./internal/lsp -run TestRealDart -v
-//
-// Requires dart on PATH (the analysis server ships inside the SDK). The
-// plugin control fetches analysis_server_plugin from pub.dev, so it needs
-// network — as does scripts/install-lsp-servers.sh.
-
 import (
 	"context"
 	"os"
@@ -34,8 +25,6 @@ void main() {
 }
 `
 
-// dartPkgMainSource imports the own package by package: URI, the usual Dart
-// style, which resolves only through .dart_tool/package_config.json.
 const dartPkgMainSource = `import 'package:contract/greeter.dart';
 
 void main() {
@@ -43,8 +32,6 @@ void main() {
 }
 `
 
-// dartPackageConfig is what `dart pub get` writes for a package without
-// dependencies, trimmed to what the analyzer reads.
 const dartPackageConfig = `{
   "configVersion": 2,
   "packages": [
@@ -54,16 +41,11 @@ const dartPackageConfig = `{
 }
 `
 
-// Positions (0-based line, UTF-16 character); the same in dartMainSource and
-// dartPkgMainSource.
 const (
-	dartGreetUseLine, dartGreetUseChar = 3, 8 // greet
-	dartPrintLine, dartPrintChar       = 3, 2 // print
+	dartGreetUseLine, dartGreetUseChar = 3, 8
+	dartPrintLine, dartPrintChar       = 3, 2
 )
 
-// dartPluginRunWindow is how long to wait for the server to fetch and start
-// the canary plugin. The control sees it in about 20s: the plugin's
-// dependencies come from pub.dev.
 const dartPluginRunWindow = 90 * time.Second
 
 func requireRealDart(t *testing.T) {
@@ -76,8 +58,6 @@ func requireRealDart(t *testing.T) {
 	}
 }
 
-// writeDartProject lays out the contract package under dir and returns
-// lib/main.dart's path.
 func writeDartProject(t *testing.T, dir string) string {
 	t.Helper()
 	writeTree(t, dir, map[string]string{
@@ -88,11 +68,6 @@ func writeDartProject(t *testing.T, dir string) string {
 	return filepath.Join(dir, "lib", "main.dart")
 }
 
-// writeDartPluginCanary adds an analyzer plugin to the project in dir, the
-// way a branch would commit one: analysis_options.yaml names it, and its
-// package lives in the tree. Loading the plugin writes marker; the path is
-// baked in because the plugin runs as an isolate of the server. Returns the
-// marker path.
 func writeDartPluginCanary(t *testing.T, dir string) string {
 	t.Helper()
 	marker := filepath.Join(t.TempDir(), "plugin-ran")
@@ -110,9 +85,6 @@ func writeDartPluginCanary(t *testing.T, dir string) string {
 	return marker
 }
 
-// A repo's analysis_options.yaml can name analyzer plugins, which the server
-// fetches with `dart pub` and runs in-process. crit must keep it from doing
-// so, and the hover must still answer.
 func TestRealDartNeverRunsAnalyzerPlugins(t *testing.T) {
 	t.Parallel()
 	requireRealDart(t)
@@ -123,7 +95,7 @@ func TestRealDartNeverRunsAnalyzerPlugins(t *testing.T) {
 	before := listTree(t, dir)
 
 	m := NewManager(dir, "", t.TempDir(), context.Background())
-	t.Cleanup(m.Shutdown) // a failed Hover must not leak the server
+	t.Cleanup(m.Shutdown)
 
 	got, err := m.Hover(main, dartGreetUseLine, dartGreetUseChar)
 	if err != nil {
@@ -132,13 +104,9 @@ func TestRealDartNeverRunsAnalyzerPlugins(t *testing.T) {
 	if !strings.Contains(got, "friendly greeting") {
 		t.Errorf("hover = %q, want the doc comment", got)
 	}
-	// With plugins off the server never schedules the fetch, so a short
-	// window is enough: the control below sees the plugin manager at work
-	// (its pub fetch, then the marker) within seconds of the didOpen.
 	if ran, ok := waitForMarker(marker, 5*time.Second); ok {
 		t.Errorf("the analyzer plugin was run: %q", ran)
 	}
-	// Stop it before listing: a still-running server could write afterwards.
 	m.Shutdown()
 
 	if after := listTree(t, dir); !slices.Equal(after, before) {
@@ -146,10 +114,6 @@ func TestRealDartNeverRunsAnalyzerPlugins(t *testing.T) {
 	}
 }
 
-// Control: the same project with the server's own defaults does fetch and run
-// the plugin, so the test above is not passing vacuously. Not parallel: it
-// points PUB_CACHE, which the server inherits, at a temp dir so the fetch
-// leaves nothing behind.
 func TestRealDartRunsAnalyzerPluginsByDefault(t *testing.T) {
 	requireRealDart(t)
 	if sb := sandbox.Detect(); sb.Name != "" {
@@ -180,7 +144,6 @@ func TestRealDartRunsAnalyzerPluginsByDefault(t *testing.T) {
 	t.Logf("the plugin ran %s after the didOpen", time.Since(start).Round(time.Millisecond))
 }
 
-// Definitions of dart: library members land in the SDK.
 func TestRealDartSDKDefinitionIsPeekable(t *testing.T) {
 	t.Parallel()
 	requireRealDart(t)
@@ -206,9 +169,6 @@ func TestRealDartSDKDefinitionIsPeekable(t *testing.T) {
 	}
 }
 
-// package: imports resolve through .dart_tool/package_config.json and not
-// otherwise — which is what a range-focus worktree, where that untracked
-// file is absent, gets.
 func TestRealDartPackageImportNeedsPackageConfig(t *testing.T) {
 	t.Parallel()
 	requireRealDart(t)

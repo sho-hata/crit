@@ -53,9 +53,6 @@ curl -fsSL -o "$tmp/SHA256SUMS" "$base/terraform-ls_${TERRAFORM_LS_VERSION}_SHA2
 (cd "$tmp" && grep " ${zip}\$" SHA256SUMS | shasum -a 256 -c -)
 unzip -o -q "$tmp/$zip" terraform-ls -d "$BIN"
 
-# Dart: the analysis server ships inside the SDK (`dart language-server`), so
-# the whole SDK comes from dart-archive, verified against its .sha256sum. The
-# zip unpacks to dart-sdk/; the symlink keeps BIN alone on PATH enough.
 case "$os" in darwin) dart_os=macos ;; *) dart_os=$os ;; esac
 case "$arch" in amd64) dart_arch=x64 ;; *) dart_arch=$arch ;; esac
 dartzip="dartsdk-${dart_os}-${dart_arch}-release.zip"

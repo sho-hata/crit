@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// writeDartSDK lays out an SDK (lib/core/core.dart) under dir and returns the
-// path of its dart binary.
 func writeDartSDK(t *testing.T, dir string) string {
 	t.Helper()
 	for _, p := range []string{"lib/core/core.dart", "bin/dart"} {
@@ -27,9 +25,7 @@ func TestDartSDKRootFor(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		// setup lays out a tree under base and returns the dart binary and
-		// the SDK root expected, "" for none.
+		name  string
 		setup func(t *testing.T, base string) (bin, want string)
 	}{
 		{"plain sdk", func(t *testing.T, base string) (string, string) {
@@ -46,7 +42,6 @@ func TestDartSDKRootFor(t *testing.T) {
 			}
 			return wrapper, sdk
 		}},
-		// A bin/dart with no lib/core next to it is not an SDK we can read.
 		{"unknown layout", func(t *testing.T, base string) (string, string) {
 			bin := filepath.Join(base, "shims", "dart")
 			if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
@@ -69,7 +64,6 @@ func TestDartSDKRootFor(t *testing.T) {
 	}
 }
 
-// Not parallel: it sets the process environment.
 func TestPubCacheDir(t *testing.T) {
 	existing := t.TempDir()
 	cases := []struct {

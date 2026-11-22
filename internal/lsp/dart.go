@@ -6,15 +6,6 @@ import (
 	"runtime"
 )
 
-// dartExtraRoots:
-//   - the SDK's lib/, where definitions of dart: library members (print,
-//     String) land
-//   - the pub cache, where hosted packages live; the repo's
-//     .dart_tool/package_config.json points package: imports there
-//
-// Both are machine-wide; root only keeps the dart lookup off the tree. The cache holds whatever the
-// reviewer has fetched, not the reviewed SHA's versions, hence LocalEnv.
-// Each source is optional; only a lookup that finds nothing at all is nil.
 // dartArgs moves the analysis server's cache from ~/.dartServer, which the
 // sandbox cannot write, into the scratch, where it survives restarts.
 func dartArgs(ws Workspace) []string {
@@ -35,15 +26,11 @@ func dartExtraRoots(root string, _ Run) []PeekRoot {
 	return roots
 }
 
-// dartSDKRoot is the SDK behind the dart the sandbox will run, "" when its
-// layout is not recognized (built-in definitions then still answer, without
-// a peek).
 func dartSDKRoot(tree string) string {
 	bin := serverBinary("dart", tree)
 	if bin == "" {
 		return ""
 	}
-	// Package managers link the binary; the SDK sits around the target.
 	real, err := filepath.EvalSymlinks(bin)
 	if err != nil {
 		return ""
@@ -53,8 +40,7 @@ func dartSDKRoot(tree string) string {
 
 // dartSDKRootFor knows two layouts around a dart binary: <sdk>/bin/dart for a
 // plain SDK, and Flutter's <flutter>/bin/dart, a wrapper script that runs
-// <flutter>/bin/cache/dart-sdk/bin/dart. lib/core/core.dart is what makes a
-// candidate an SDK, so an unknown layout yields "" rather than a wrong root.
+// <flutter>/bin/cache/dart-sdk/bin/dart.
 func dartSDKRootFor(bin string) string {
 	dir := filepath.Dir(bin)
 	for _, sdk := range []string{filepath.Dir(dir), filepath.Join(dir, "cache", "dart-sdk")} {
@@ -65,9 +51,6 @@ func dartSDKRootFor(bin string) string {
 	return ""
 }
 
-// pubCacheDir is pub's system cache: $PUB_CACHE, else ~/.pub-cache
-// (%LOCALAPPDATA%\Pub\Cache on Windows). "" until a package has been fetched
-// into it: a peek root should exist.
 func pubCacheDir() string {
 	dir := os.Getenv("PUB_CACHE")
 	if dir == "" {
