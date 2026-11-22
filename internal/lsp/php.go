@@ -1,7 +1,6 @@
 package lsp
 
 import (
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -80,7 +79,7 @@ func phpExtraRoots(root string, _ Run) []PeekRoot {
 	if v := composerVendor(root); v != "" {
 		roots = append(roots, PeekRoot{Path: v, Label: "$VENDOR", LocalEnv: true})
 	}
-	if dir := intelephenseStubs(); dir != "" {
+	if dir := intelephenseStubs(root); dir != "" {
 		roots = append(roots, PeekRoot{Path: dir, Label: "$PHP_STUBS"})
 	}
 	if len(roots) == 0 {
@@ -91,10 +90,10 @@ func phpExtraRoots(root string, _ Run) []PeekRoot {
 
 // intelephenseStubs returns "" when the binary is not laid out like the npm
 // package; built-in definitions then still answer, but their peek is
-// unreadable.
-func intelephenseStubs() string {
-	bin, err := exec.LookPath("intelephense")
-	if err != nil {
+// unreadable. The binary is the one the sandbox runs, never a copy in tree.
+func intelephenseStubs(tree string) string {
+	bin := serverBinary("intelephense", tree)
+	if bin == "" {
 		return ""
 	}
 	// npm links the bin to lib/intelephense.js; the stubs sit next to it.
