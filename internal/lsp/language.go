@@ -437,6 +437,9 @@ func binaryOutsideTree(name, tree string) string {
 			continue
 		}
 		if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+			if tree != "" && sandbox.Beneath(p, tree) {
+				return ""
+			}
 			return p
 		}
 	}
