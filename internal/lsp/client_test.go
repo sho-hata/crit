@@ -69,6 +69,7 @@ func startFakeWithSettings(handler func(method string, params json.RawMessage) a
 		reqDone: make(map[int64]chan jsonrpcMessage),
 	}
 	fs.client = newClient("", c2sW, s2cR, nil, settings)
+	fs.client.provides = providers{hover: true, definition: true, references: true}
 	go fs.loop()
 	return fs
 }
@@ -87,7 +88,9 @@ func (fs *fakeServer) loop() {
 				result = fs.handler(msg.Method, msg.Params)
 			}
 			if result == nil && msg.Method == "initialize" {
-				result = map[string]any{"capabilities": map[string]any{}}
+				result = map[string]any{"capabilities": map[string]any{
+					"hoverProvider": true, "definitionProvider": true, "referencesProvider": true,
+				}}
 			}
 			if respErr, ok := result.(*ResponseError); ok {
 				fs.send(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": respErr})
@@ -768,5 +771,77 @@ func TestWaitReadyReturnsWhenServerDies(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("WaitReady did not return after the server died")
+	}
+}
+
+func TestClientSkipsRequestsTheServerDoesNotProvide(t *testing.T) {
+	t.Parallel()
+
+	var sent []string
+	var mu sync.Mutex
+	fs := startFake(func(method string, _ json.RawMessage) any {
+		mu.Lock()
+		sent = append(sent, method)
+		mu.Unlock()
+		switch method {
+		case "initialize":
+			return map[string]any{"capabilities": map[string]any{
+				"hoverProvider":      true,
+				"definitionProvider": map[string]any{"workDoneProgress": false},
+			}}
+		case "textDocument/hover":
+			return map[string]any{"contents": "doc"}
+		case "textDocument/definition":
+			return []map[string]any{{
+				"uri":   fileURI("/tmp/repo/util.go"),
+				"range": map[string]any{"start": map[string]any{"line": 1, "character": 2}},
+			}}
+		case "textDocument/references":
+			return &ResponseError{Code: -32603, Message: "Internal error."}
+		}
+		return nil
+	})
+	defer fs.client.Close()
+	if err := fs.client.Initialize("/tmp/repo", nil); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	if hover, err := fs.client.Hover("/tmp/repo/main.go", 0, 0); err != nil || hover != "doc" {
+		t.Errorf("Hover = %q, %v; want the server's answer", hover, err)
+	}
+	if locs, err := fs.client.Definition("/tmp/repo/main.go", 0, 0); err != nil || len(locs) != 1 {
+		t.Errorf("Definition = %+v, %v; want the server's one location", locs, err)
+	}
+	if locs, err := fs.client.References("/tmp/repo/main.go", 0, 0); err != nil || len(locs) != 0 {
+		t.Errorf("References = %+v, %v; want none and no error", locs, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if slices.Contains(sent, "textDocument/references") {
+		t.Errorf("references was sent to a server that did not declare it: %v", sent)
+	}
+	if !slices.Contains(sent, "textDocument/definition") {
+		t.Errorf("definition declared as an options object was not sent: %v", sent)
+	}
+}
+
+func TestProviderDeclared(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  string
+		want bool
+	}{
+		{"", false},
+		{"null", false},
+		{"false", false},
+		{"true", true},
+		{"{}", true},
+		{`{"workDoneProgress": true}`, true},
+	}
+	for _, tc := range cases {
+		if got := providerDeclared(json.RawMessage(tc.raw)); got != tc.want {
+			t.Errorf("providerDeclared(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
 	}
 }

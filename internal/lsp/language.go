@@ -228,6 +228,19 @@ var languages = []*Language{
 		Args:           dartArgs,
 		ExtraRoots:     dartExtraRoots,
 	},
+	{
+		Name: "java",
+		// -Dsyntaxserver=true selects jdt.ls's syntax server: no build-tool
+		// import, so the repo's Gradle/Maven build scripts and the plugins
+		// they pull in never run. Source roots are inferred from the .java
+		// files, so same-tree symbols and the JDK resolve; third-party types
+		// don't. It offers no find-references. --jvm-arg is the launcher's;
+		// the property is read by JDTEnvironmentUtils.
+		Command:        []string{"jdtls", "--jvm-arg=-Dsyntaxserver=true"},
+		Args:           jdtlsArgs,
+		IDByExt:        map[string]string{"java": "java"},
+		SparsePatterns: []string{"*.java"},
+	},
 }
 
 // goEnv keeps gopls's caches in scratch. The shared GOCACHE is the

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,6 +35,8 @@ func TestLanguageForPath(t *testing.T) {
 		{"templates/page.phtml", "php", "php"},
 		{"lib/src/widget.dart", "dart", "dart"},
 		{"UPPER.DART", "dart", "dart"},
+		{"src/main/java/com/example/App.java", "java", "java"},
+		{"UPPER.JAVA", "java", "java"},
 		// .hcl is shared with Packer, Nomad, Terragrunt, … and the Terraform
 		// test files (.tftest.hcl) can't be told apart by extension alone.
 		{"infra/run.tftest.hcl", "", ""},
@@ -312,5 +315,36 @@ func TestTSOpenSessionFile(t *testing.T) {
 				t.Errorf("tsOpenSessionFile = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestArgsNameOnlyScratchDirs(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	ws := Workspace{Root: filepath.Join(base, "repo"), Scratch: filepath.Join(base, "scratch")}
+	for _, lang := range languages {
+		if lang.Args == nil {
+			continue
+		}
+		var dirs int
+		for _, arg := range lang.Args(ws) {
+			if i := strings.IndexByte(arg, '='); i >= 0 {
+				arg = arg[i+1:]
+			}
+			if !filepath.IsAbs(arg) {
+				continue
+			}
+			dirs++
+			if !strings.HasPrefix(arg, ws.Scratch+string(filepath.Separator)) {
+				t.Errorf("%s: %s is not under the scratch %s", lang.Name, arg, ws.Scratch)
+			}
+			if strings.HasPrefix(arg, filepath.Join(ws.Scratch, "tmp")) {
+				t.Errorf("%s: %s lies under tmp/, which every start empties", lang.Name, arg)
+			}
+		}
+		if dirs == 0 {
+			t.Errorf("%s: Args names no directory", lang.Name)
+		}
 	}
 }
