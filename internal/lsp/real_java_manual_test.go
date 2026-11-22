@@ -35,15 +35,14 @@ var (
 	javaPrintlnLine, javaPrintlnChar   = sourcePos(javaAppSource, "println")
 )
 
-// sourcePos is the 0-based line and character of needle's first occurrence
-// in an ASCII fixture.
 func sourcePos(src, needle string) (line, char int) {
 	i := strings.Index(src, needle)
 	if i < 0 {
 		panic("fixture has no " + needle)
 	}
 	before := src[:i]
-	return strings.Count(before, "\n"), i - (strings.LastIndex(before, "\n") + 1)
+	lineStart := strings.LastIndex(before, "\n") + 1
+	return strings.Count(before, "\n"), len(utf16.Encode([]rune(before[lineStart:])))
 }
 
 func requireRealJdtls(t *testing.T) {
