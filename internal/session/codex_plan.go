@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -28,8 +29,8 @@ const (
 
 func extractProposedPlan(message string) (string, bool) {
 	matches := proposedPlanBlockRE.FindAllStringSubmatch(message, -1)
-	for i := len(matches) - 1; i >= 0; i-- {
-		if plan := strings.TrimSpace(matches[i][1]); plan != "" {
+	for _, m := range slices.Backward(matches) {
+		if plan := strings.TrimSpace(m[1]); plan != "" {
 			return plan, true
 		}
 	}

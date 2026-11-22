@@ -9,7 +9,8 @@ source "$SCRIPT_DIR/lib.sh"
 # Resolve symlinks / convert MSYS-style paths to native Windows paths.
 DIR=$(e2e_native_tempdir)
 BIN_DIR=$(e2e_native_tempdir)
-trap 'rm -rf "$DIR" "$BIN_DIR" "${FAKE_HOME:-}"' EXIT
+e2e_cleanup_install
+e2e_cleanup_add "$DIR" "$BIN_DIR"
 
 cd "$DIR"
 git init -q -b main
@@ -33,7 +34,14 @@ A_SHA=$(git rev-parse HEAD)
 
 git checkout -qb feat-b
 echo "beta" > b.txt
-git add b.txt
+# A Mermaid file in the A..B layer: renderers.rangemode.spec.ts checks that
+# git mode opens it on Source and loads mermaid.min.js only for Diagram.
+cat > flow.mmd << 'MMDFILE'
+flowchart TD
+  Start[Receive request] --> Auth{Authorized?}
+  Auth -->|yes| Handle[Handle request]
+MMDFILE
+git add b.txt flow.mmd
 git commit -qm "feat B"
 B_SHA=$(git rev-parse HEAD)
 
@@ -68,7 +76,16 @@ fi
 
 # Isolate from the user's ~/.crit.config.json (and USERPROFILE on Windows).
 FAKE_HOME=$(e2e_native_tempdir)
+e2e_cleanup_add "$FAKE_HOME"
 e2e_export_fake_home "$FAKE_HOME"
+
+# The daemon primes its `gh pr list` cache at boot, and the picker waits on
+# that prime. On a Windows runner the first gh call under a fresh HOME took
+# ~17s, longer than the stack popover tests wait. Pay it here, before the
+# fixture reports ready.
+if command -v gh >/dev/null 2>&1; then
+  gh auth status >/dev/null 2>&1 || true
+fi
 
 # Write fixture state for E2E tests.
 STATE_FILE="$(e2e_state_file "$PORT")"
@@ -82,5 +99,16 @@ STATE_FILE="$(e2e_state_file "$PORT")"
   echo "RANGE_HEAD_AFTER=$D_SHA"
 } > "$STATE_FILE"
 
+# Keep the real gh out of the picker. /api/picker waits on `gh`, which took over
+# 10s on Windows CI for the first caller, and the fixture has no PRs to list.
+# The stack comes from local branches. gh.cmd is for Windows, where exec.LookPath
+# does not find a file without an extension.
+GH_STUB_DIR=$(mktemp -d)
+e2e_cleanup_add "$GH_STUB_DIR"
+printf '#!/bin/sh\nexit 1\n' > "$GH_STUB_DIR/gh"
+chmod +x "$GH_STUB_DIR/gh"
+printf '@exit /b 1\r\n' > "$GH_STUB_DIR/gh.cmd"
+export PATH="$GH_STUB_DIR:$PATH"
+
 # Boot crit in range mode A..B.
-exec "$CRIT_BIN" _serve --no-open --port "$PORT" --range "$A_SHA..$B_SHA"
+e2e_serve "$CRIT_BIN" _serve --no-open --port "$PORT" --range "$A_SHA..$B_SHA"

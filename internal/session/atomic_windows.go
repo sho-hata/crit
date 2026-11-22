@@ -17,7 +17,9 @@ import (
 // FILE_SHARE_DELETE. Most short-lived readers (json.Unmarshal after
 // os.ReadFile) hold the handle for only microseconds, so a brief retry loop
 // recovers reliably. Git for Windows, rclone, and Go's own module cache use
-// the same recipe.
+// the same recipe. A missing file is not retried: for a rename it means the
+// temp file or the folder is gone, and waiting does not bring it back. Only
+// readers retry that case.
 func renameAtomic(src, dst string) error {
 	const maxAttempts = 10
 	delay := 1 * time.Millisecond
@@ -27,7 +29,7 @@ func renameAtomic(src, dst string) error {
 		if err == nil {
 			return nil
 		}
-		if !isWindowsTransientIOErr(err) {
+		if errors.Is(err, fs.ErrNotExist) || !isWindowsTransientIOErr(err) {
 			return err
 		}
 		time.Sleep(delay)
@@ -38,23 +40,20 @@ func renameAtomic(src, dst string) error {
 	return err
 }
 
-// readFileShared reads path with the same retry recipe as renameAtomic.
+// ReadFileShared reads path with the same retry recipe as renameAtomic.
 // While renameAtomic protects writers from short-lived readers, the inverse
 // race exists too: os.ReadFile fails with ERROR_SHARING_VIOLATION /
 // ERROR_LOCK_VIOLATION when a writer is mid-rename over the destination.
 // MoveFileEx with MOVEFILE_REPLACE_EXISTING can also briefly surface
 // ERROR_FILE_NOT_FOUND on the destination between delete-and-replace;
-// retry that too (see TestConcurrentSaveCritJSON_NoCorruption), but only
-// maxNotExistRetries times: far more often the file is simply absent (no
-// review saved yet), and the full budget cost ~320ms on every such read.
-// 10 attempts with 1→50ms backoff covers any realistic crit workload.
+// retry that the same way (see TestConcurrentSaveCritJSON_NoCorruption).
+// 10 attempts with 1→50ms backoff covers any realistic crit workload. A
+// missing file is retried only while a writer's temp file exists, so reading
+// a file that was never written (a new review) returns at once instead of
+// after about 300ms.
 func ReadFileShared(path string) ([]byte, error) {
-	const (
-		maxAttempts        = 10
-		maxNotExistRetries = 3 // 1+2+4ms
-	)
+	const maxAttempts = 10
 	delay := 1 * time.Millisecond
-	notExist := 0
 	var (
 		data []byte
 		err  error
@@ -64,11 +63,14 @@ func ReadFileShared(path string) ([]byte, error) {
 		if err == nil || !isWindowsTransientIOErr(err) {
 			return data, err
 		}
-		if os.IsNotExist(err) {
-			if notExist == maxNotExistRetries {
+		if errors.Is(err, fs.ErrNotExist) && !replaceInProgress(path) {
+			// A replace that finished between the read and the temp-file
+			// check leaves no temp file, so read once more before
+			// reporting the file missing. A new sharing error retries.
+			data, err = os.ReadFile(path)
+			if err == nil || !isWindowsTransientIOErr(err) || (errors.Is(err, fs.ErrNotExist) && !replaceInProgress(path)) {
 				return data, err
 			}
-			notExist++
 		}
 		time.Sleep(delay)
 		if delay < 50*time.Millisecond {

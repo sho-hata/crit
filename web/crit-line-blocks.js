@@ -1,5 +1,6 @@
 // crit-line-blocks.js — Line block building for markdown and code files.
-// Dependencies: window.crit.commentCardHelpers.escapeHtml, window.crit.codeHighlight
+// Dependencies: window.crit.commentCardHelpers.escapeHtml, window.crit.codeHighlight,
+// window.crit.renderers (optional)
 (function () {
   'use strict';
 
@@ -13,12 +14,28 @@
     return (typeof window !== 'undefined' && window.crit && window.crit.codeHighlight) || null;
   }
 
+  // Pluggable renderers (crit-renderers.js); absent → fences render as code.
+  function renderers() {
+    return (typeof window !== 'undefined' && window.crit && window.crit.renderers) || null;
+  }
+
+  // GitHub's slug (github-slugger), so in-document links written for GitHub
+  // resolve here too: every space becomes its own hyphen, nothing is collapsed
+  // or trimmed (`S7 — Data` → `s7--data`).
   function slugifyHeading(text) {
     return text
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s-]/gu, '')
-      .replace(/[\s-]+/g, '-')
-      .replace(/^-+|-+$/g, '');
+      .replace(/[^\p{Alphabetic}\p{M}\p{Nd}\p{Pc} -]/gu, '')
+      .replace(/ /g, '-');
+  }
+
+  // The heading's text as rendered, which is what GitHub slugs: link text
+  // counts, link URLs and images do not.
+  function headingText(inline) {
+    return (inline.children || [])
+      .filter(function(child) { return child.type === 'text' || child.type === 'code_inline'; })
+      .map(function(child) { return child.content; })
+      .join('');
   }
 
   // Turn valid document frontmatter into a YAML fence without shifting maps.
@@ -71,12 +88,20 @@
   function handleFenceToken(token, blocks, sourceLines, coveredUpTo, blockStart, blockEnd) {
     var lang = token.info.trim().split(/\s+/)[0] || '';
 
-    // Mermaid diagrams: render as a single block (not split per-line)
-    if (lang === 'mermaid') {
+    // Fences a pluggable renderer claims (mermaid, ...) are one block, not
+    // split per line. The source lines sit between the fence markers.
+    var rr = renderers();
+    var renderer = rr && rr.forFence(lang);
+    if (renderer) {
+      var contentLines = rr.lineCount(token.content);
       blocks.push({
         startLine: blockStart + 1, endLine: blockEnd,
-        html: '<pre><code class="language-mermaid">' + escapeHtml(token.content) + '</code></pre>',
-        isEmpty: false, cssClass: 'mermaid-block'
+        html: rr.targetHTML(renderer.name, 'fence', token.content, {
+          lang: lang,
+          startLine: contentLines ? blockStart + 2 : 0,
+          endLine: blockStart + 1 + contentLines,
+        }),
+        isEmpty: false, cssClass: 'render-block'
       });
       return addGapLineBlocks(blocks, sourceLines, blockEnd, blockEnd);
     }
@@ -521,7 +546,8 @@
     handleListToken: handleListToken,
     handleTableToken: handleTableToken,
     handleBlockquoteToken: handleBlockquoteToken,
-    slugifyHeading: slugifyHeading
+    slugifyHeading: slugifyHeading,
+    headingText: headingText
   };
   if (typeof window !== 'undefined') {
     window.crit = window.crit || {};

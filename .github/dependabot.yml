@@ -10,4 +10,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Skip versions published in the last week: compromised releases are
+    # usually caught and pulled within days.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/lsp"
+	"github.com/sho-hata/crit/internal/sandbox"
 	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -135,7 +137,7 @@ func TestLSPProviderReusedAcrossWorkingTreeRequests(t *testing.T) {
 		return fake
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=3&char=5")
 		if w.Code != http.StatusOK {
 			t.Fatalf("request %d: status = %d, body = %s", i, w.Code, w.Body.String())
@@ -571,7 +573,7 @@ func TestReadPeekBoundaries(t *testing.T) {
 	write := func(name string, lineCount int) string {
 		path := filepath.Join(dir, name)
 		var b strings.Builder
-		for i := 0; i < lineCount; i++ {
+		for i := range lineCount {
 			fmt.Fprintf(&b, "line %d\n", i+1)
 		}
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -612,7 +614,7 @@ func TestLSPDefinitionPeekTruncatesLargeFiles(t *testing.T) {
 	bigPath := filepath.Join(sess.RepoRoot, "generated.go")
 	var b strings.Builder
 	b.WriteString("package main\n")
-	for i := 0; i < 3000; i++ {
+	for range 3000 {
 		b.WriteString("// filler line\n")
 	}
 	if err := os.WriteFile(bigPath, []byte(b.String()), 0o644); err != nil {
@@ -811,7 +813,7 @@ func TestLSPReferencesCapKeepsRelevantFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	refs := make([]lsp.Location, 0, maxReferenceLocations+10)
-	for i := 0; i < maxReferenceLocations+5; i++ {
+	for i := range maxReferenceLocations + 5 {
 		refs = append(refs, lsp.Location{Path: bulkPath, Line: i})
 	}
 	refs = append(refs, lsp.Location{Path: filepath.Join(sess.RepoRoot, "main.go"), Line: 2})
@@ -856,7 +858,7 @@ func TestLSPReferencesSmallPeekWindow(t *testing.T) {
 	bigPath := filepath.Join(sess.RepoRoot, "big.go")
 	var b strings.Builder
 	b.WriteString("package main\n")
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		b.WriteString("// filler line\n")
 	}
 	if err := os.WriteFile(bigPath, []byte(b.String()), 0o644); err != nil {
@@ -955,6 +957,78 @@ func TestLSPConfigExposesAvailability(t *testing.T) {
 	}
 	if resp["lsp_available"] != true {
 		t.Errorf("lsp_available = %v, want true", resp["lsp_available"])
+	}
+	if _, ok := resp["lsp_sandbox"].(string); !ok {
+		t.Errorf("lsp_sandbox = %#v, want the backend name as a string", resp["lsp_sandbox"])
+	}
+}
+
+// The availability check and the choice of root are separate steps, and the
+// focus can move to a PR between them. The step that picks the tree is the
+// one that must refuse it.
+func TestLSPRootRefusesAPRFocusWithoutABackend(t *testing.T) {
+	t.Parallel()
+	srv, sess, repo, _ := newRangeLSPTestServer(t, &fakeLSPProvider{})
+	srv.lsp.backend = func() sandbox.Backend { return sandbox.Backend{Reason: "no sandbox here"} }
+	sess.Focus.PRNumber = 42
+
+	if err := srv.syncLSPRoot(); !errors.Is(err, errLSPNeedsSandbox) {
+		t.Errorf("syncLSPRoot under an unconfinable PR focus: %v, want errLSPNeedsSandbox", err)
+	}
+	if root := srv.lspRoot(); root != repo {
+		t.Errorf("lspRoot() = %s, want the working tree %s: no checkout of the PR head", root, repo)
+	}
+	if w := doLSPRequest(t, srv, "/api/lsp/hover?path=main.go&line=3&char=5"); w.Code != http.StatusNotFound {
+		t.Errorf("hover status = %d, want 404", w.Code)
+	}
+
+	srv.lsp.backend = func() sandbox.Backend { return sandbox.Backend{Name: "seatbelt"} }
+	if err := srv.syncLSPRoot(); err != nil {
+		t.Errorf("syncLSPRoot under a confinable PR focus: %v", err)
+	}
+}
+
+func TestPRFocusNeedsSandbox(t *testing.T) {
+	t.Parallel()
+	pr := Focus{Kind: FocusRange, PRNumber: 42}
+	rng := Focus{Kind: FocusRange}
+	if !prFocusNeedsSandbox(pr, sandbox.Backend{}) {
+		t.Error("a PR review without a backend must offer no server")
+	}
+	if prFocusNeedsSandbox(pr, sandbox.Backend{Name: "seatbelt"}) {
+		t.Error("a confined PR review keeps its servers")
+	}
+	if prFocusNeedsSandbox(rng, sandbox.Backend{}) {
+		t.Error("a --range review is the reviewer's own commits and runs as before")
+	}
+}
+
+// A review folder inside the repository would put the servers' scratch
+// under the tree they analyze; it moves to ~/.crit/reviews instead.
+func TestLSPScratchDirLeavesTheRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := t.TempDir()
+
+	outside := filepath.Join(t.TempDir(), "reviews", "k1")
+	want := session.ReviewPathsFor(outside).LSPScratch()
+	if got, ok := lspScratchDir(outside, repo); !ok || got != want {
+		t.Errorf("review folder outside the repo: scratch = %s (%v), want %s", got, ok, want)
+	}
+	if got, ok := lspScratchDir(outside, ""); !ok || got != want {
+		t.Errorf("no repo root: scratch = %s (%v), want %s", got, ok, want)
+	}
+
+	inside := filepath.Join(repo, ".crit-data", "reviews", "k2")
+	want = filepath.Join(home, ".crit", "reviews", "k2", "lsp-scratch")
+	if got, ok := lspScratchDir(inside, repo); !ok || got != want {
+		t.Errorf("review folder inside the repo: scratch = %s (%v), want %s", got, ok, want)
+	}
+
+	atHome := filepath.Join(home, ".crit", "reviews", "k3")
+	if got, ok := lspScratchDir(atHome, home); ok {
+		t.Errorf("repository at $HOME: scratch = %s, want none under the review folders", got)
 	}
 }
 
@@ -1222,5 +1296,35 @@ func TestLSPDefinitionLocalEnvNote(t *testing.T) {
 				t.Error("the note annotates a peek; the target must still carry its source")
 			}
 		})
+	}
+}
+
+// A repository rooted at $HOME (dotfiles) contains every directory crit
+// owns, so the scratch is a temp directory of the daemon's instead, one the
+// sandbox accepts, and it goes away with the daemon.
+func TestLSPScratchForARepositoryAtHome(t *testing.T) {
+	home := vcs.InitTestRepo(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sess := &Session{Mode: "git", RepoRoot: home, VCS: &vcs.GitVCS{}, ReviewRound: 1}
+	sess.InitTestChannels()
+	srv, err := NewServer(sess, FrontendFS, "", "test", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.reviewPath = filepath.Join(home, ".crit", "reviews", "k")
+
+	srv.lspManager()
+
+	scratch := srv.lsp.tempScratch
+	if scratch == "" {
+		t.Fatal("no temp scratch was made")
+	}
+	if _, err := sandbox.New(sandbox.Trees{Root: home}, scratch); err != nil {
+		t.Errorf("the sandbox refuses the scratch: %v", err)
+	}
+	srv.ShutdownLSP()
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Errorf("temp scratch left behind after shutdown: %v", err)
 	}
 }

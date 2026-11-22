@@ -1,21 +1,21 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { clearAllComments, loadPage } from './helpers';
+import { addComment, clearAllComments, loadPage } from './helpers';
 
 // Find a file path from the session
 async function getTestFilePath(request: APIRequestContext): Promise<string> {
-  const sessionRes = await request.get('/api/session');
-  const session = await sessionRes.json();
-  const file = session.files.find((f: any) => f.status !== 'deleted');
-  return file?.path || session.files[0].path;
+  const session = await (await request.get('/api/session')).json();
+  const files = session.files as Array<{ path: string; status: string }>;
+  const file = files.find(f => f.status !== 'deleted');
+  return file?.path || files[0].path;
 }
 
 test.describe('Multi-Round — File Mode — Frontend', () => {
-  test.beforeEach(async ({ page, request }) => {
+  test.beforeEach(async ({ request }) => {
     await clearAllComments(request);
-    await loadPage(page);
   });
 
   test('finish review with no comments shows approval in file mode', async ({ page }) => {
+    await loadPage(page);
     await page.locator('#finishBtn').click();
 
     await expect(page.locator('#waitingOverlay')).toHaveClass(/active/);
@@ -24,13 +24,8 @@ test.describe('Multi-Round — File Mode — Frontend', () => {
   });
 
   test('copy prompt button shows "Copied" feedback then reverts', async ({ page, request }) => {
-    const filePath = await getTestFilePath(request);
-    await request.post(`/api/file/comments?path=${encodeURIComponent(filePath)}`, {
-      data: { start_line: 1, end_line: 1, body: 'Copy feedback test' },
-    });
-
-    await page.reload();
-    await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
+    await addComment(request, await getTestFilePath(request), 1, 'Copy feedback test');
+    await loadPage(page);
 
     await page.locator('#finishBtn').click();
     await expect(page.locator('#waitingOverlay')).toHaveClass(/active/);
@@ -46,14 +41,44 @@ test.describe('Multi-Round — File Mode — Frontend', () => {
     await expect(copyBtn).not.toHaveClass(/copied/);
   });
 
-  test('round-complete SSE exits waiting state in file mode', async ({ page, request }) => {
-    const filePath = await getTestFilePath(request);
-    await request.post(`/api/file/comments?path=${encodeURIComponent(filePath)}`, {
-      data: { start_line: 1, end_line: 1, body: 'SSE test' },
+  test('a triple click on Finish Review finishes once', async ({ page, request }) => {
+    await addComment(request, await getTestFilePath(request), 1, 'Triple click test');
+    await loadPage(page);
+    let finishes = 0;
+    page.on('request', (r) => {
+      if (new URL(r.url()).pathname === '/api/finish' && r.method() === 'POST') finishes++;
     });
 
-    await page.reload();
-    await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
+    const box = (await page.locator('#finishBtn').boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { clickCount: 3 });
+
+    await expect(page.locator('#waitingOverlay')).toHaveClass(/active/);
+    await expect(page.locator('#finishBtn')).toHaveText('Waiting...');
+    expect(finishes).toBe(1);
+  });
+
+  test('a click on the backdrop just after Finish keeps the waiting dialog open', async ({ page, request }) => {
+    await addComment(request, await getTestFilePath(request), 1, 'Backdrop test');
+    await loadPage(page);
+    const overlay = page.locator('#waitingOverlay');
+
+    // The backdrop opens where the button was, so a late extra click lands on it.
+    const box = (await page.locator('#finishBtn').boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(overlay).toHaveClass(/active/);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(overlay).toHaveClass(/active/);
+    await expect(page.locator('#finishBtn')).toHaveText('Waiting...');
+
+    // A deliberate backdrop click later still goes back to editing.
+    await page.waitForTimeout(1_200);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(overlay).not.toHaveClass(/active/);
+  });
+
+  test('round-complete SSE exits waiting state in file mode', async ({ page, request }) => {
+    await addComment(request, await getTestFilePath(request), 1, 'SSE test');
+    await loadPage(page);
 
     await page.locator('#finishBtn').click();
     const overlay = page.locator('#waitingOverlay');

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { handleTrayClick, armReanchor, disarmReanchor } = require('../live-mode-reanchor-click.js');
+const { handleTrayClick, armReanchor, disarmReanchor, isArmedFor } = require('../live-mode-reanchor-click.js');
 
 test('clicks on Re-anchor btn dispatch enter-reanchor-mode', () => {
   let posted = null;
@@ -47,4 +47,11 @@ test('armReanchor is no-op when already armed for some pin', () => {
   armReanchor(ctx, 'p2', btn2);
   assert.equal(ctx.state.reanchorPending, 'p1');
   assert.equal(btn2.disabled, false);
+});
+
+test('isArmedFor rejects unsolicited and mismatched re-anchor selections', () => {
+  assert.equal(isArmedFor({ reanchorPending: null }, 'p1'), false);
+  assert.equal(isArmedFor({}, 'p1'), false);
+  assert.equal(isArmedFor({ reanchorPending: 'p1' }, 'p2'), false);
+  assert.equal(isArmedFor({ reanchorPending: 'p1' }, 'p1'), true);
 });

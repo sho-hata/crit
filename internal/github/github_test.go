@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sho-hata/crit/internal/review"
+	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/testutil"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -18,7 +19,18 @@ import (
 // Avoid shelling out to `gh` during tests. Tests that want to exercise
 // display-name resolution should pre-populate userNameCache directly.
 func init() {
-	fetchGHUserName = func(login string) (string, error) { return "", nil }
+	SetFetchGHUserNameForTest(func(string) (string, error) { return "", nil })
+}
+
+func TestSetFetchGHUserNameForTestRestores(t *testing.T) {
+	restore := SetFetchGHUserNameForTest(func(login string) (string, error) { return "Name of " + login, nil })
+	if got, _ := fetchGHUserName("ada"); got != "Name of ada" {
+		t.Fatalf("swapped lookup = %q, want %q", got, "Name of ada")
+	}
+	restore()
+	if got, _ := fetchGHUserName("ada"); got != "" {
+		t.Fatalf("restored lookup = %q, want the init stub's empty name", got)
+	}
 }
 
 // outputDataRootIdentity returns the review identity folder under dataRoot,
@@ -753,9 +765,7 @@ func TestAddCommentToCritJSON_RejectsPathTraversal(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("../../../etc/passwd", 1, 1, "bad", "", "", "", inheritedScope{})
 	if err == nil {
@@ -771,9 +781,7 @@ func TestAddCommentToCritJSON_RejectsAbsolutePath(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("/etc/passwd", 1, 1, "bad", "", "", "", inheritedScope{})
 	if err == nil {
@@ -788,9 +796,7 @@ func TestAddCommentToCritJSON_CreatesNewFile(t *testing.T) {
 		t.Fatalf("git init: %v", err)
 	}
 
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("main.go", 10, 15, "Fix this bug", "", "", dir, inheritedScope{})
 	if err != nil {
@@ -829,9 +835,7 @@ func TestAddCommentToCritJSON_AppendsToExisting(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	if err := addCommentToCritJSONScoped("main.go", 1, 1, "First", "", "", dir, inheritedScope{}); err != nil {
 		t.Fatalf("first add: %v", err)
@@ -858,9 +862,7 @@ func TestAddCommentToCritJSON_MultipleFiles(t *testing.T) {
 	if err := exec.Command("git", "init", dir).Run(); err != nil {
 		t.Fatalf("git init: %v", err)
 	}
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	addCommentToCritJSONScoped("main.go", 1, 1, "Comment on main", "", "", dir, inheritedScope{})
 	addCommentToCritJSONScoped("auth.go", 5, 10, "Comment on auth", "", "", dir, inheritedScope{})
@@ -882,9 +884,7 @@ func TestAddCommentToCritJSON_MultipleFiles(t *testing.T) {
 
 func TestAddCommentToCritJSON_FileMode_NoGitRepo(t *testing.T) {
 	dir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addCommentToCritJSONScoped("main.go", 5, 5, "File mode comment", "", "", dir, inheritedScope{})
 	if err != nil {
@@ -914,9 +914,7 @@ func TestAddCommentToCritJSON_FileMode_NoGitRepo(t *testing.T) {
 
 func TestAddCommentToCritJSON_FileMode_PathRelativeToCWD(t *testing.T) {
 	dir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	// Path should be stored as given (relative to CWD), not resolved to anything else
 	addCommentToCritJSONScoped("src/auth.go", 10, 10, "comment", "", "", dir, inheritedScope{})
@@ -937,9 +935,7 @@ func TestAddCommentToCritJSON_OutputDir(t *testing.T) {
 	}
 	outputDir := t.TempDir() // separate from repo
 
-	origDir, _ := os.Getwd()
-	os.Chdir(repoDir)
-	defer os.Chdir(origDir)
+	t.Chdir(repoDir)
 
 	if err := addCommentToCritJSONScoped("main.go", 1, 1, "custom output dir", "", "", outputDir, inheritedScope{}); err != nil {
 		t.Fatalf("addCommentToCritJSON: %v", err)
@@ -1005,9 +1001,7 @@ func TestAddCommentToCritJSON_RespectsBaseBranchConfig(t *testing.T) {
 	// Write config declaring "base" as the base branch
 	testutil.WriteFile(t, dir+"/.crit.config.json", `{"base_branch": "base"}`)
 
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	if err := addCommentToCritJSONScoped("feature.go", 1, 1, "test comment", "", "", dir, inheritedScope{}); err != nil {
 		t.Fatalf("addCommentToCritJSON: %v", err)
@@ -1380,9 +1374,7 @@ func readCritJSON(t *testing.T, dir string) CritJSON {
 
 func TestBulkAddCommentsToCritJSON_MixedCommentsAndReplies(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n")
 
@@ -1637,9 +1629,7 @@ func TestBulkAddCommentsToCritJSON_RejectsRepliesAcrossTwoAltFiles(t *testing.T)
 
 func TestBulkAddCommentsToCritJSON_PerEntryAuthor(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main\n")
 	entries := []BulkCommentEntry{
 		{File: "main.go", Line: 1, Body: "from global author"},
@@ -1660,9 +1650,7 @@ func TestBulkAddCommentsToCritJSON_PerEntryAuthor(t *testing.T) {
 
 func TestBulkAddCommentsToCritJSON_MultipleFiles(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 	testutil.WriteFile(t, filepath.Join(dir, "a.go"), "package a\n")
 	testutil.WriteFile(t, filepath.Join(dir, "b.go"), "package b\n")
 	entries := []BulkCommentEntry{
@@ -1710,9 +1698,7 @@ func TestBuildReviewPayload_ApproveNoComments(t *testing.T) {
 
 func TestBulkAddCommentsToCritJSON_EndLineDefaultsToLine(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 	testutil.WriteFile(t, filepath.Join(dir, "main.go"), "package main\nline2\nline3\nline4\nline5\n")
 	entries := []BulkCommentEntry{
 		{File: "main.go", Line: 2, Body: "single line - no end_line"},
@@ -2180,9 +2166,7 @@ func TestAppendComment_IDIncrementsGlobally(t *testing.T) {
 
 func TestAddCommentToCritJSON_RoundTrip(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	// Add a comment via the CLI function
 	err := addCommentToCritJSONScoped("README.md", 1, 1, "fix typo", "reviewer", "", dir, inheritedScope{})
@@ -2229,9 +2213,7 @@ func TestAddCommentToCritJSON_RoundTrip(t *testing.T) {
 
 func TestAddReplyToCritJSON_RoundTrip(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	// Add a comment first
 	err := addCommentToCritJSONScoped("README.md", 1, 1, "fix this", "reviewer", "", dir, inheritedScope{})
@@ -2264,9 +2246,7 @@ func TestAddReplyToCritJSON_RoundTrip(t *testing.T) {
 
 func TestAddReplyToCritJSON_WithResolve_ViaFile(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	addCommentToCritJSONScoped("README.md", 1, 1, "fix this", "reviewer", "", dir, inheritedScope{})
 
@@ -2349,9 +2329,7 @@ func TestParsePushEvent(t *testing.T) {
 
 func TestAddFileCommentToCritJSON_RejectsAbsolutePath(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addFileCommentToCritJSONScoped("/etc/passwd", "test", "author", "", "", inheritedScope{})
 	if err == nil {
@@ -2361,9 +2339,7 @@ func TestAddFileCommentToCritJSON_RejectsAbsolutePath(t *testing.T) {
 
 func TestAddFileCommentToCritJSON_RejectsTraversal(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addFileCommentToCritJSONScoped("../outside", "test", "author", "", "", inheritedScope{})
 	if err == nil {
@@ -2373,9 +2349,7 @@ func TestAddFileCommentToCritJSON_RejectsTraversal(t *testing.T) {
 
 func TestAddReviewCommentToCritJSON_RoundTrip(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	err := addReviewCommentToCritJSONScoped("overall the code is good", "reviewer", "", dir, inheritedScope{})
 	if err != nil {
@@ -2399,9 +2373,7 @@ func TestAddReviewCommentToCritJSON_RoundTrip(t *testing.T) {
 
 func TestClearCritJSON(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	t.Chdir(dir)
 
 	addCommentToCritJSONScoped("README.md", 1, 1, "test", "author", "", dir, inheritedScope{})
 
@@ -2609,9 +2581,7 @@ func TestAppendReply_AmbiguousID(t *testing.T) {
 
 func TestAddCommentToCritJSON_PopulatesAnchor(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 
 	// Write a file with known content.
 	testutil.WriteFile(t, filepath.Join(dir, "hello.go"), "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n")
@@ -2644,9 +2614,7 @@ func TestAddCommentToCritJSON_PopulatesAnchor(t *testing.T) {
 
 func TestBulkAddCommentsToCritJSON_PopulatesAnchor(t *testing.T) {
 	dir := testutil.InitTestRepo(t)
-	oldDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(oldDir)
+	t.Chdir(dir)
 
 	testutil.WriteFile(t, filepath.Join(dir, "server.go"), "package main\n\nimport \"net/http\"\n\nfunc handler() {}\n")
 
@@ -2873,56 +2841,6 @@ func TestMergeGHCommentsScoped_NoStampWithEmptyScope(t *testing.T) {
 	}
 }
 
-// TestResolvePullScope verifies the daemon-probe + on-disk fallback used by
-// `crit pull` and mergeWebComments. Mirrors the precedence in
-// resolveCommentScope (focus_cli.go) but always emits DiffScope=layer.
-func TestResolvePullScope(t *testing.T) {
-	cases := []struct {
-		name        string
-		daemonFocus *Focus
-		diskScope   string
-		wantHead    string
-		wantScope   string
-	}{
-		{name: "no daemon, no disk -> empty (legacy)", wantHead: "", wantScope: ""},
-		{
-			name:        "daemon range/layer -> head + layer",
-			daemonFocus: &Focus{Kind: FocusRange, HeadSHA: "abc", DiffScope: DiffScopeLayer},
-			wantHead:    "abc", wantScope: "layer",
-		},
-		{
-			name:        "daemon range/full-stack -> still layer (pulls anchor to PR diff)",
-			daemonFocus: &Focus{Kind: FocusRange, HeadSHA: "def", DiffScope: DiffScopeFullStack},
-			wantHead:    "def", wantScope: "layer",
-		},
-		{
-			name:        "daemon working-tree -> empty",
-			daemonFocus: &Focus{Kind: FocusWorkingTree},
-			wantHead:    "", wantScope: "",
-		},
-		{
-			name:      "no daemon, disk says layer -> layer with empty head",
-			diskScope: "layer",
-			wantHead:  "", wantScope: "layer",
-		},
-		{
-			name:      "no daemon, disk says full_stack -> still layer",
-			diskScope: "full_stack",
-			wantHead:  "", wantScope: "layer",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			withDaemonFocus(t, tc.daemonFocus)
-			cj := &CritJSON{ActiveDiffScope: tc.diskScope}
-			got := resolvePullScope(cj)
-			if got.HeadSHA != tc.wantHead || got.DiffScope != tc.wantScope {
-				t.Errorf("got=%+v want head=%q scope=%q", got, tc.wantHead, tc.wantScope)
-			}
-		})
-	}
-}
-
 // TestParsePRViewJSON_ForkPR locks down the parser's handling of fork PRs:
 // isCrossRepository must round-trip and HeadRepoURL must come from
 // headRepository.url so ensureSHAFetched can fall back to the fork remote.
@@ -3050,7 +2968,11 @@ func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "review.json")
+	path := filepath.Join(dir, "review")
+	reviewPath := session.ReviewPathsFor(path).Review
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
@@ -3066,7 +2988,7 @@ func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 
@@ -3078,7 +3000,7 @@ func TestUpdateCritJSONWithEditedBodies_StampsLastPushedBodyHash(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 
-	out, err := os.ReadFile(path)
+	out, err := os.ReadFile(reviewPath)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -3742,7 +3664,11 @@ func TestBodyHashAtPush(t *testing.T) {
 
 func TestUpdateCritJSONWithEditedBodies_ExportedWrapper(t *testing.T) {
 	dir := t.TempDir()
-	critPath := filepath.Join(dir, "review.json")
+	critPath := filepath.Join(dir, "review")
+	reviewPath := session.ReviewPathsFor(critPath).Review
+	if err := os.MkdirAll(critPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	cj := CritJSON{
 		Files: map[string]CritJSONFile{
@@ -3758,7 +3684,7 @@ func TestUpdateCritJSONWithEditedBodies_ExportedWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if err := os.WriteFile(critPath, data, 0644); err != nil {
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 
@@ -3770,7 +3696,7 @@ func TestUpdateCritJSONWithEditedBodies_ExportedWrapper(t *testing.T) {
 		t.Fatalf("UpdateCritJSONWithEditedBodies: %v", err)
 	}
 
-	out, err := os.ReadFile(critPath)
+	out, err := os.ReadFile(reviewPath)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -3796,5 +3722,61 @@ func TestPRListCache_CacheHit(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Number != 1 {
 		t.Errorf("got %+v, want seeded summary", got)
+	}
+}
+
+func TestGHAPIErrorDetail(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout string
+		want   string
+	}{
+		{
+			name:   "string errors from a 422 review create",
+			stdout: `{"message":"Unprocessable Entity","errors":["Line could not be resolved"],"documentation_url":"https://docs.github.com/rest/pulls/reviews#create-a-review-for-a-pull-request","status":"422"}`,
+			want:   "Line could not be resolved",
+		},
+		{
+			name:   "object errors with message and with field+code",
+			stdout: `{"message":"Validation Failed","errors":[{"resource":"PullRequestReviewComment","message":"commit_id is not part of the pull request"},{"resource":"PullRequestReviewComment","field":"path","code":"invalid"}]}`,
+			want:   "commit_id is not part of the pull request; path invalid",
+		},
+		{name: "no errors list", stdout: `{"message":"Not Found"}`, want: ""},
+		{name: "not json", stdout: "plain text", want: ""},
+		{name: "empty", stdout: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ghAPIErrorDetail([]byte(tt.stdout)); got != tt.want {
+				t.Errorf("ghAPIErrorDetail() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A body edited again while the push ran is kept; only the pushed body's
+// hash is stamped, so the next push sends the newer body.
+func TestUpdateCritJSONWithEditedBodies_KeepsNewerBody(t *testing.T) {
+	critPath := filepath.Join(t.TempDir(), "review")
+	cj := CritJSON{Files: map[string]CritJSONFile{
+		"a.go": {Comments: []Comment{{ID: "c1", GitHubID: 500, Body: "edited again"}}},
+	}}
+	if err := session.SaveCritJSON(critPath, cj); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateCritJSONWithEditedBodies(critPath, []ghEditForPush{{GitHubID: 500, Body: "edited", Path: "a.go"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(session.ReviewPathsFor(critPath).Review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got CritJSON
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	c := got.Files["a.go"].Comments[0]
+	if c.Body != "edited again" || c.LastPushedBodyHash != bodyHashAtPush("edited") {
+		t.Errorf("comment = %+v", c)
 	}
 }

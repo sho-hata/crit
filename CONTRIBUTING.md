@@ -28,7 +28,7 @@ go test ./...
 The `test/e2e/` directory has a Playwright test suite that runs the full frontend against a real Crit server. Requires Node.js (listed in `mise.toml`).
 
 ```bash
-cd test/e2e && npm install && npx playwright install chromium
+cd test/e2e && npm ci && npx playwright install chromium
 
 make e2e                                              # Run full suite
 cd test/e2e && npx playwright test tests/comments.spec.ts  # Run one test file

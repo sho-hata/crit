@@ -67,8 +67,8 @@ func TestManagerSpawnsOneServerPerLanguage(t *testing.T) {
 
 	var langs []string
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, lang *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, lang *Language, _, _ map[string]any) (*Client, error) {
 		langs = append(langs, lang.Name)
 		fs := startFake(h.handler)
 		h.mu.Lock()
@@ -210,12 +210,12 @@ func TestTSInitOptions(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "frontend", "src", "App.tsx")
 
-	if opts := tsInitOptions(root, src); opts != nil {
+	if opts := tsInitOptions(Workspace{Root: root}, src); opts != nil {
 		t.Errorf("tsInitOptions without a local install = %v, want nil", opts)
 	}
 
 	tsserver := writeTSInstall(t, filepath.Join(root, "frontend"))
-	opts := tsInitOptions(root, src)
+	opts := tsInitOptions(Workspace{Root: root}, src)
 	ts, ok := opts["tsserver"].(map[string]any)
 	if !ok {
 		t.Fatalf("tsInitOptions = %v, want a tsserver entry", opts)
@@ -236,7 +236,7 @@ func TestTypeScriptLanguageSendsInitOptions(t *testing.T) {
 	}
 	root := t.TempDir()
 	writeTSInstall(t, root)
-	if lang.InitOptions(root, filepath.Join(root, "src", "App.tsx")) == nil {
+	if lang.InitOptions(Workspace{Root: root}, filepath.Join(root, "src", "App.tsx")) == nil {
 		t.Error("InitOptions returned nil with an install present")
 	}
 }
@@ -270,5 +270,47 @@ func TestAvailableCachesLookupPerPath(t *testing.T) {
 	t.Setenv("PATH", other)
 	if lang.availableAt(now.Add(availableTTL)) {
 		t.Error("PATH without the binary answered from the other PATH's entry")
+	}
+}
+
+func TestTSOpenSessionFile(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		config string // relative to the parent of root; "" writes none
+		file   string // relative to root
+		want   bool
+	}{
+		{"no project anywhere", "", "src/a.ts", true},
+		{"tsconfig.json at the root", "root/tsconfig.json", "src/a.ts", false},
+		{"jsconfig.json in the file's package", "root/web/jsconfig.json", "web/a.js", false},
+		{"a sibling package's tsconfig.json", "root/api/tsconfig.json", "web/a.ts", true},
+		{"tsconfig.json above the root", "tsconfig.json", "src/a.ts", true},
+		{"JavaScript under a tsconfig.json, which may lack allowJs", "root/tsconfig.json", "src/a.js", true},
+		{"JavaScript under a jsconfig.json", "root/jsconfig.json", "src/a.mjs", false},
+		{"TypeScript under a jsconfig.json", "root/jsconfig.json", "src/a.tsx", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parent := t.TempDir()
+			root := filepath.Join(parent, "root")
+			for _, p := range []string{tc.config, filepath.Join("root", tc.file)} {
+				if p == "" {
+					continue
+				}
+				abs := filepath.Join(parent, p)
+				if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(abs, []byte("{}"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := tsOpenSessionFile(root, filepath.Join(root, tc.file)); got != tc.want {
+				t.Errorf("tsOpenSessionFile = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

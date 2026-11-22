@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -334,40 +335,101 @@ func TestHostCheckDefaultWiring(t *testing.T) {
 func TestCheckSecFetchSite(t *testing.T) {
 	t.Parallel()
 
+	const host = "127.0.0.1:3000"
 	tests := []struct {
-		name   string
-		method string
-		site   string // empty = omit header
-		want   bool
+		name      string
+		method    string
+		site      string // empty = omit header
+		origin    string // "-" = omit header
+		referer   string // empty = omit header
+		publicURL string
+		want      bool
 	}{
-		{"GET ignores cross-site", http.MethodGet, "cross-site", true},
-		{"HEAD ignores cross-site", http.MethodHead, "cross-site", true},
-		{"OPTIONS ignores cross-site", http.MethodOptions, "cross-site", true},
-		{"POST missing header (CLI)", http.MethodPost, "", true},
-		{"PUT missing header (CLI)", http.MethodPut, "", true},
-		{"DELETE missing header (CLI)", http.MethodDelete, "", true},
-		{"POST same-origin (UI)", http.MethodPost, "same-origin", true},
-		{"PUT same-origin (UI)", http.MethodPut, "same-origin", true},
-		{"DELETE same-origin (UI)", http.MethodDelete, "same-origin", true},
-		{"POST cross-site (CSRF)", http.MethodPost, "cross-site", false},
-		{"PUT cross-site (CSRF)", http.MethodPut, "cross-site", false},
-		{"PATCH cross-site (CSRF)", http.MethodPatch, "cross-site", false},
-		{"DELETE cross-site (CSRF)", http.MethodDelete, "cross-site", false},
-		{"POST same-site rejected", http.MethodPost, "same-site", false},
-		{"POST none rejected", http.MethodPost, "none", false},
+		{"GET ignores cross-site", http.MethodGet, "cross-site", "-", "", "", true},
+		{"HEAD ignores cross-site", http.MethodHead, "cross-site", "-", "", "", true},
+		{"OPTIONS ignores cross-site", http.MethodOptions, "cross-site", "-", "", "", true},
+		{"GET ignores foreign Origin", http.MethodGet, "", "https://evil.com", "", "", true},
+		{"POST missing header (CLI)", http.MethodPost, "", "-", "", "", true},
+		{"PUT missing header (CLI)", http.MethodPut, "", "-", "", "", true},
+		{"DELETE missing header (CLI)", http.MethodDelete, "", "-", "", "", true},
+		{"POST same-origin (UI)", http.MethodPost, "same-origin", "-", "", "", true},
+		{"PUT same-origin (UI)", http.MethodPut, "same-origin", "-", "", "", true},
+		{"DELETE same-origin (UI)", http.MethodDelete, "same-origin", "-", "", "", true},
+		{"POST cross-site (CSRF)", http.MethodPost, "cross-site", "-", "", "", false},
+		{"PUT cross-site (CSRF)", http.MethodPut, "cross-site", "-", "", "", false},
+		{"PATCH cross-site (CSRF)", http.MethodPatch, "cross-site", "-", "", "", false},
+		{"DELETE cross-site (CSRF)", http.MethodDelete, "cross-site", "-", "", "", false},
+		{"POST same-site rejected", http.MethodPost, "same-site", "-", "", "", false},
+		{"POST none rejected", http.MethodPost, "none", "-", "", "", false},
+		{"POST cross-site wins over same Origin", http.MethodPost, "cross-site", "http://" + host, "", "", false},
+
+		// No Fetch Metadata (e.g. Safari < 16.4): fall back to Origin, then Referer.
+		{"POST foreign Origin", http.MethodPost, "", "https://evil.com", "", "", false},
+		{"PUT foreign Origin", http.MethodPut, "", "http://evil.com", "", "", false},
+		{"POST Origin null", http.MethodPost, "", "null", "", "", false},
+		{"POST empty Origin", http.MethodPost, "", "", "", "", false},
+		{"POST other loopback port", http.MethodPost, "", "http://127.0.0.1:4000", "", "", false},
+		{"POST localhost vs 127.0.0.1", http.MethodPost, "", "http://localhost:3000", "", "", false},
+		{"POST non-http scheme", http.MethodPost, "", "file://127.0.0.1:3000", "", "", false},
+		{"POST same Origin", http.MethodPost, "", "http://" + host, "", "", true},
+		{"DELETE same Origin", http.MethodDelete, "", "http://" + host, "", "", true},
+		{"POST same Origin, foreign Referer", http.MethodPost, "", "http://" + host, "https://evil.com/x", "", true},
+		{"POST foreign Origin, same Referer", http.MethodPost, "", "https://evil.com", "http://" + host + "/", "", false},
+		{"POST no Origin, foreign Referer", http.MethodPost, "", "-", "https://evil.com/page", "", false},
+		{"POST no Origin, same Referer", http.MethodPost, "", "-", "http://" + host + "/review?x=1", "", true},
+		{"POST public-url Origin", http.MethodPost, "", "https://mymac.ts.net", "", "https://mymac.ts.net", true},
+		{"POST public-url Referer", http.MethodPost, "", "-", "https://mymac.ts.net/", "https://mymac.ts.net", true},
+		{"POST public-url set, foreign Origin", http.MethodPost, "", "https://evil.com", "", "https://mymac.ts.net", false},
+		{"POST public-url explicit default port", http.MethodPost, "", "https://MyMac.ts.net:443", "", "https://mymac.ts.net", true},
+		{"POST public-url with port", http.MethodPost, "", "https://mymac.ts.net:8443", "", "https://mymac.ts.net:8443", true},
+		{"POST public-url other port", http.MethodPost, "", "https://mymac.ts.net:8443", "", "https://mymac.ts.net", false},
+		{"POST public-url other scheme", http.MethodPost, "", "http://mymac.ts.net", "", "https://mymac.ts.net", false},
+		{"POST public-url Referer other port", http.MethodPost, "", "-", "https://mymac.ts.net:8443/x", "https://mymac.ts.net", false},
+		{"POST public-url Referer other scheme", http.MethodPost, "", "-", "http://mymac.ts.net/x", "https://mymac.ts.net", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			s, _ := newTestServer(t)
+			s.SetPublicURL(tt.publicURL)
 			req := httptest.NewRequest(tt.method, "/api/finish", nil)
+			req.Host = host
 			if tt.site != "" {
 				req.Header.Set("Sec-Fetch-Site", tt.site)
 			}
-			if got := checkSecFetchSite(req); got != tt.want {
+			if tt.origin != "-" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.referer != "" {
+				req.Header.Set("Referer", tt.referer)
+			}
+			if got := s.checkSecFetchSite(req); got != tt.want {
 				t.Errorf("checkSecFetchSite = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestOriginCSRF_RejectsForeignOriginCommentPOST pins the no-Fetch-Metadata
+// path end to end: a text/plain form post from evil.com with no
+// Sec-Fetch-Site must be rejected with 403 before reaching the handler.
+func TestOriginCSRF_RejectsForeignOriginCommentPOST(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestServer(t)
+	s.SetListenHost("127.0.0.1")
+	req := httptest.NewRequest(http.MethodPost, "/api/finish", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:3000"
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Origin", "https://evil.com")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `Origin: "https://evil.com"`) {
+		t.Errorf("body missing Origin quote: %q", w.Body.String())
 	}
 }
 
@@ -1195,6 +1257,39 @@ func TestHandleFiles_ValidFile(t *testing.T) {
 	}
 }
 
+// TestHandleFiles_SandboxCSP: a repo file opened through /files/ (an HTML or
+// SVG document in the tree under review) must not run script on the Crit
+// origin, so every response carries a script-less CSP sandbox.
+func TestHandleFiles_SandboxCSP(t *testing.T) {
+	t.Parallel()
+
+	s, session := newTestServer(t)
+	for name, body := range map[string]string{
+		"evil.html": `<script>fetch('/api/finish',{method:'POST'})</script>`,
+		"evil.svg":  `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		"image.png": "fake png",
+	} {
+		if err := os.WriteFile(filepath.Join(session.RepoRoot, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, name := range []string{"evil.html", "evil.svg", "image.png"} {
+		req := httptest.NewRequest("GET", "/files/"+name, nil)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200", name, w.Code)
+		}
+		if got := w.Header().Get("Content-Security-Policy"); got != "sandbox" {
+			t.Errorf("%s: CSP = %q, want %q", name, got, "sandbox")
+		}
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", name, got)
+		}
+	}
+}
+
 func TestHandleFiles_MethodNotAllowed(t *testing.T) {
 	t.Parallel()
 
@@ -1917,8 +2012,7 @@ func TestWaitForEventIgnoresOtherEvents(t *testing.T) {
 	srv, session := newTestServer(t)
 	session.AddComment(session.Files[0].Path, 1, 1, "", "test", "", "", "")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	var resp *httptest.ResponseRecorder
 	done := make(chan struct{})
@@ -2281,12 +2375,7 @@ func TestFinishPromptIncludesAllScopesInComments(t *testing.T) {
 }
 
 func contains(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ss, want)
 }
 
 func TestReviewCommentsAPI(t *testing.T) {
@@ -2972,7 +3061,7 @@ func TestSetPRInfo_ConcurrentSafe(t *testing.T) {
 	}()
 
 	// Hit config concurrently — should not panic or race.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		req := httptest.NewRequest("GET", "/api/config", nil)
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, req)
@@ -4582,7 +4671,7 @@ func TestLiveRoutes_NotGatedByWithReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
-		"/live", "/crit-agent.js",
+		"/live", "/view", "/crit-agent.js",
 		"/agent-protocol.js", "/agent-anchor-utils.js",
 		"/agent-scroll-utils.js",
 		"/agent-marker-overlay.js", "/agent-mutation-batcher.js",
@@ -4644,10 +4733,7 @@ func TestAgentMarkerCSS_ServedUnguarded(t *testing.T) {
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, ".crit-live-marker") {
-		end := 200
-		if len(body) < end {
-			end = len(body)
-		}
+		end := min(len(body), 200)
 		t.Fatalf("missing marker class in body: %s", body[:end])
 	}
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
@@ -4691,7 +4777,7 @@ func TestHandleSession_LiveFields(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("status = %d", w.Code)
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp["review_type"] != "live" {
 		t.Errorf("review_type = %v, want live", resp["review_type"])

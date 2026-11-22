@@ -1,5 +1,7 @@
 package session
 
+import "maps"
+
 import "time"
 
 // RoundSnapshot captures the content of a single file at a specific review
@@ -30,9 +32,7 @@ func CloneRoundSnapshots(src map[string]map[int]RoundSnapshot) map[string]map[in
 	dst := make(map[string]map[int]RoundSnapshot, len(src))
 	for path, byRound := range src {
 		inner := make(map[int]RoundSnapshot, len(byRound))
-		for r, rs := range byRound {
-			inner[r] = rs
-		}
+		maps.Copy(inner, byRound)
 		dst[path] = inner
 	}
 	return dst

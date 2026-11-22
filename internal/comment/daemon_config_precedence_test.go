@@ -27,7 +27,7 @@ func TestRunCommentDaemonThenConfiguredOutputPrecedence(t *testing.T) {
 	t.Chdir(projectDir)
 	if err := os.WriteFile(
 		filepath.Join(projectDir, ".crit.config.json"),
-		[]byte(fmt.Sprintf(`{"output":%q}`, configuredOutput)),
+		fmt.Appendf(nil, `{"output":%q}`, configuredOutput),
 		0o644,
 	); err != nil {
 		t.Fatal(err)

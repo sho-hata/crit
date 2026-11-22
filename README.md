@@ -41,7 +41,7 @@ brew install sho-hata/tap/fcrit
 > The formula is `fcrit` (this fork), not `crit` (upstream, in homebrew-core) — but it still installs a binary named `crit`. The two conflict, so uninstall or `brew unlink crit` first if you have upstream installed. Upgrades: `brew update && brew upgrade fcrit`.
 
 <details>
-<summary>Also available via Go, Nix and Windows</summary>
+<summary>Also available via Go, Nix, Arch Linux, and Windows</summary>
 
 Go:
 ```bash
@@ -52,6 +52,12 @@ Nix:
 ```bash
 nix profile install github:sho-hata/crit
 ```
+
+Arch Linux:
+```bash
+yay -S crit.md-bin
+```
+> [AUR](https://aur.archlinux.org/packages/crit.md-bin) package, maintained outside this project. Any AUR helper works in place of `yay`.
 
 Windows:
 ```bash
@@ -141,6 +147,9 @@ crit live http://localhost:4000/dashboard --cdp-url http://127.0.0.1:9222
 ```
 
 Relative paths resolve from the repo root. Prefer a gitignored file under `.crit/` over committing `live_cookie` inline. Run `crit live --help` for all flags.
+Cookie forwarding is available only when Crit listens on loopback without
+`--public-url`; Crit refuses cookie options and their config keys when the live
+proxy may be exposed over the network.
 
 If Comment/Pin stays unavailable, or a framework needs local CSP / iframe
 tweaks, see the **[live mode guide](docs/live-mode.md)** (injection model,
@@ -249,6 +258,7 @@ Notes:
 
 - Works in both the **diff** view and file mode's **document view** (`crit some.ts`).
 - Servers start **lazily** on the first request and stop after 3 minutes idle, so the first hover can take a few seconds.
+- **Sandbox (macOS).** On macOS every language server, and the helper commands behind it (`go env`, `npm root -g`, `python3`), runs confined under `/usr/bin/sandbox-exec`: no network of any kind (loopback included), writes only to a scratch directory in the review folder (`~/.crit/reviews/<key>/lsp-scratch/<language>/`, cleaned up with the review), no execution of any file from the reviewed tree or from that scratch directory (such a file cannot be loaded as native code either; a script can still be run through an interpreter, inside the sandbox), no reading of `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.git-credentials`, `~/.gitconfig`, the Terraform and Composer credential files, `~/.kube`, `~/.docker`, `~/.config/gh`, shell startup files and histories, `~/.crit` and the like, and an allowlisted environment (locale, toolchain locators, no tokens). No setting turns it off. `crit check` prints `LSP sandbox: seatbelt` or `LSP sandbox: none (...)`, and `/api/config` carries the same as `lsp_sandbox`. **Other platforms have no sandbox yet.** There, a working-tree or `--range` review runs the servers unconfined with the scrubbed environment, as before, and a `--pr` review, which is somebody else's branch, offers no language-server features at all (`lsp_available: false`). Containment is not prevention: a server can still run `sh <repo>/script.sh`, inside the same sandbox. What the sandbox does not cover: the environment of your other processes is readable from inside it (the kernel does not mediate `KERN_PROCARGS2`); under range/PR focus your own working tree is readable, dependencies and uncommitted files included. What keeps a readable byte from leaving the machine is the hover renderer: documentation from a language server is rendered without raw HTML and without images, so your browser never fetches a URL the server chose. **Seeing denials:** run `/usr/bin/log stream --predicate 'sender == "Sandbox"'` in another terminal while you hover (they never appear in `log show`).
 - Definition/reference peeks only read your repo and each language's known source roots (Go: `GOROOT` / `GOMODCACHE`; TypeScript: global `node_modules`; Python: stdlib, site-packages, `.venv`, typeshed; PHP: Composer `vendor/`, intelephense's built-in stubs; Dart: the SDK's `lib/`, the pub cache). There is no general file-read endpoint.
 - **Range / PR reviews** (`--range`, `--pr`) answer from a sparse git worktree at the reviewed SHA, not your working tree (local git only). Its size is capped by `lsp_worktree_max_mb` (default 500). Untracked dependencies (`node_modules`, `.venv`, `.dart_tool/`) aren't in it: cross-package TypeScript degrades, Dart `package:` imports don't resolve, Python borrows your local `.venv` and PHP your local Composer `vendor/`, noted in the tooltip.
 - **Python virtualenvs.** crit points pyright at the nearest `.venv/` or `venv/` site-packages (it never runs an interpreter from the reviewed repo). For other setups, activate the venv before starting crit or add a `pyrightconfig.json`.
@@ -294,6 +304,18 @@ crit push --dry-run                # preview without posting
 crit push --message "Round 2"      # add a top-level review comment
 crit push 42                       # explicit PR number
 ```
+
+#### Sync viewed files with GitHub
+
+When you review with `crit --pr`, files you mark as viewed can be ticked in the PR's "Files changed" tab, and the other way round:
+
+```bash
+crit push --viewed             # tick your viewed files on the PR
+crit push --viewed --dry-run   # preview what would change
+crit pull --viewed             # bring in files ticked on GitHub
+```
+
+Push skips files that changed since you viewed them, files marked by `auto_viewed_patterns`, and marks made outside the PR's own diff. Unticking a file in Crit unticks it on GitHub. Your marks stay available after you finish a review, so you can push them afterwards. Pull adds GitHub's ticks but keeps any file you unticked in Crit; an open review page shows them after a reload.
 
 ### Send to agent (experimental)
 
@@ -358,7 +380,8 @@ After the first agent interaction, the comment becomes a **live thread**:
 - **Vim keybindings.** `j`/`k` to navigate, `c` to comment, `Shift+F` to finish. `?` for the full reference.
 - **Concurrent reviews.** Each instance runs on its own port - review multiple plans at once.
 - **Syntax highlighting.** Code blocks are highlighted and split per-line, so you can comment on individual lines inside a fence.
-- **Live file watching.** The browser reloads automatically when the source file changes.
+- **Diagrams and custom renderers.** Mermaid fences render as diagrams, and `.mermaid` / `.mmd` files get a Diagram / Source toggle. In a Mermaid file, click a diagram node to comment on the line that defines it. See the **[renderers guide](docs/renderers.md)**.
+- **Live file watching.** Each new round loads the latest files. If a file under review changes during a round (in files and plan mode), Crit offers to reload the files in place, keeping your place and any comment you're writing. Comments move to their new lines at the next round, so until then one below an added or removed line can sit slightly off, as after a browser refresh.
 - **Paired UI and code themes.** Choose light and dark Shiki-based palettes in Settings; code, rendered markdown and review UI share their colours. System/Light/Dark selects the active palette. Preferences persist in a cookie across ports.
 - **Configurable code font.** Code-review Settings → Display → Code font lists coding/monospace fonts detected by the local Crit daemon, plus Default, System monospace, and a custom `font-family` fallback. Applies to code and diffs, and persists across sessions.
 - **Local by default.** Server binds to `127.0.0.1`. Your files stay on your machine unless you explicitly share. Non-loopback listen hosts and `public_url` require `--allow-unauthenticated-network` (or `CRIT_ALLOW_UNAUTHENTICATED_NETWORK=1`) because Crit has no network authentication — prefer SSH forwarding, Tailscale Serve to loopback, or Docker `-p 127.0.0.1:…`.
@@ -403,7 +426,7 @@ All keys are optional — omit any you don't need.
 | `no_update_check`      | bool     | `false`                    | Don't check for new versions on startup.                                                                                                                                                |
 | `no_integration_check` | bool     | `false`                    | Skip the integration config freshness check on startup.                                                                                                                                 |
 | `vcs`                  | string   | auto-detected              | Preferred VCS backend: `"git"`, `"sl"`, or `"jj"`. When set, crit uses this VCS instead of auto-detecting. Falls back to git if the configured VCS isn't available. Can also be set via `--vcs` CLI flag (flag takes precedence over config). |
-| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go, TypeScript/JavaScript, Python, Terraform, PHP and Dart files. Each language activates when its server (`gopls`, `typescript-language-server`, `pyright-langserver`, `terraform-ls`, `intelephense`, `dart`) is on PATH. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
+| `lsp`                  | bool     | `true`                     | **(fork-only)** Language-server features (hover, go-to-definition, find-references) for Go, TypeScript/JavaScript, Python, Terraform, PHP and Dart files. Each language activates when its server (`gopls`, `typescript-language-server`, `pyright-langserver`, `terraform-ls`, `intelephense`, `dart`) is on PATH. On macOS the servers run sandboxed (no network, writes only to a scratch dir, no exec from the repo or the scratch) and no key turns that off. Other platforms have no sandbox yet: there a `--pr` review offers no language-server features, and working-tree and `--range` reviews run the servers unconfined. See [Code intelligence in diffs](#code-intelligence-in-diffs-lsp-fork-only). |
 | `lsp_worktree_max_mb`  | int      | `500`                      | **(fork-only)** Size cap (MB) for the sparse git worktree LSP checks out to answer range/PR reviews at their reviewed SHA. A commit whose estimated checkout exceeds this is skipped (LSP stays off for that review) rather than checked out. |
 | `live_cookie`          | string   | `""`                       | Cookie header value forwarded to the upstream app in live mode (e.g. `"_crit_key=..."`). Global or project. Prefer `live_cookie_file` for secrets. |
 | `live_cookie_file`     | string   | `""`                       | Path to a file with upstream cookies for live mode (raw header lines or Netscape jar). Global or project; relative paths resolve from repo root. |
@@ -486,6 +509,33 @@ Use `--no-ignore` to temporarily bypass all patterns:
 ```bash
 crit --no-ignore
 ```
+
+### Custom styles
+
+To restyle Crit with your own CSS, create `~/.crit/custom.css`. Every Crit page (reviews, live mode and the theme preview) loads it after Crit's own styles, reading it fresh each time, so edit the file and reload the tab to see changes. If the file can't be read, Crit logs why and uses its own styles. In review and live mode, Settings → Configuration shows whether the file exists and its path, and Settings → Display has a "Use custom CSS" switch to turn it off without deleting it.
+
+Crit marks the page with the mode in use, `data-crit-mode="light"` or `"dark"` (also when following the system setting), so you can keep everything for one mode in one block. Override theme variables and nest element rules inside it:
+
+```css
+:root[data-crit-mode="dark"] {
+  /* the block a comment is on, and the exact words it quotes */
+  --crit-comment-range-bg: rgba(83, 155, 245, 0.15);
+  --crit-quote-highlight-bg: rgba(83, 155, 245, 0.28);
+
+  .line-block.has-comment { box-shadow: inset 3px 0 0 #539bf5; }
+}
+
+:root[data-crit-mode="light"] {
+  --crit-comment-range-bg: rgba(9, 105, 218, 0.10);
+  --crit-quote-highlight-bg: rgba(9, 105, 218, 0.18);
+
+  .line-block.has-comment { box-shadow: inset 3px 0 0 #0969da; }
+}
+```
+
+For a single value that differs by mode, `light-dark(light, dark)` also works.
+
+Code diffs are drawn inside shadow roots, which page CSS cannot reach with selectors; only inherited CSS variables (such as the ones above, or `--diffs-*` overrides) get through. Override the derived `--crit-*` variables, as above: the palette's own `--crit-palette-*` values are set inline on `<html>`, so they only change with `!important`. Class names are not a stable API and may change between releases.
 
 ### Environment variables
 

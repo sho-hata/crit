@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +63,12 @@ type Focus struct {
 	HeadRefName string    `json:"head_ref_name,omitempty"`
 	DiffScope   DiffScope `json:"diff_scope,omitempty"`
 	IsStacked   bool      `json:"is_stacked,omitempty"`
+
+	// HeadRef is the head of a --range as typed, when it names a ref that
+	// moves (HEAD, a branch) rather than a commit. HeadSHA is that ref
+	// resolved when the session started; FollowRangeHead re-resolves it at
+	// the start of each round so the review shows the agent's new commits.
+	HeadRef string `json:"head_ref,omitempty"`
 }
 
 // ReadOnly reports whether comments may be added/edited in this focus.
@@ -109,9 +116,15 @@ func focusKeyFor(f Focus) string {
 		return ""
 	}
 	if f.PRNumber > 0 {
-		return fmt.Sprintf("pr:%d", f.PRNumber)
+		return PRFocusKey(f.PRNumber)
 	}
 	return fmt.Sprintf("range:%s..%s", f.BaseSHA, f.HeadSHA)
+}
+
+// PRFocusKey is the change identity of PR number: the focus key its comments
+// are stamped with and the ChangeViewedFiles bucket its viewed marks live in.
+func PRFocusKey(number int) string {
+	return fmt.Sprintf("pr:%d", number)
 }
 
 // visibleInFocus reports whether c should be shown in the given focus.
@@ -205,7 +218,7 @@ func (s *Session) SetFocus(f Focus) error {
 
 	// Hold writeMu across the rest of SetFocus to serialize with the
 	// debounce-timer callback in scheduleWrite. Without this, a timer that
-	// fires after our WriteFiles() flush below — but before
+	// fires after our flush below — but before
 	// persistActiveDiffScope — would race the swap: it would snapshot the
 	// new Focus's (empty) Files alongside the OLD ActiveDiffScope on disk,
 	// producing a torn intermediate state where comments authored under
@@ -214,7 +227,7 @@ func (s *Session) SetFocus(f Focus) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	// Cancel any pending debounce timer outright. WriteFiles below flushes
+	// Cancel any pending debounce timer outright. The flush below writes
 	// in-memory state synchronously, so a deferred fire would write nothing
 	// new — but stopping it removes the chance that it sneaks in between
 	// our two locked critical sections (the swap and persistActiveDiffScope).
@@ -224,12 +237,19 @@ func (s *Session) SetFocus(f Focus) error {
 	}
 	s.mu.Unlock()
 
-	// Flush any pending debounced WriteFiles BEFORE we replace s.Files.
+	// Flush any pending debounced write BEFORE we replace s.Files.
 	// Without this, recent in-memory comments (authored within the last
 	// 200ms) live only in s.Files and would be lost when buildFilesForFocus
-	// returns a fresh slice with empty Comments. WriteFiles is idempotent
-	// when there's nothing pending.
-	s.WriteFiles()
+	// returns a fresh slice with empty Comments. writeFilesErr is idempotent
+	// when there's nothing pending. When the flush fails, stop here: the
+	// swap would drop the comments that did not reach disk.
+	if err := s.writeFilesErr(); err != nil {
+		// Retry later, so the unsaved comments do not wait for the next edit.
+		s.mu.Lock()
+		s.scheduleWrite()
+		s.mu.Unlock()
+		return fmt.Errorf("saving comments before changing focus: %w", err)
+	}
 
 	// Snapshot for rollback.
 	s.mu.Lock()
@@ -271,7 +291,7 @@ func (s *Session) SetFocus(f Focus) error {
 	s.mu.Unlock()
 
 	if err := s.persistActiveDiffScope(string(f.DiffScope)); err != nil {
-		// Roll back in-memory state. The WriteFiles() flush at the top of
+		// Roll back in-memory state. The flush at the top of
 		// SetFocus persisted the pre-swap state to disk; loadCritJSON only
 		// reads, and persistActiveDiffScope failed before mutating the file —
 		// so disk still reflects the old focus and rollback is complete.
@@ -305,6 +325,249 @@ func (s *Session) SetFocus(f Focus) error {
 	})
 	s.notify(SSEEvent{Type: "focus-changed", Content: string(payload)})
 	return nil
+}
+
+// FollowRangeHead moves a range focus whose head was given as a ref (HEAD,
+// a branch) to the commit that ref points at now. The daemon calls it when
+// the agent starts a new round: without it, a review started with
+// `--range base..HEAD` keeps showing the commit HEAD was at when the daemon
+// started, round after round. The comments made at the old head are
+// carried forward. The result is saved before returning, because the round
+// that follows clears the in-memory comments and reloads them from disk.
+// It reports the old and new head when the focus moved.
+func (s *Session) FollowRangeHead() (oldHead, newHead string, err error) {
+	s.mu.RLock()
+	f := s.Focus
+	vc := s.VCS
+	repoRoot := s.RepoRoot
+	remoteFiles := s.RemoteFiles
+	s.mu.RUnlock()
+	if f.Kind != FocusRange || f.PRNumber > 0 || f.HeadRef == "" || remoteFiles || vc == nil {
+		return "", "", nil
+	}
+	head, err := vcs.ResolveCommitOID(vc, f.HeadRef, repoRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving range head %q: %w", f.HeadRef, err)
+	}
+	if head == f.HeadSHA {
+		return "", "", nil
+	}
+	oldHead = f.HeadSHA
+	f.HeadSHA = head
+	// Keep a label the picker set (a branch name); refresh a "base..head" one.
+	if f.Label == "" || f.Label == shortRangeLabel(f.BaseSHA, oldHead) {
+		f.Label = shortRangeLabel(f.BaseSHA, head)
+	}
+	if err := s.SetFocus(f); err != nil {
+		return "", "", err
+	}
+	s.mu.RLock()
+	f = s.Focus
+	s.mu.RUnlock()
+	s.carryForwardRangeComments(f, vc, repoRoot)
+	if err := s.SyncWriteFiles(); err != nil {
+		return "", "", fmt.Errorf("saving comments after moving range head: %w", err)
+	}
+	return oldHead, head, nil
+}
+
+// WithHeadRefAtTip marks a range picked in the UI as following HEAD when it
+// ends at the commit HEAD is on: the stack picker's current layer, or the
+// "Resume" pill back to it. The picker sends commits only, so without this
+// a review switched to the branch tip stays on that commit once the agent
+// commits on top, and its comments stay behind (#1148). A range ending
+// anywhere else stays pinned, as do PR/MR ranges and ranges that already
+// name a ref. Returns f unchanged when HEAD can't be resolved.
+func (s *Session) WithHeadRefAtTip(f Focus) Focus {
+	if f.Kind != FocusRange || f.PRNumber > 0 || f.HeadRef != "" || f.HeadSHA == "" {
+		return f
+	}
+	s.mu.RLock()
+	vc := s.VCS
+	repoRoot := s.RepoRoot
+	remoteFiles := s.RemoteFiles
+	s.mu.RUnlock()
+	if vc == nil || remoteFiles {
+		return f
+	}
+	head, err := vcs.ResolveCommitOID(vc, "HEAD", repoRoot)
+	if err != nil {
+		return f
+	}
+	picked, err := vcs.ResolveCommitOID(vc, f.HeadSHA, repoRoot)
+	if err != nil || picked != head {
+		return f
+	}
+	f.HeadRef = "HEAD"
+	return f
+}
+
+// shortRangeLabel is the "base..head" label of a range focus, with 7-character
+// SHAs, as --range sets it.
+func shortRangeLabel(base, head string) string {
+	return fmt.Sprintf("%.7s..%.7s", base, head)
+}
+
+// carryForwardRangeComments re-keys comments made at an older head of the
+// same range so they stay visible in focus f, the focus the session just
+// moved to. A range focus without a PR/MR number keys comments by
+// "range:<base>..<head>", so when the branch gains commits and the review
+// moves to the new head, the comments of earlier rounds no longer match it
+// and disappear (#1148). A comment is carried forward when its key has f's
+// base and its head is an ancestor of f's head. Line comments are re-anchored
+// from the old head's content to the new head's, as the round carry-forward
+// does, and marked Drifted when their anchor is gone. Comments of other
+// ranges (another base, or a head that is not an ancestor) keep their key.
+//
+// SetFocus does not call it: switching views in the stack picker keeps each
+// view's comments to itself, since a branch stacked on top also descends
+// from the older head. Only a caller that moves the review along the same
+// branch between rounds carries comments forward. Call it after SetFocus(f).
+func (s *Session) carryForwardRangeComments(f Focus, v vcs.VCS, repoRoot string) {
+	if f.Kind != FocusRange || f.PRNumber > 0 || v == nil || f.BaseSHA == "" || f.HeadSHA == "" {
+		return
+	}
+	cf := rangeCarryForward{prefix: "range:" + f.BaseSHA + "..", newKey: focusKeyFor(f)}
+	need := s.collectOlderRangeHeads(&cf)
+	if len(cf.heads) == 0 {
+		return
+	}
+	// Only heads the new head descends from: the same branch, moved forward.
+	for h := range cf.heads {
+		mb, err := v.MergeBaseOf(h, f.HeadSHA, repoRoot)
+		cf.heads[h] = err == nil && strings.TrimSpace(mb) == h
+	}
+	// Read the contents outside the lock: git I/O.
+	contents := s.readRangeContents(f, cf, need)
+	s.applyRangeCarryForward(cf, f.HeadSHA, contents)
+}
+
+// readRangeContents reads each file with carried comments at its older heads
+// and at f's head.
+func (s *Session) readRangeContents(f Focus, cf rangeCarryForward, need map[string]rangeFileNeed) map[string]map[string]rangeContents {
+	contents := make(map[string]map[string]rangeContents, len(need))
+	for path, n := range need {
+		newData, newOK := s.readRangeFile(f, f.HeadSHA, path)
+		for h := range n.heads {
+			if !cf.heads[h] {
+				continue
+			}
+			oldData, oldOK := s.readRangeFile(f, h, path)
+			if !oldOK && n.oldPath != "" {
+				oldData, oldOK = s.readRangeFile(f, h, n.oldPath)
+			}
+			if contents[path] == nil {
+				contents[path] = map[string]rangeContents{}
+			}
+			contents[path][h] = rangeContents{string(oldData), string(newData), oldOK && newOK}
+		}
+	}
+	return contents
+}
+
+// readRangeFile reads path at sha and reports whether it exists there.
+// ReadFileAtSHA returns (nil, nil) for a path missing at sha, so a nil read
+// counts as missing. An empty file reads as nil too, which is harmless here:
+// it has no lines for a comment to be anchored to.
+func (s *Session) readRangeFile(f Focus, sha, path string) ([]byte, bool) {
+	data, err := s.readFileAtSHAForFocus(f, sha, path)
+	return data, err == nil && data != nil
+}
+
+// rangeCarryForward is the state carryForwardRangeComments shares between steps.
+type rangeCarryForward struct {
+	prefix, newKey string
+	heads          map[string]bool // older head -> the new head descends from it
+}
+
+// olderHead returns the head of key when key is the same range at another
+// head, else "".
+func (cf rangeCarryForward) olderHead(key string) string {
+	if key == cf.newKey || !strings.HasPrefix(key, cf.prefix) {
+		return ""
+	}
+	return strings.TrimPrefix(key, cf.prefix)
+}
+
+// rangeContents is one file at an older head and at the new head.
+type rangeContents struct {
+	oldContent, newContent string
+	ok                     bool // both reads worked
+}
+
+type rangeFileNeed struct {
+	oldPath string
+	heads   map[string]bool
+}
+
+// collectOlderRangeHeads fills cf.heads with the older heads of the range that
+// comments were made at, and returns, per file, the heads its comments have.
+func (s *Session) collectOlderRangeHeads(cf *rangeCarryForward) map[string]rangeFileNeed {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cf.heads = map[string]bool{}
+	need := map[string]rangeFileNeed{}
+	for _, fe := range s.Files {
+		for _, c := range fe.Comments {
+			h := cf.olderHead(c.FocusKey)
+			if h == "" {
+				continue
+			}
+			n, ok := need[fe.Path]
+			if !ok {
+				n = rangeFileNeed{oldPath: fe.OldPath, heads: map[string]bool{}}
+				need[fe.Path] = n
+			}
+			n.heads[h] = true
+			cf.heads[h] = true
+		}
+	}
+	for _, c := range s.reviewComments {
+		if h := cf.olderHead(c.FocusKey); h != "" {
+			cf.heads[h] = true
+		}
+	}
+	return need
+}
+
+// applyRangeCarryForward moves the comments of the older heads the new head
+// descends from onto newHead.
+func (s *Session) applyRangeCarryForward(cf rangeCarryForward, newHead string, contents map[string]map[string]rangeContents) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, fe := range s.Files {
+		for h, r := range contents[fe.Path] {
+			key := cf.prefix + h
+			var idx []int
+			var group []Comment
+			for i, c := range fe.Comments {
+				if c.FocusKey == key {
+					idx = append(idx, i)
+					group = append(group, c)
+				}
+			}
+			if r.ok {
+				group, _ = remapCommentsToContent(group, r.oldContent, r.newContent)
+			}
+			for j, i := range idx {
+				c := group[j]
+				if !r.ok && c.Scope != "file" && c.Side != "old" && c.StartLine > 0 {
+					// The file is missing at one of the heads: its lines can't be followed.
+					c.Drifted = true
+				}
+				c.FocusKey, c.HeadSHA = cf.newKey, newHead
+				fe.Comments[i] = c
+			}
+		}
+	}
+	for i, c := range s.reviewComments {
+		if h := cf.olderHead(c.FocusKey); h != "" && cf.heads[h] {
+			s.reviewComments[i].FocusKey, s.reviewComments[i].HeadSHA = cf.newKey, newHead
+		}
+	}
+	// Schedule the save before releasing the lock: once pendingWrite is set,
+	// the external-change merge won't load the old keys back from disk.
+	s.scheduleWrite()
 }
 
 // validateFocusSHAs runs ensureSHAFetched for each SHA needed by the focus.
@@ -384,13 +647,15 @@ func (s *Session) persistActiveDiffScope(scope string) error {
 	if critPath == "" {
 		return nil
 	}
-	cj, err := readCritJSONFromDisk(critPath)
-	if err != nil {
-		// File may not exist yet — fall through and create one with just the scope.
-		cj = CritJSON{Files: map[string]CritJSONFile{}}
-	}
-	cj.ActiveDiffScope = scope
-	return saveCritJSONToDisk(critPath, cj)
+	return WithReviewWriteLock(critPath, func() error {
+		cj, err := readCritJSONFromDisk(critPath)
+		if err != nil {
+			// File may not exist yet — fall through and create one with just the scope.
+			cj = CritJSON{Files: map[string]CritJSONFile{}}
+		}
+		cj.ActiveDiffScope = scope
+		return saveCritJSONToDisk(critPath, cj)
+	})
 }
 
 // readFileAtSHA returns file content at the given SHA. When RemoteFiles is
@@ -471,6 +736,10 @@ func (s *Session) buildFilesForFocus(f Focus, v vcs.VCS, repoRoot string) ([]*Fi
 	if err != nil {
 		return nil, "", err
 	}
+	s.mu.RLock()
+	ignorePatterns := s.IgnorePatterns
+	s.mu.RUnlock()
+	changes = filterBinary(config.FilterIgnored(changes, ignorePatterns))
 	var numstats map[string]vcs.NumstatEntry
 	if len(changes) > lazyFileThreshold {
 		// Between-SHA only — never fall back to working-tree numstat, which
@@ -702,6 +971,17 @@ type scopedSessionSnapshot struct {
 	reviewComments   []Comment
 	focus            Focus
 	lastRangeFocus   *Focus
+	vcsName          string
+	sessionKey       string
+	story            *Story
+	generatedRules   []vcs.GeneratedRule
+	// commentedFiles lists files with comments visible in the current focus,
+	// so scope "all" can keep them as orphaned rows when they drop out of
+	// the diff (the same rows GetSessionInfo shows).
+	commentedFiles []SessionFileInfo
+	// removedFiles is the part of commentedFiles that has left the review
+	// (the file is in no diff), so scope "branch" keeps them as rows too.
+	removedFiles []SessionFileInfo
 }
 
 func (s *Session) snapshotForScoped() scopedSessionSnapshot {
@@ -712,6 +992,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 	unresolvedCounts := make(map[string]int, len(s.Files))
 	lazyFiles := make(map[string]*FileEntry, len(s.Files))
 	totalUnresolved := 0
+	var commentedFiles, removedFiles []SessionFileInfo
 	for _, f := range s.Files {
 		commentCounts[f.Path] = countVisibleComments(f.Comments, s.Focus)
 		for _, c := range f.Comments {
@@ -722,6 +1003,21 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 		}
 		if f.Lazy {
 			lazyFiles[f.Path] = f
+		}
+		if n := commentCounts[f.Path]; n > 0 {
+			row := SessionFileInfo{
+				Path:         f.Path,
+				OldPath:      f.OldPath,
+				Status:       f.Status,
+				FileType:     f.FileType,
+				CommentCount: n,
+				Orphaned:     true,
+				Generated:    f.Generated,
+			}
+			commentedFiles = append(commentedFiles, row)
+			if f.Orphaned {
+				removedFiles = append(removedFiles, row)
+			}
 		}
 	}
 	rc := make([]Comment, 0, len(s.reviewComments))
@@ -734,6 +1030,10 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 			continue
 		}
 		rc = append(rc, c)
+	}
+	var vcsName string
+	if s.VCS != nil {
+		vcsName = s.VCS.Name()
 	}
 
 	return scopedSessionSnapshot{
@@ -752,6 +1052,12 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 		reviewComments:   rc,
 		focus:            s.Focus,
 		lastRangeFocus:   s.LastRangeFocus,
+		vcsName:          vcsName,
+		sessionKey:       s.SessionKey,
+		story:            s.story,
+		generatedRules:   s.generatedRules,
+		commentedFiles:   commentedFiles,
+		removedFiles:     removedFiles,
 	}
 }
 
@@ -809,7 +1115,13 @@ func scopedHunks(fc vcs.FileChange, scope, commit, baseRef, repoRoot string, v v
 		}
 		return nil
 	}
-	if fc.Status == "renamed" && fc.OldPath != "" && (scope == "" || scope == "all" || scope == "branch") {
+	// "all" is base vs working tree, the diff the cached session holds, so it
+	// uses the same helper. VCS backends without staging (jj, Sapling) only
+	// know "branch" in FileDiffScoped.
+	if scope == "all" && fc.Status == "deleted" {
+		return nil // as the cached session: no hunks, the UI shows a placeholder
+	}
+	if scope == "all" || (fc.Status == "renamed" && fc.OldPath != "" && (scope == "" || scope == "branch")) {
 		h, err := diffHunksForFile(fc.Path, fc.OldPath, fc.Status, baseRef, repoRoot, ignoreWhitespace, v)
 		if err == nil {
 			return h
@@ -833,6 +1145,9 @@ func changesForScopeSelection(v vcs.VCS, repoRoot, baseRef, scope, commit string
 	if commit != "" {
 		return v.ChangedFilesForCommit(commit, repoRoot)
 	}
+	if scope == "all" {
+		return changedFilesForSession(v, baseRef, repoRoot)
+	}
 	return v.ChangedFilesScoped(scope, baseRef)
 }
 
@@ -851,11 +1166,15 @@ func countHunkStats(hunks []vcs.DiffHunk) (additions, deletions int) {
 }
 
 // GetSessionInfoScoped returns session metadata filtered to a specific diff scope.
-// When scope is "" or in file mode (scopes only apply to git), delegates to GetSessionInfo.
-// All other scopes (including "all") run fresh git queries to pick up files added after startup.
+// When scope is "", in file/plan mode (scopes only apply to git), or under
+// range focus, delegates to GetSessionInfo (the round snapshot).
+// All other scopes (including "all") run fresh git queries to pick up work
+// done after the round started. "all" also keeps commented files that left the
+// diff as orphaned rows, as GetSessionInfo does; "branch" keeps those that
+// left the review entirely.
 // When commit is non-empty, files and diffs are scoped to that single commit.
 func (s *Session) GetSessionInfoScoped(scope, commit string) SessionInfo {
-	if commit == "" && (scope == "" || scope == "all" || s.Mode == "files" || s.Mode == "plan") {
+	if commit == "" && (scope == "" || s.Mode == "files" || s.Mode == "plan") {
 		return s.GetSessionInfo()
 	}
 
@@ -871,56 +1190,157 @@ func (s *Session) GetSessionInfoScoped(scope, commit string) SessionInfo {
 		return s.GetSessionInfo()
 	}
 
+	liveAll := scope == "all" && commit == ""
+	if commit == "" {
+		// Working-tree scopes show live content; make the session's content
+		// (what comments anchor to) match it before reading comment counts.
+		s.SyncWorkingTree()
+	}
 	snap := s.snapshotForScoped()
 
-	info := SessionInfo{
+	info := snap.sessionInfo()
+	if snap.vc == nil {
+		return info
+	}
+
+	var changes []vcs.FileChange
+	var err error
+	if liveAll {
+		// Already filtered for ignore patterns and binary files.
+		changes, err = s.liveAllChanges(snap.vc, snap.baseRef, snap.repoRoot, snap.ignorePatterns)
+	} else {
+		changes, err = changesForScopeSelection(snap.vc, snap.repoRoot, snap.baseRef, scope, commit)
+		changes = filterBinary(config.FilterIgnored(changes, snap.ignorePatterns))
+	}
+	if err != nil {
+		return info
+	}
+
+	info.Files = snap.scopedFileInfos(changes, scope, commit)
+	if liveAll {
+		info.Files = appendOrphanedCommentedFiles(info.Files, snap.commentedFiles)
+	} else if scope == "branch" && commit == "" {
+		// A file that left the branch is in no diff, so without its row
+		// its comments could not be seen or resolved here.
+		info.Files = appendOrphanedCommentedFiles(info.Files, snap.removedFiles)
+	}
+
+	info.HiddenUnresolved = snap.hiddenUnresolved(info.Files)
+	return info
+}
+
+// sessionInfo returns the session metadata of a scoped response, without files.
+func (snap *scopedSessionSnapshot) sessionInfo() SessionInfo {
+	return SessionInfo{
 		Mode:            snap.mode,
+		VCSName:         snap.vcsName,
 		Branch:          snap.branch,
 		BaseRef:         snap.baseRef,
 		BaseBranchName:  snap.baseBranchName,
 		ReviewRound:     snap.reviewRound,
 		AvailableScopes: availableScopes(snap.baseRef, snap.vc),
 		ReviewComments:  snap.reviewComments,
+		Cwd:             snap.repoRoot,
+		SessionKey:      snap.sessionKey,
 		Focus:           snap.focus,
 		LastRangeFocus:  snap.lastRangeFocus,
+		Story:           snap.story,
 	}
+}
 
-	if snap.vc == nil {
-		return info
-	}
-
-	changes, err := changesForScopeSelection(snap.vc, snap.repoRoot, snap.baseRef, scope, commit)
-	if err != nil || len(changes) == 0 {
-		return info
-	}
-
-	changes = config.FilterIgnored(changes, snap.ignorePatterns)
-	changes = filterBinary(changes)
-
-	for _, fc := range changes {
+// scopedFileInfos builds the file rows for changes.
+func (snap *scopedSessionSnapshot) scopedFileInfos(changes []vcs.FileChange, scope, commit string) []SessionFileInfo {
+	counter := snap.newScopedLineCounter(changes, scope, commit)
+	files := make([]SessionFileInfo, 0, len(changes))
+	for i, fc := range changes {
 		fi := SessionFileInfo{
 			Path:         fc.Path,
 			OldPath:      fc.OldPath,
 			Status:       fc.Status,
 			FileType:     detectFileType(fc.Path),
 			CommentCount: snap.commentCounts[fc.Path],
+			Generated:    vcs.IsGenerated(fc.Path, snap.generatedRules),
 		}
-
-		if lf, ok := snap.lazyFiles[fc.Path]; ok {
-			fi.Lazy = true
-			fi.Additions = lf.LazyAdditions
-			fi.Deletions = lf.LazyDeletions
-			info.Files = append(info.Files, fi)
-			continue
-		}
-
-		hunks := scopedHunks(fc, scope, commit, snap.baseRef, snap.repoRoot, snap.vc, false)
-		fi.Additions, fi.Deletions = countHunkStats(hunks)
-		info.Files = append(info.Files, fi)
+		fi.Lazy, fi.Additions, fi.Deletions = counter.count(i, fc)
+		files = append(files, fi)
 	}
+	return files
+}
 
-	info.HiddenUnresolved = snap.hiddenUnresolved(info.Files)
-	return info
+// scopedLineCounter gives the +/- counts of a scoped file list. Scope "all"
+// takes every file's counts from one numstat run instead of a diff per
+// file, and applies the startup lazy threshold. Other scopes reuse the
+// session's lazy entries and count the hunks of the rest.
+type scopedLineCounter struct {
+	snap          *scopedSessionSnapshot
+	scope, commit string
+	liveAll       bool
+	lazyAll       bool
+	numstats      map[string]vcs.NumstatEntry
+	haveNumstats  bool
+}
+
+func (snap *scopedSessionSnapshot) newScopedLineCounter(changes []vcs.FileChange, scope, commit string) scopedLineCounter {
+	c := scopedLineCounter{snap: snap, scope: scope, commit: commit}
+	c.liveAll = scope == "all" && commit == ""
+	c.lazyAll = c.liveAll && len(changes) > lazyFileThreshold
+	if c.liveAll && snap.baseRef != "" {
+		ns, err := snap.vc.DiffNumstat(snap.baseRef, snap.repoRoot)
+		c.numstats, c.haveNumstats = ns, err == nil
+	}
+	return c
+}
+
+// count returns whether the file at index i is lazy, and its +/- counts.
+func (c scopedLineCounter) count(i int, fc vcs.FileChange) (lazy bool, additions, deletions int) {
+	lazy = c.lazyAll && i >= lazyFileThreshold
+	if c.liveAll && (c.haveNumstats || lazy) {
+		if additions, deletions, ok := c.numstatCounts(fc, lazy); ok {
+			return lazy, additions, deletions
+		}
+	}
+	if lf, ok := c.snap.lazyFiles[fc.Path]; ok && !c.liveAll {
+		return true, lf.LazyAdditions, lf.LazyDeletions
+	}
+	hunks := scopedHunks(fc, c.scope, c.commit, c.snap.baseRef, c.snap.repoRoot, c.snap.vc, false)
+	additions, deletions = countHunkStats(hunks)
+	return false, additions, deletions
+}
+
+// numstatCounts returns fc's +/- counts from the numstat run, counting lines
+// on disk for a new file numstat does not list. A deleted file that is not
+// lazy shows no counts, as scope "all" shows no hunks for it. ok is false
+// for a file that is not lazy and that numstat does not list, such as a
+// rename git did not detect or a backend whose stat output names it
+// differently; the caller then counts its hunks.
+func (c scopedLineCounter) numstatCounts(fc vcs.FileChange, lazy bool) (additions, deletions int, ok bool) {
+	if !lazy && fc.Status == "deleted" {
+		return 0, 0, true
+	}
+	_, listed := c.numstats[fc.Path]
+	isNew := fc.Status == "untracked" || fc.Status == "added"
+	if !lazy && !listed && !isNew {
+		return 0, 0, false
+	}
+	fe := &FileEntry{AbsPath: filepath.Join(c.snap.repoRoot, fc.Path)}
+	populateLazyFile(fe, fc, c.numstats, true)
+	return fe.LazyAdditions, fe.LazyDeletions, true
+}
+
+// appendOrphanedCommentedFiles adds an orphaned row for each commented file
+// that is no longer in files, so its comments stay reachable after the work
+// is reverted (the same rows GetSessionInfo shows).
+func appendOrphanedCommentedFiles(files, commented []SessionFileInfo) []SessionFileInfo {
+	listed := make(map[string]bool, len(files))
+	for _, fi := range files {
+		listed[fi.Path] = true
+	}
+	for _, cf := range commented {
+		if !listed[cf.Path] {
+			files = append(files, cf)
+		}
+	}
+	return files
 }
 
 // hiddenUnresolved returns the count of unresolved comments that exist outside
@@ -1051,6 +1471,132 @@ func scopedDiffContents(path, scope, repoRoot, worktreeContent string, v vcs.VCS
 	return previousContent, content, true
 }
 
+// liveAllFileDiff returns the scope "all" diff (base vs working tree) for path,
+// read fresh from git and disk instead of the round snapshot. The response has
+// the same shape as GetFileDiffSnapshot's, plus the current content and its
+// hash, so the diff and the text it is drawn on come from the same moment.
+// A path that is in the session but no longer differs from base gets no hunks.
+func (s *Session) liveAllFileDiff(path string, ignoreWhitespace bool) (map[string]any, bool) {
+	s.SyncWorkingTree(path)
+
+	s.mu.RLock()
+	f := s.fileByPathLocked(path)
+	repoRoot := s.RepoRoot
+	baseRef := s.BaseRef
+	vc := s.VCS
+	focus := s.Focus
+	ignorePatterns := s.IgnorePatterns
+	s.mu.RUnlock()
+	if vc == nil || repoRoot == "" {
+		return s.GetFileDiffSnapshot(path, ignoreWhitespace)
+	}
+
+	changes, err := s.liveAllChanges(vc, baseRef, repoRoot, ignorePatterns)
+	if err != nil {
+		return s.GetFileDiffSnapshot(path, ignoreWhitespace)
+	}
+	fc, found := findChange(changes, path)
+	// Only read paths the file list or the session knows about.
+	if !found && f == nil {
+		return nil, false
+	}
+
+	content, hash := s.liveFileContent(path, f, fc, repoRoot)
+	result := map[string]any{"content": content, "file_hash": hash, "hunks": []vcs.DiffHunk{}}
+	if !found {
+		return result, true
+	}
+	hunks, cached := s.cachedLiveHunks(f, fc, hash, ignoreWhitespace)
+	if !cached {
+		hunks = liveAllHunks(fc, content, baseRef, repoRoot, ignoreWhitespace, vc)
+	}
+	if hunks != nil {
+		result["hunks"] = hunks
+	}
+	if detectFileType(path) != "code" {
+		result["previous_content"] = gitBaseContentForMarkdown(s, focus, fc.Path, fc.OldPath, fc.Status, baseRef, repoRoot, vc)
+	}
+	return result, true
+}
+
+// cachedLiveHunks returns f's session hunks when they describe the content
+// liveFileContent just served: lazy loading and SyncWorkingTree store
+// DiffHunks together with FileHash, and both diff base vs working tree the
+// way liveAllHunks does. Re-diffing cost a git process per request; the
+// frontend fetches /api/file (which does the lazy load) alongside this diff,
+// so a lazy file was diffed twice, and on Windows runners loading a 300-file
+// review took over 30s.
+func (s *Session) cachedLiveHunks(f *FileEntry, fc vcs.FileChange, hash string, ignoreWhitespace bool) ([]vcs.DiffHunk, bool) {
+	if f == nil || hash == "" || ignoreWhitespace {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if f.Lazy || f.Orphaned || f.Path != fc.Path || f.FileHash != hash || f.Status != fc.Status || f.OldPath != fc.OldPath {
+		return nil, false
+	}
+	return f.DiffHunks, true
+}
+
+func findChange(changes []vcs.FileChange, path string) (vcs.FileChange, bool) {
+	for _, c := range changes {
+		if c.Path == path {
+			return c, true
+		}
+	}
+	return vcs.FileChange{}, false
+}
+
+// liveFileContent returns the working-tree content for a scope "all" diff.
+// Session files serve the synced session content, so the text matches the
+// lines comments anchor to; other files are read from disk. Deleted files
+// have no content.
+func (s *Session) liveFileContent(path string, f *FileEntry, fc vcs.FileChange, repoRoot string) (content, hash string) {
+	if fc.Status == "deleted" {
+		return "", ""
+	}
+	if f != nil {
+		// Orphaned and deleted entries have no content; a file that came back
+		// is read from disk below.
+		s.mu.RLock()
+		live := !f.Orphaned && f.AbsPath != "" && f.Status != "deleted"
+		s.mu.RUnlock()
+		if live && s.ensureFileLoaded(f) == nil {
+			s.mu.RLock()
+			defer s.mu.RUnlock()
+			return f.Content, f.FileHash
+		}
+	}
+	// path comes from the ?path= query: keep the read inside repoRoot,
+	// symlinks included.
+	resolved, err := pathsafe.ResolveUnder(filepath.Join(repoRoot, filepath.Clean(filepath.FromSlash(path))), repoRoot)
+	if err != nil {
+		return "", ""
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return "", ""
+	}
+	return string(data), fileHash(data)
+}
+
+// liveAllHunks diffs one file base vs working tree, the way the session's
+// cached hunks are built (populateEagerFile): a deleted file has none, so the
+// UI shows its placeholder. Returns nil when the diff fails.
+func liveAllHunks(fc vcs.FileChange, content, baseRef, repoRoot string, ignoreWhitespace bool, vc vcs.VCS) []vcs.DiffHunk {
+	if fc.Status == "deleted" {
+		return nil
+	}
+	if fc.Status == "untracked" || fc.Status == "added" {
+		return vcs.FileDiffUnifiedNewFile(content)
+	}
+	hunks, err := diffHunksForFile(fc.Path, fc.OldPath, fc.Status, baseRef, repoRoot, ignoreWhitespace, vc)
+	if err != nil {
+		return nil
+	}
+	return hunks
+}
+
 // GetFileDiffSnapshotScoped returns diff data for a file filtered by scope.
 // When scope is "" or in file mode (scopes only apply to git), delegates to GetFileDiffSnapshot.
 // When commit is non-empty, returns the diff for that single commit.
@@ -1059,8 +1605,11 @@ func (s *Session) GetFileDiffSnapshotScoped(path, scope, commit string, ignoreWh
 	s.mu.RLock()
 	inRange := s.Focus.Kind == FocusRange
 	s.mu.RUnlock()
-	if commit == "" && (scope == "" || scope == "all" || s.Mode == "files" || s.Mode == "plan" || inRange) {
+	if commit == "" && (scope == "" || s.Mode == "files" || s.Mode == "plan" || inRange) {
 		return s.GetFileDiffSnapshot(path, ignoreWhitespace)
+	}
+	if commit == "" && scope == "all" {
+		return s.liveAllFileDiff(path, ignoreWhitespace)
 	}
 
 	status, content, oldPath, baseRef, repoRoot := s.loadScopedFileState(path, scope, commit)

@@ -7,10 +7,7 @@ import (
 	"github.com/sho-hata/crit/internal/review"
 	"github.com/sho-hata/crit/internal/server"
 	"github.com/sho-hata/crit/internal/session"
-	"github.com/sho-hata/crit/internal/testutil"
 )
-
-var writeFile = testutil.WriteFile
 
 type (
 	Config       = config.Config

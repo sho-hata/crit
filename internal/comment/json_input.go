@@ -52,12 +52,10 @@ func jsonSourceLabel(source string) string {
 }
 
 func jsonErrorOffset(err error) (int64, bool) {
-	var syn *json.SyntaxError
-	if errors.As(err, &syn) {
+	if syn, ok := errors.AsType[*json.SyntaxError](err); ok {
 		return syn.Offset, true
 	}
-	var typ *json.UnmarshalTypeError
-	if errors.As(err, &typ) {
+	if typ, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		return typ.Offset, true
 	}
 	return 0, false
@@ -90,10 +88,7 @@ func jsonSnippet(data []byte, offset int64) string {
 	if int(offset) > len(data) {
 		offset = int64(len(data))
 	}
-	start := offset - before
-	if start < 0 {
-		start = 0
-	}
+	start := max(offset-before, 0)
 	end := offset + after
 	if int(end) > len(data) {
 		end = int64(len(data))

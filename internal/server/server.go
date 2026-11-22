@@ -10,9 +10,11 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,6 +89,9 @@ type Server struct {
 	// publicURLHost is the hostname from --public-url / CRIT_PUBLIC_URL, allowed
 	// through the DNS-rebinding guard when requests arrive via a reverse proxy.
 	publicURLHost string
+	// publicOrigin is the --public-url origin (scheme://host:port, effective
+	// port) that Origin/Referer may name under the CSRF fallback.
+	publicOrigin string
 
 	// shutdownCtx is the daemon's signal-handled context; child operations
 	// (e.g. runAgentCmd subprocesses) derive their context from this so a
@@ -139,8 +144,14 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	// Theme preview page — static samples, no session needed.
 	mux.HandleFunc("/themes", s.serveHTML("themes.html"))
 
+	// The user's own stylesheet, linked last from index.html and themes.html.
+	mux.HandleFunc("/custom.css", s.handleCustomCSS)
+
 	// Live-mode routes — NOT wrapped in withReady.
 	mux.HandleFunc("/live", s.serveIndexHTML())
+
+	// File viewer; not readiness-gated, the page polls /api/session itself.
+	mux.HandleFunc("/view", s.serveIndexHTML())
 	for _, f := range AgentScriptFiles {
 		if f == "crit-agent.js" {
 			mux.HandleFunc("/"+f, s.handleCritAgentJS)
@@ -185,6 +196,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/api/review-comment/", s.withReady(s.handleReviewCommentByID))
 	mux.HandleFunc("/api/files/list", s.withReady(s.handleFilesList))
 	mux.HandleFunc("/api/files/comments", s.withReady(s.handleAllFileComments))
+	mux.HandleFunc("/api/viewed", s.withReady(s.handleViewed))
 	mux.HandleFunc("/api/story", s.withReady(s.handleStory))
 
 	// File-scoped endpoints (use ?path= query param)
@@ -232,6 +244,28 @@ func (s *Server) SetListenHost(host string) {
 // if the server is bound to loopback — needed for tailscale serve and similar proxies.
 func (s *Server) SetPublicURL(publicURL string) {
 	s.publicURLHost = config.PublicURLHost(publicURL)
+	s.publicOrigin = ""
+	if s.publicURLHost != "" {
+		if u, err := url.Parse(publicURL); err == nil {
+			s.publicOrigin = urlOrigin(u)
+		}
+	}
+}
+
+// urlOrigin returns u's origin as scheme://host:port with the scheme's default
+// port filled in, so https://h and https://h:443 compare equal.
+func urlOrigin(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 // isLoopbackHost reports whether host (no port) is a loopback address.
@@ -243,7 +277,7 @@ func isLoopbackHost(host string) bool {
 // is bound to a loopback address, the request's Host header must also resolve
 // to a loopback hostname — this is the canonical DNS-rebinding defense.
 func (s *Server) checkHost(r *http.Request) bool {
-	host := requestHost(r.Host)
+	host := config.RequestHost(r.Host)
 	if s.publicURLHost != "" && strings.EqualFold(host, s.publicURLHost) {
 		return true
 	}
@@ -253,29 +287,18 @@ func (s *Server) checkHost(r *http.Request) bool {
 	return isLoopbackHost(host)
 }
 
-func requestHost(hostport string) string {
-	host := hostport
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	} else {
-		// SplitHostPort fails when there's no port (e.g. "Host: [::1]").
-		// Strip IPv6 brackets so ParseIP can recognise the address.
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	}
-	return host
-}
-
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.checkHost(r) {
 		http.Error(w, s.hostForbiddenMessage(r), http.StatusForbidden)
 		return
 	}
-	// CSRF defense for browser clients: modern browsers always send
-	// Sec-Fetch-Site on requests they initiate. Cross-site values mean the
-	// request came from another origin (e.g. evil.com → 127.0.0.1). Missing
-	// header = non-browser client (CLI, curl, agent) — allow. same-origin =
-	// Crit UI on this port — allow. DNS-rebinding is handled by checkHost.
-	if !checkSecFetchSite(r) {
+	// CSRF defense for browser clients: modern browsers send Sec-Fetch-Site
+	// on requests they initiate; same-origin = Crit UI on this port. Browsers
+	// without Fetch Metadata still send Origin (or Referer), which must name
+	// this server. Only a request with none of the three is treated as a
+	// non-browser client (CLI, curl, agent). DNS-rebinding is handled by
+	// checkHost.
+	if !s.checkSecFetchSite(r) {
 		http.Error(w, secFetchSiteForbiddenMessage(r), http.StatusForbidden)
 		return
 	}
@@ -285,7 +308,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // hostForbiddenMessage explains a checkHost rejection so a reverse-proxy /
 // --public-url misconfig is diagnosable from the 403 body (see #788).
 func (s *Server) hostForbiddenMessage(r *http.Request) string {
-	host := requestHost(r.Host)
+	host := config.RequestHost(r.Host)
 	if s.publicURLHost == "" {
 		return fmt.Sprintf(
 			"Forbidden: request Host %q does not match loopback (set --public-url if reaching Crit via a reverse proxy)",
@@ -300,26 +323,56 @@ func (s *Server) hostForbiddenMessage(r *http.Request) string {
 
 // secFetchSiteForbiddenMessage explains a checkSecFetchSite rejection.
 func secFetchSiteForbiddenMessage(r *http.Request) string {
-	return fmt.Sprintf(
-		"Forbidden: cross-origin browser request rejected (Sec-Fetch-Site: %q)",
-		r.Header.Get("Sec-Fetch-Site"),
-	)
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return fmt.Sprintf(
+			"Forbidden: cross-origin browser request rejected (Sec-Fetch-Site: %q)",
+			site,
+		)
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		return fmt.Sprintf("Forbidden: cross-origin browser request rejected (Origin: %q)", origin)
+	}
+	return fmt.Sprintf("Forbidden: cross-origin browser request rejected (Referer: %q)", r.Header.Get("Referer"))
 }
 
 // checkSecFetchSite reports whether a request is allowed under the CSRF policy.
 // Safe methods (GET/HEAD/OPTIONS) always pass. For state-changing methods:
-// absent Sec-Fetch-Site is allowed (CLI/curl); "same-origin" is allowed (UI);
-// any other value (notably "cross-site") is rejected.
-func checkSecFetchSite(r *http.Request) bool {
+//   - Sec-Fetch-Site present: only "same-origin" is allowed (UI).
+//   - Otherwise (browsers without Fetch Metadata), Origin — or Referer when
+//     Origin is absent — must name this server (isSameOriginURL). "null" and
+//     unparseable values are rejected.
+//   - None of the three headers: non-browser client (CLI/curl/agent), allowed.
+func (s *Server) checkSecFetchSite(r *http.Request) bool {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
-	site := r.Header.Get("Sec-Fetch-Site")
-	if site == "" {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site == "same-origin"
+	}
+	if _, ok := r.Header["Origin"]; ok {
+		return s.isSameOriginURL(r, r.Header.Get("Origin"))
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		return s.isSameOriginURL(r, ref)
+	}
+	return true
+}
+
+// isSameOriginURL reports whether raw (an Origin or Referer value) names this
+// server: its host[:port] equals the request Host that checkHost already
+// vetted, or it is the --public-url origin (reverse proxies may rewrite Host
+// to the loopback upstream). Scheme and port must match the public URL too:
+// another app on the same hostname is a different origin.
+func (s *Server) isSameOriginURL(r *http.Request, raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
 		return true
 	}
-	return site == "same-origin"
+	return s.publicOrigin != "" && urlOrigin(u) == s.publicOrigin
 }
 
 // requireReady returns false and writes a 503 or 500 response if the server
@@ -477,7 +530,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	latestVersion := s.latestVersion
 	s.versionMu.RUnlock()
 	sess := s.session.Load()
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"version":             s.currentVersion,
 		"latest_version":      latestVersion,
 		"installation_source": s.installationSource,
@@ -502,6 +555,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// those servers cover.
 		"lsp_available":  s.lspAvailable(),
 		"lsp_extensions": s.lspExtensions(),
+		// lsp_sandbox names the confinement every language server runs
+		// under ("seatbelt", "" for none; without one a --pr review has
+		// lsp_available false).
+		"lsp_sandbox": s.lspBackend().Name,
 		// Initial view for files with a Document/Diff toggle (markdown) in
 		// git mode: "document" forces document view, anything else keeps the
 		// historical default (diff in git mode, document in file mode).
@@ -517,12 +574,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		resp["close_on_approve_after_ms"] = ms
 	}
 
+	// The user's own stylesheet, for the settings panel's Custom CSS card.
+	if path := config.CustomCSSPath(); path != "" {
+		resp["custom_css_path"] = path
+		info, err := os.Stat(path)
+		resp["custom_css_exists"] = err == nil && info.Mode().IsRegular()
+	}
+
 	// Integration detection
 	s.addIntegrationStatus(resp)
 
-	for k, v := range s.projectPromptTrustPayload() {
-		resp[k] = v
-	}
+	maps.Copy(resp, s.projectPromptTrustPayload())
 	if sess != nil && s.projectPromptsUntrusted() {
 		resp["project_prompt_preview"] = s.renderProjectPromptPreview(sess)
 	}
@@ -604,7 +666,7 @@ func (s *Server) handleCodeFonts(w http.ResponseWriter, r *http.Request) {
 }
 
 // addIntegrationStatus populates integration detection fields in the config response.
-func (s *Server) addIntegrationStatus(resp map[string]interface{}) {
+func (s *Server) addIntegrationStatus(resp map[string]any) {
 	if s.cfg.NoIntegrationCheck {
 		resp["integrations"] = []IntegrationStatus{}
 		resp["any_integration_installed"] = false
@@ -758,6 +820,33 @@ func (s *Server) serveEmbeddedCSS(name string) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache")
 		io.Copy(w, f)
 	}
+}
+
+// handleCustomCSS serves ~/.crit/custom.css, read on every request so edits
+// apply on reload. Without one it answers 204 No Content, an empty
+// stylesheet, so pages can link it unconditionally. A file that exists but
+// can't be read is logged.
+func (s *Server) handleCustomCSS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	path := config.CustomCSSPath()
+	if path == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	css, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			log.Printf("custom.css: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	_, _ = w.Write(css)
 }
 
 // filterFilesAtRound returns the subset of files that have a snapshot recorded
@@ -944,9 +1033,8 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, ok := s.session.Load().GetFileSnapshot(path)
 	if !ok {
-		// File not in session (e.g. scoped view showing a file added after startup).
-		// Try to serve it directly from disk.
-		snapshot, ok = s.session.Load().GetFileSnapshotFromDisk(path)
+		// Not in session: serve it from the tree the review shows.
+		snapshot, ok = s.session.Load().GetFileSnapshotOutsideSession(path)
 		if !ok {
 			http.Error(w, "File not found", http.StatusNotFound)
 			return
@@ -1712,7 +1800,9 @@ func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.session.Load().SetFocus(req); err != nil {
+	sess := s.session.Load()
+	// A range picked at the branch tip follows HEAD from round to round.
+	if err := sess.SetFocus(sess.WithHeadRefAtTip(req)); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1945,6 +2035,13 @@ func (s *Server) handleReviewCycle(w http.ResponseWriter, r *http.Request) {
 	defer sess.Unsubscribe(ch)
 
 	if !sess.IsAwaitingFirstReview() {
+		// A --range review whose head is HEAD (or a branch) shows the commit
+		// the agent is at now, not the one it was at when the daemon started.
+		if oldHead, newHead, err := sess.FollowRangeHead(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: range head not updated: %v\n", err)
+		} else if newHead != "" {
+			fmt.Fprintf(os.Stderr, "Range head moved: %.7s -> %.7s\n", oldHead, newHead)
+		}
 		// Agent finished changes — signal round-complete so browser refreshes
 		sess.SignalRoundComplete()
 	}
@@ -2221,6 +2318,7 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	setUntrustedContentHeaders(w, repoFileCSP)
 
 	reqPath := strings.TrimPrefix(r.URL.Path, "/files/")
 	reqPath = filepath.ToSlash(filepath.Clean(reqPath))
@@ -2414,11 +2512,9 @@ func (s *Server) handleAgentRequest(w http.ResponseWriter, r *http.Request) {
 	// Run agent command asynchronously. Tracked via bgWG so the daemon
 	// shutdown path can wait for the reply to be posted before WriteFiles
 	// persists the final review state.
-	s.bgWG.Add(1)
-	go func() {
-		defer s.bgWG.Done()
+	s.bgWG.Go(func() {
 		s.runAgentCmd(prompt, comment.ID, filePath)
-	}()
+	})
 
 	writeJSONStatus(w, http.StatusAccepted, map[string]any{
 		"status":     "accepted",
@@ -2539,11 +2635,15 @@ func (s *Server) runAgentCmd(prompt string, commentID string, filePath string) {
 			return
 		default:
 		}
-		// Re-read content (and file list/diffs in git mode) so next fetch returns updated data
-		sess.RefreshFileContent()
+		// Re-read content (and file list/diffs in git mode) so next fetch returns
+		// updated data. Git mode leaves content alone: the browser still shows
+		// the text it loaded and comments anchor to it; the next live session
+		// fetch syncs content and moves comments together (SyncWorkingTree).
 		if sess.Mode == "git" {
 			sess.RefreshFileList()
 			sess.RefreshDiffs()
+		} else {
+			sess.RefreshFileContent()
 		}
 		sess.Notify(SSEEvent{Type: "comments-changed"})
 	}

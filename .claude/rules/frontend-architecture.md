@@ -4,6 +4,7 @@
 
 `index.html` serves both modes from a single HTML shell. A script block at load time checks `window.location.pathname`:
 - `/live` → live mode (iframe-based pin review)
+- `/view` → file viewer (`crit-view.js`: one whole repo file on Pierre with Shiki + `crit-lsp.js`; read-only; opened from the LSP peek popup's "Open full file" link as `/view?path=X&line=N`). Loads only the Pierre/LSP chain plus `style-view.css`, which hides the review chrome under `<html class="crit-mode-view">`
 - Everything else → code-review mode (file tree + diff/document views)
 
 Each mode dynamically loads its own script set. They share: theme pill, settings overlay, and extracted modules.
@@ -52,10 +53,16 @@ All custom JS uses the IIFE + dual-export pattern:
 |--------|-----------|---------|
 | `crit-icons.js` | `window.crit.icons` | SVG icon constants (ICON_CHEVRON, ICON_EDIT, etc.) |
 | `crit-line-blocks.js` | `window.crit.lineBlocks` | buildLineBlocks (markdown → commentable line blocks) |
+| `crit-renderers.js` | `window.crit.renderers` | Pluggable renderer registry (fence + file renderers, render targets, anchorFor clicks). See `docs/renderers.md` |
+| `crit-diagram-overlay.js` | `window.crit.diagramOverlay` | Fullscreen pan/zoom view for rendered SVG output |
+| `crit-find.js` | `window.crit.find` | Find bar for the review list (Cmd/Ctrl+F): searches the file model, highlights matches in Pierre's shadow roots |
+| `crit-renderer-mermaid.js` | (registers `mermaid` twice) | Built-in Mermaid renderer: a fence registration for ```` ```mermaid ````, a file registration for `*.mermaid` / `*.mmd` |
 | `crit-code-highlight.js` | `window.crit.codeHighlight` | Shiki highlighting for fenced code (comments, documents) via Pierre's worker pool |
+| `crit-document-html.js` | `window.crit.documentHtml` | Sanitizes rendered markdown line blocks (raw HTML from reviewed files) with DOMPurify |
 | `crit-diff-renderer.js` | `window.crit.diffRenderer` | Word-level diff for the rendered markdown diff (files mode rounds) |
 | `crit-pierre-adapter.js` | `window.crit.pierreAdapter` | Pure mapping: Crit hunks/comments/forms → Pierre diffs, annotations, themes |
 | `crit-pierre-view.js` | `window.crit.pierreView` | The review list on Pierre CodeView (items, lazy hydration, annotation cache, jumps) |
+| `crit-view.js` | `window.crit.view` | `/view` file viewer page: one file item on `pierreView`, `crit-lsp.js` wired with in-viewer jumps (`canJump: in_repo`, pushState) |
 
 ## ContentRenderer Interface
 

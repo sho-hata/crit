@@ -83,8 +83,7 @@ func RunReviewClientRaw(entry SessionEntry, sessionKey, planHook string) (approv
 	statusCode, body, err := waitForDaemonReady(client, entry.Host, entry.Port, sessionKey, entry.StartedAt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "crit plan-hook: %v\n", err)
-		var initErr *daemonInitializationError
-		if errors.As(err, &initErr) {
+		if initErr, ok := errors.AsType[*daemonInitializationError](err); ok {
 			return false, "crit daemon failed to initialize: " + initErr.Error()
 		}
 		return false, "crit daemon was unreachable; plan was not reviewed."
@@ -124,6 +123,10 @@ func RunReviewClientRaw(entry SessionEntry, sessionKey, planHook string) (approv
 	return result.Approved, result.Prompt
 }
 
+// readinessPollInterval is the delay between /api/session polls while the
+// daemon is still initializing (503); tests shorten it.
+var readinessPollInterval = 500 * time.Millisecond
+
 func waitForDaemonReady(client *http.Client, host string, port int, sessionKey, daemonGeneration string) (statusCode int, body []byte, err error) {
 	connHost := host
 	if connHost == "" {
@@ -152,7 +155,7 @@ func waitForDaemonReady(client *http.Client, host string, port int, sessionKey, 
 		if time.Now().After(deadline) {
 			return 0, nil, fmt.Errorf("daemon did not become ready within 5 minutes")
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(readinessPollInterval)
 	}
 }
 

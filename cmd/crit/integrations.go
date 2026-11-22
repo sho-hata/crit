@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sho-hata/crit/internal/lsp"
 )
 
 // computeFileHash returns the hex-encoded SHA256 hash of data.
@@ -106,7 +108,7 @@ func opencodeVersionInfo() (int, string) {
 }
 
 func parseOpencodeVersion(output string) (int, string) {
-	for _, field := range strings.Fields(output) {
+	for field := range strings.FieldsSeq(output) {
 		field = strings.TrimLeft(field, "vV")
 		majorText, _, _ := strings.Cut(field, ".")
 		major, parseErr := strconv.Atoi(majorText)
@@ -288,8 +290,8 @@ func buildCandidates(f integration, agent, projectDir, homeDir string) []candida
 	candidates = append(candidates, candidate{marketplacePath, locationMarketplace})
 
 	agentPrefix := fmt.Sprintf("integrations/%s/", agent)
-	if strings.HasPrefix(f.source, agentPrefix) {
-		relPath := strings.TrimPrefix(f.source, agentPrefix)
+	if after, ok := strings.CutPrefix(f.source, agentPrefix); ok {
+		relPath := after
 		cacheBase := filepath.Join(homeDir, toolDir, "plugins", "cache", "crit", "crit")
 		if latest := latestCacheDir(cacheBase); latest != "" {
 			cachePath := filepath.Join(cacheBase, latest, relPath)
@@ -679,33 +681,6 @@ func printMissingHints(missing []string) int {
 	return len(missing)
 }
 
-// hintMissingIntegrations prints a suggestion when AI tools are detected but
-// no crit integration is installed. Skipped when any integration already exists
-// or when CRIT_NO_INTEGRATION_CHECK is set.
-func hintMissingIntegrations() {
-	if os.Getenv("CRIT_NO_INTEGRATION_CHECK") != "" {
-		return
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	hintMissingIntegrationsFor(cwd, home)
-}
-
-func hintMissingIntegrationsFor(cwd, home string) {
-	if len(installedAgents(cwd, home)) > 0 {
-		return
-	}
-	if missing := checkMissingIntegrations(cwd, home); len(missing) > 0 {
-		printMissingHints(missing)
-	}
-}
-
 // runCheck implements the "crit check" subcommand.
 func runCheck() {
 	cwd, err := os.Getwd()
@@ -720,6 +695,7 @@ func runCheck() {
 	}
 
 	fmt.Fprintf(os.Stderr, "crit %s — checking installed integrations...\n\n", version)
+	fmt.Fprintf(os.Stderr, "LSP sandbox: %s\n\n", lsp.SandboxStatus())
 
 	stale := checkInstalledIntegrations(cwd, home)
 	missing := checkMissingIntegrations(cwd, home)

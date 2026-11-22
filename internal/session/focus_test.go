@@ -300,7 +300,7 @@ func BenchmarkVisibleInFocus(b *testing.B) {
 // focus keys plus 10% legacy/working-tree, simulating a realistic mix.
 func makeBenchComments(n int) []Comment {
 	out := make([]Comment, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		switch i % 10 {
 		case 0:
 			out[i] = Comment{FocusKey: "", DiffScope: ""} // legacy/working-tree

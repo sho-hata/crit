@@ -310,15 +310,6 @@ func SaveSnapshotsFile(snapshotsPath string, sf SnapshotsFile) error {
 	return config.AtomicWriteFile(snapshotsPath, append(data, '\n'), 0o644)
 }
 
-// writeCritJSON resolves the review path and writes a CritJSON via saveCritJSON.
-func writeCritJSON(cj CritJSON, outputDir string) error {
-	path, err := ResolveReviewPath(outputDir)
-	if err != nil {
-		return err
-	}
-	return SaveCritJSON(path, cj)
-}
-
 // LoadCritJSON reads the review file from disk (folder layout
 // <identity>/review.json), or returns a fresh CritJSON if it doesn't exist.
 // Triggers v3->v4 migration on read for any pre-existing flat-file review.
@@ -387,10 +378,7 @@ func clearCritJSON(outputDir string) error {
 // clearReviewFolder removes the entire review folder (review.json,
 // snapshots.json, attachments). Idempotent: a missing folder is fine.
 func clearReviewFolder(identity string) error {
-	if err := os.RemoveAll(identity); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return session.ClearReviewFolder(identity)
 }
 
 // walkReviewIdentities iterates over every review identity in

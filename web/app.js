@@ -82,18 +82,40 @@
   // Scroll/expand/flash a comment card located anywhere in the document, given just its id.
   // Distinct from scrollToComment(commentId, filePath) below — that one needs filePath context.
   function scrollToCommentRef(id) {
-    if (pierreViewActive()) {
-      const owner = files.find(function(f) {
-        return (f.comments || []).some(function(c) { return c.id === id; });
-      });
-      if (owner) pierreJumpToComment(id, owner.path, flashCommentRefCard);
+    const selector = '.comment-card[data-comment-id="' + CSS.escape(id) + '"]';
+    if (!pierreViewActive()) {
+      // Story view: the card is in the chapter pane when its chapter is shown.
+      const storyCard = document.querySelector(selector);
+      if (!storyCard) return;
+      flashCommentRefCard(storyCard);
+      storyCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    // Story view: the card is in the chapter pane when its chapter is shown.
-    const card = document.querySelector('.comment-card[data-comment-id="' + CSS.escape(id) + '"]');
-    if (!card) return;
-    flashCommentRefCard(card);
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // A card already mounted in the review list is scrolled to directly.
+    // pierreJumpToComment is for cards not mounted yet: it scrolls to the file
+    // first, which jumps the page to the top of the file and back when the
+    // card is nearby. Only look inside #filesContainer: the comments panel
+    // keeps its own copy of each card, even while hidden.
+    const card = document.querySelector('#filesContainer ' + selector);
+    if (card) {
+      // Supersede a jump still in flight. Align with the instant loop, not a
+      // smooth scroll: files mounting on the way adjust scrollTop, and that
+      // cancels the browser's animation partway.
+      const seq = ++pierreJumpSeq;
+      flashCommentRefCard(card);
+      scrollPierreElementIntoView(card, function() { return seq === pierreJumpSeq; });
+      return;
+    }
+    const owner = files.find(function(f) {
+      return (f.comments || []).some(function(c) { return c.id === id; });
+    });
+    if (owner) {
+      pierreJumpToComment(id, owner.path, flashCommentRefCard);
+      return;
+    }
+    // A review-level comment has no card while the review conversation is
+    // collapsed. scrollToReviewComment expands it first.
+    if (reviewComments.some(function(c) { return c.id === id; })) scrollToReviewComment(id, flashCommentRefCard);
   }
 
   function flashCommentRefCard(card) {
@@ -102,11 +124,17 @@
       card.classList.remove('collapsed');
       if (typeof commentCollapseOverrides !== 'undefined') commentCollapseOverrides[id] = false;
     }
-    card.classList.remove('comment-ref-flash');
-    void card.offsetWidth;
-    card.classList.add('comment-ref-flash');
-    card.addEventListener('animationend', function() {
-      card.classList.remove('comment-ref-flash');
+    restartFlash(card, 'comment-ref-flash');
+  }
+
+  // Play a one-shot highlight animation on `el`. Removing the class and
+  // forcing a reflow restarts the animation when it is already running.
+  function restartFlash(el, className) {
+    el.classList.remove(className);
+    void el.offsetWidth;
+    el.classList.add(className);
+    el.addEventListener('animationend', function() {
+      el.classList.remove(className);
     }, { once: true });
   }
 
@@ -255,6 +283,8 @@
   // Disable (c)/(r)/(tm) → ©/®/™ replacements so enumerated options render
   // literally. Keep typographer (smart quotes) and disable only replacements.
   documentMd.disable('replacements');
+  // Raw HTML in a reviewed document is untrusted: strip scripts and handlers.
+  window.crit.documentRawHtml.install(documentMd);
 
   // Add id attributes and anchor links to headings
   const HEADING_LINK_SVG = '<svg class="heading-anchor-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a2.002 2.002 0 0 0 0 2.83Z"></path></svg>';
@@ -264,7 +294,7 @@
     const token = tokens[idx];
     const inline = tokens[idx + 1];
     if (inline && inline.type === 'inline') {
-      const baseSlug = window.crit.lineBlocks.slugifyHeading(inline.content);
+      const baseSlug = window.crit.lineBlocks.slugifyHeading(window.crit.lineBlocks.headingText(inline));
       if (baseSlug) {
         const count = headingSlugCounter.get(baseSlug) || 0;
         const slug = count === 0 ? baseSlug : baseSlug + '-' + count;
@@ -337,14 +367,20 @@
   let files = [];         // [{ path, status, fileType, content, diffHunks, comments, lineBlocks, tocItems, collapsed, viewMode }]
   let configAuthor = '';
   let autoViewedPatterns = [];  // config auto_viewed_patterns; applied once per launch (issue #658)
+  let serverViewed = {};  // path -> mark saved in the review file
+  let serverViewedLoaded = false;
+  let viewedPersistChain = Promise.resolve();  // keeps saves in click order
   let defaultMarkdownView = '';  // config default_markdown_view; 'document' inits markdown to document view in git mode (issue #926)
 
-  // Initial viewMode for a file. File mode always opens document view.
+  // Initial viewMode for a file. File mode always opens document view, or the
+  // rendered view for a file a pluggable renderer claims (*.mmd -> Diagram).
   // In git mode only files with a Document/Diff toggle (markdown) honor the
   // default_markdown_view config; everything else stays diff. Anything other
   // than 'document' (unset, empty, 'diff') keeps the historical default.
-  function initialViewMode(fileType) {
-    if (session.mode !== 'git') return 'document';
+  function initialViewMode(fileType, path) {
+    if (session.mode !== 'git') {
+      return fileType === 'code' && window.crit.renderers.forFile(path) ? 'rendered' : 'document';
+    }
     if (fileType === 'markdown' && defaultMarkdownView === 'document') return 'document';
     return 'diff';
   }
@@ -352,6 +388,7 @@
   let promptTrustConfig = { project_prompts_untrusted: false };
 
   let uiState = 'reviewing';
+  let waitingOpenedAt = 0;
   let waitingNotApproved = false;
   let hiddenUnresolved = 0;
   let pendingUpdates = [];
@@ -614,7 +651,7 @@
         previousLineBlocks: null,
         tocItems: [],
         collapsed: false,
-        viewMode: initialViewMode(fi.file_type),
+        viewMode: initialViewMode(fi.file_type, fi.path),
         additions: fi.additions || 0,
         deletions: fi.deletions || 0,
         lazy: true,
@@ -685,7 +722,9 @@
       };
     }
     let diffUrl = '/api/file/diff?path=' + enc(fi.path);
-    if (scope && scope !== 'all') {
+    // "all" is sent too: without a scope the server answers from the round
+    // snapshot, while /api/session?scope=all lists the live working tree.
+    if (scope) {
       diffUrl += '&scope=' + enc(scope);
     }
     if (diffCommit) {
@@ -717,13 +756,14 @@
       tocItems: [],
       collapsed: fi.status === 'deleted' || fi.generated === true ||
         (fi.status === 'renamed' && !fi.additions && !fi.deletions),
-      viewMode: initialViewMode(fi.file_type),
+      viewMode: initialViewMode(fi.file_type, fi.path),
       additions: fi.additions || 0,
       deletions: fi.deletions || 0,
       lazy: false,
       orphaned: false,
       generated: !!fi.generated,
-      fileHash: fileRes.file_hash || '',
+      // Prefer the hash of the content the diff was drawn on (live scopes).
+      fileHash: diffRes.file_hash || fileRes.file_hash || '',
     };
 
     // Parse markdown content into line blocks. Fenced code is tokenized in
@@ -741,8 +781,31 @@
         f.previousLineBlocks = buildMarkdown(previous, f.previousContent).blocks;
       }
     }
+    const fileRenderer = fileRendererFor(f);
+    if (fileRenderer) f.lineBlocks = renderedFileBlocks(f, fileRenderer);
 
     return f;
+  }
+
+  // Pluggable file renderer (issue #989) claiming this code file, or null.
+  // A deleted file has nothing to render; it keeps the deleted-file diff.
+  function fileRendererFor(file) {
+    return file && file.fileType === 'code' && !file.orphaned && file.status !== 'deleted'
+      ? window.crit.renderers.forFile(file.path)
+      : null;
+  }
+
+  // The rendered view of a file renderer's file: one block spanning the whole
+  // file, so comments on any line sit below the rendering, and the gutter
+  // comments on the whole file's lines.
+  function renderedFileBlocks(file, renderer) {
+    const content = file.content || '';
+    const lines = window.crit.renderers.lineCount(content);
+    if (!lines) return [];
+    return [{
+      startLine: 1, endLine: lines, isEmpty: false, cssClass: 'render-block',
+      html: window.crit.renderers.targetHTML(renderer.name, 'file', content, { startLine: 1, endLine: lines }),
+    }];
   }
 
   // Git mode only: can this markdown file show the Rendered (Before/After)
@@ -799,33 +862,150 @@
     try {
       if (localStorage.getItem(autoViewedMarkerKey())) return; // already applied this launch
     } catch { return; }
+    const marked = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       if (f.viewed) continue; // respect existing/restored viewed state
+      // The reviewer's own decision wins, including an untick.
+      if (serverViewed[f.path] && !serverViewed[f.path].auto) continue;
       if (globMatch.matchAny(f.path, patterns)) {
         f.viewed = true;
+        delete f.viewedHunks;
         f.collapsed = true;
+        marked.push(f);
       }
     }
     saveViewedState();
+    // Without the saved marks an untick cannot be told apart from no mark.
+    if (serverViewedLoaded) persistViewedFiles(marked, true);
     try { localStorage.setItem(autoViewedMarkerKey(), '1'); } catch {}
+  }
+
+  function viewedHunkKeys(hunks) {
+    return (hunks || []).flatMap(storyRawHunks).map(function(hunk) {
+      // Ignore synthesized context and new-side line shifts when matching a refreshed diff.
+      const changes = JSON.stringify(hunk.Lines.filter(function(line) {
+        return line.Type !== 'context';
+      }).map(function(line) { return [line.Type, line.Content]; }));
+      let hash = 0;
+      for (let i = 0; i < changes.length; i++) hash = ((hash << 5) - hash + changes.charCodeAt(i)) | 0;
+      return hunk.OldStart + ':' + (hash >>> 0).toString(36);
+    });
+  }
+
+  function areHunksViewed(file, hunks) {
+    const keys = viewedHunkKeys(hunks);
+    return keys.length > 0 && keys.every(function(key) {
+      return file.viewedHunks ? file.viewedHunks.includes(key) : !!file.viewed;
+    });
+  }
+
+  function reconcileStoryViewed(file) {
+    // Only the full, unfiltered Story diff can determine whole-file completion.
+    // A commit pin scopes file.diffHunks to that commit, which would drop keys.
+    if (file.lazy || storyHidden || diffCommit || !storyHasContent(session && session.story)) return;
+    const keys = viewedHunkKeys(file.diffHunks);
+    // Renames, binaries and failed diff loads have no hunks: the file flag decides.
+    if (!keys.length) { delete file.viewedHunks; return; }
+    if (!file.viewedHunks && file.viewed) file.viewedHunks = keys;
+    if (!file.viewedHunks) return;
+    file.viewedHunks = file.viewedHunks.filter(function(key) { return keys.includes(key); });
+    file.viewed = areHunksViewed(file, file.diffHunks);
   }
 
   function saveViewedState() {
     const viewed = {};
+    const hunks = {};
     for (let i = 0; i < files.length; i++) {
       if (files[i].viewed) viewed[files[i].path] = true;
+      if (files[i].viewedHunks) hunks[files[i].path] = files[i].viewedHunks;
     }
     try { localStorage.setItem(viewedStorageKey(), JSON.stringify(viewed)); } catch {}
+    try { localStorage.setItem('crit-viewed-hunks-' + viewedIdentityHash(), JSON.stringify(hunks)); } catch {}
+  }
+
+  // Saves viewed marks to the review file, which outlives this origin's
+  // localStorage (the port changes each launch) and feeds `crit push --viewed`.
+  // Only explicit changes come here: a mark cleared because the file changed
+  // must not read as the reviewer unticking it.
+  function persistViewedFiles(list, auto) {
+    if (!list.length) return;
+    const headSHA = (session.focus && session.focus.head_sha) || '';
+    const marks = list.map(function(f) {
+      return { path: f.path, viewed: !!f.viewed, auto: !!auto, file_hash: f.fileHash || '', head_sha: headSHA };
+    });
+    // restoreViewedState runs again on scope reloads and must see this mark.
+    marks.forEach(function(mark) { serverViewed[mark.path] = mark; });
+    const body = JSON.stringify({ files: marks });
+    viewedPersistChain = viewedPersistChain.then(function() {
+      return fetch('/api/viewed', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: body });
+    }).then(function(res) {
+      if (!res.ok) console.error('Saving viewed files failed:', res.status);
+    }).catch(function(err) {
+      console.error('Saving viewed files failed:', err);
+    });
+  }
+
+  // Marks are saved per PR layer, so a focus change reloads them. Saves still
+  // in flight land first, or the reload would miss them, but a save that
+  // never answers must not hold up the reload. On failure the marks stay
+  // empty rather than keep another layer's: localStorage still restores this
+  // origin's marks.
+  async function loadServerViewed() {
+    await Promise.race([viewedPersistChain, new Promise(function(resolve) { setTimeout(resolve, 3000); })]);
+    serverViewed = {};
+    serverViewedLoaded = false;
+    try {
+      const res = await fetch('/api/viewed');
+      if (res.ok) {
+        serverViewed = (await res.json()).files || {};
+        serverViewedLoaded = true;
+      }
+    } catch { /* see above */ }
+  }
+
+  // Whether a saved mark still describes this file. Lazy files have no hash
+  // until they load, so the revision the mark was made on decides for them.
+  function viewedMarkIsCurrent(mark, file) {
+    if (mark.file_hash && file.fileHash) return mark.file_hash === file.fileHash;
+    const head = session.focus && session.focus.head_sha;
+    return !mark.head_sha || !head || mark.head_sha === head;
+  }
+
+  // A lazy file has no hash until it loads, so its mark is only checked here.
+  function recheckViewedMark(file) {
+    const mark = serverViewed[file.path];
+    if (!file.viewed || !mark || viewedMarkIsCurrent(mark, file)) return;
+    file.viewed = false;
+    updateViewedCount();
+    updateTreeViewedState();
+  }
+
+  // Reads a JSON object from localStorage, or {} when storage is blocked
+  // (some privacy modes throw on access) or the value is unreadable.
+  function readStoredObject(key) {
+    try {
+      const data = JSON.parse(localStorage.getItem(key) || '{}');
+      return data && typeof data === 'object' ? data : {};
+    } catch {
+      return {};
+    }
   }
 
   function restoreViewedState() {
+    // Marks saved in the review file apply even when localStorage is blocked.
+    const local = readStoredObject(viewedStorageKey());
+    for (let i = 0; i < files.length; i++) {
+      const mark = serverViewed[files[i].path];
+      files[i].viewed = mark ? mark.viewed && viewedMarkIsCurrent(mark, files[i]) : !!local[files[i].path];
+      if (files[i].viewed) files[i].collapsed = true;
+    }
     try {
-      const data = JSON.parse(localStorage.getItem(viewedStorageKey()) || '{}');
-      for (let i = 0; i < files.length; i++) {
-        files[i].viewed = !!data[files[i].path];
-        if (files[i].viewed) files[i].collapsed = true;
-      }
+      const data = readStoredObject('crit-viewed-hunks-' + viewedIdentityHash());
+      files.forEach(function(file) {
+        if (Array.isArray(data[file.path])) file.viewedHunks = data[file.path];
+        reconcileStoryViewed(file);
+      });
     } catch {}
   }
 
@@ -833,28 +1013,17 @@
     const file = getFileByPath(filePath);
     if (!file) return;
     file.viewed = !file.viewed;
+    delete file.viewedHunks;
     saveViewedState();
+    persistViewedFiles([file], false);
     updateViewedCount();
     updateTreeViewedState();
-    if (pierreView && pierreViewActive()) {
-      // Header is rebuilt by the item update (checkbox state included).
-      pierreView.setCollapsed(file, file.viewed ? true : file.collapsed);
-      return;
-    }
-    // Update the checkbox in the file header
-    const section = document.getElementById('file-section-' + filePath);
-    if (section) {
-      const cb = section.querySelector('.file-header-viewed input');
-      if (cb) cb.checked = file.viewed;
-      // Collapse when marking as viewed
-      if (file.viewed && section.open) {
-        if (section.getBoundingClientRect().top < 0) {
-          section.scrollIntoView({ behavior: 'instant' });
-        }
-        section.open = false;
-        file.collapsed = true;
-      }
-    }
+    // Both callers (the Pierre file header and the `a` shortcut) only run in
+    // the Pierre view. The header is rebuilt by the item update (checkbox
+    // state included).
+    if (!pierreView) return;
+    pierreView.setCollapsed(file, file.viewed ? true : file.collapsed);
+    critFind.filesChanged();
   }
 
   // Wraps crit.shared.waitForSession with the app.js-specific UI:
@@ -901,6 +1070,8 @@
   // ===== Init =====
   async function init() {
     watchCodeBlocks();
+    installRenderAnchorComments();
+    installRenderedQuoteHighlights();
     initTheme();
     initWidth();
     // Code font is a pure CSS-variable override; no mode-specific work here,
@@ -951,20 +1122,7 @@
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
 
-    // LSP hover / go-to-definition. Only wired when the server reports a
-    // language server available + enabled; lsp_extensions says which file
-    // extensions it covers. The module owns all its listeners.
-    if (configRes.lsp_available && window.crit.lsp) {
-      window.crit.lsp.init({
-        renderMarkdown: function (text) { return commentMd.render(text); },
-        jumpToLocation: lspJumpToLocation,
-        mountLineWidget: mountPierreLineWidget,
-        unmountLineWidget: unmountPierreLineWidget,
-        languageForPath: pierreLanguageForPath,
-        toast: function (message) { showMiniToast(message); },
-        extensions: configRes.lsp_extensions,
-      });
-    }
+    applyLspConfig(configRes);
     promptTrustConfig = {
       project_prompts_untrusted: !!configRes.project_prompts_untrusted,
       project_prompt_sources: configRes.project_prompt_sources || [],
@@ -1103,12 +1261,12 @@
         // First launch — prefer "branch" (committed changes only) over "all"
         // (which includes untracked files and can overwhelm large repos).
         diffScope = scopes.indexOf('branch') !== -1 ? 'branch' : 'all';
-        if (diffScope !== 'all') {
-          let corrected = await hydrateStoryIfMissing(await fetchWhenReady('/api/session?scope=' + enc(diffScope)));
-          corrected = await hydrateFullSessionForStoryIfNeeded(corrected);
-          session = corrected;
-          reviewComments = corrected.review_comments || [];
-        }
+        // Re-fetch even for "all": the first fetch had no scope, so it came
+        // from the round snapshot rather than the live working tree.
+        let corrected = await hydrateStoryIfMissing(await fetchWhenReady('/api/session?scope=' + enc(diffScope)));
+        corrected = await hydrateFullSessionForStoryIfNeeded(corrected);
+        session = corrected;
+        reviewComments = corrected.review_comments || [];
       } else if (scopes.indexOf(diffScope) === -1) {
         diffScope = 'all';
         setSetting('diffScope', 'all');
@@ -1118,9 +1276,7 @@
         session = corrected;
         reviewComments = corrected.review_comments || [];
       }
-      scopeToggle.querySelectorAll('.toggle-btn').forEach(function(b) {
-        b.classList.toggle('active', b.dataset.scope === diffScope);
-      });
+      updateScopePinIndicator();
 
       updateCompareAndCommitChrome();
     }
@@ -1135,6 +1291,7 @@
 
     files.sort(fileSortComparator);
 
+    await loadServerViewed();
     restoreViewedState();
     applyAutoViewedOnce(autoViewedPatterns);
     updateDiffModeToggle();
@@ -1189,7 +1346,7 @@
   function fencesIn(tokens) {
     return tokens.filter(function(t) { return t.type === 'fence'; }).map(function(t) {
       return { code: t.content, lang: t.info.trim().split(/\s+/)[0] };
-    }).filter(function(f) { return f.lang && f.lang !== 'mermaid'; });
+    }).filter(function(f) { return f.lang && !window.crit.renderers.forFence(f.lang); });
   }
 
   // Heading slugs are assigned while rendering, so the counter resets here,
@@ -1197,6 +1354,10 @@
   function buildMarkdown(tokens, content) {
     headingSlugCounter.clear();
     const blocks = buildLineBlocks(tokens, documentMd, content);
+    // Raw HTML from the reviewed file renders on the API's origin: sanitize
+    // once here so every view of these blocks (document, rendered diff,
+    // word diff) gets the clean markup.
+    if (documentHtml.hasRawHtml(tokens)) documentHtml.sanitizeBlocks(blocks, documentHtml.sanitizer);
     const tocItems = extractTocItems(tokens);
     return { blocks, tocItems };
   }
@@ -1214,6 +1375,9 @@
     }
     return items;
   }
+
+  // Document sanitizer — crit-document-html.js (window.crit.documentHtml)
+  const documentHtml = window.crit.documentHtml;
 
   // Line-block building — extracted to crit-line-blocks.js (window.crit.lineBlocks)
   const buildLineBlocks = window.crit.lineBlocks.buildLineBlocks;
@@ -1257,7 +1421,9 @@
   function rewriteImageSrcs(html, filePath) {
     return html.replace(/(<img\s[^>]*src=")([^"]+)(")/gi, function(match, pre, src, post) {
       if (/^https?:\/\/|^data:|^\//.test(src)) return match;
-      return pre + '/files/' + resolveImagePath(filePath || '', src) + post;
+      // src comes from serialized HTML and is already escaped; the file path
+      // is raw, and a quote in a folder name would end the attribute.
+      return pre + '/files/' + resolveImagePath(escapeHtml(filePath || ''), src) + post;
     });
   }
 
@@ -1276,6 +1442,17 @@
   // ===== File Tree Sidebar =====
   let activeTreePath = null;
   let ignoreTreeObserverUntil = 0;
+  // A jump that centers a line (find, comment navigation) leaves another file
+  // at the top of the list, and the scroll can keep settling after the
+  // ignore window on a slow machine. Keep the target active while it is on
+  // screen. Scrolled off screen, the tree follows the scroll, but for the
+  // first 2s the pin stays in case the settling list brings the file back.
+  let treePin = null; // { path, until }
+  function pinTreeActive(path) {
+    treePin = { path: path, until: Date.now() + 2000 };
+    ignoreTreeObserverUntil = Date.now() + 400;
+    updateTreeActive(path);
+  }
   const treeFolderState = {}; // { 'src': true, 'src/components': false } — true = collapsed
 
   function buildFileTree(fileList) {
@@ -1354,6 +1531,7 @@
         const anyExpanded = files.some(function(f) { return !f.collapsed; });
         if (pierreViewActive() && pierreView) {
           pierreView.setAllCollapsed(files, anyExpanded);
+          critFind.filesChanged();
         } else {
           for (let i = 0; i < files.length; i++) {
             files[i].collapsed = anyExpanded;
@@ -1559,6 +1737,8 @@
   }
 
   function updateTreeActive(filePath) {
+    // Anything else that moves the active file (j/k, a click) ends the pin.
+    if (treePin && treePin.path !== filePath) treePin = null;
     if (filePath === activeTreePath) return;
     activeTreePath = filePath;
     const allRows = document.querySelectorAll('.tree-file, .tree-conversation-row');
@@ -1705,6 +1885,7 @@
   }
 
   function pierreIsDocumentView(file) {
+    if (file.viewMode === 'rendered') return !!fileRendererFor(file);
     return file.fileType === 'markdown' && (file.viewMode === 'document' || file.viewMode === 'rendered-diff');
   }
 
@@ -1714,15 +1895,16 @@
     if (file.lazy) return null;
     if (file.orphaned) return 'This file is no longer part of the review.';
     const noHunks = !file.diffHunks || file.diffHunks.length === 0;
-    if (file.viewMode === 'document' || file.viewMode === 'rendered-diff' || !noHunks) return null;
+    if (file.viewMode === 'document' || file.viewMode === 'rendered-diff' || file.viewMode === 'rendered' || !noHunks) return null;
     if (file.status === 'deleted') return 'This file was deleted.';
     if (file.status === 'renamed') return 'File renamed without changes.';
     return null;
   }
 
-  // Files-mode code file: the whole file as a Pierre file item.
+  // Files-mode code file, or a markdown file in Source view: the whole file
+  // as a Pierre file item.
   function pierreIsFileView(file) {
-    return file.fileType === 'code' && file.viewMode === 'document' && !file.orphaned;
+    return ((file.fileType === 'code' && file.viewMode === 'document') || file.viewMode === 'source') && !file.orphaned;
   }
 
   function pierreLineCount(file) {
@@ -1896,7 +2078,182 @@
     section.appendChild(body);
     populateDocumentBody(body, file);
     highlightQuotesInSection(section, file);
+    observePierreDocumentResize(section);
     return section;
+  }
+
+  // Pierre keeps a rendered document in place by the first line of its empty
+  // file, which sits below the whole document. A thread growing inside the
+  // document (a reply, a resolve, an opened reply form) then scrolled the page
+  // by its growth. Instead, the block at the top of the screen stays where it
+  // is: it is remembered as the reader scrolls, and put back when the document
+  // changes height. Pierre's ResizeObserver was created first (each view
+  // creates its own, and disposePierreView drops ours with it), so its own
+  // scroll fix has already run in the same frame when ours puts the block back.
+  let pierreReaderAnchor = null; // { section, selector (null: the section itself), top }
+  let pierreDocumentResizeObserver = null;
+  // Content on screen before a review refetch, keyed by path. Set only for
+  // the re-render that follows a new round or a mid-round Reload, so a
+  // line-number anchor can be retargeted before that render paints.
+  let roundPreviousContent = null;
+
+  function readerAnchorSelector(el) {
+    if (el.dataset.commentId) return '.comment-card[data-comment-id="' + CSS.escape(el.dataset.commentId) + '"]';
+    return '.line-block[data-start-line="' + el.dataset.startLine + '"][data-end-line="' + el.dataset.endLine + '"]';
+  }
+
+  function countLineWindow(haystack, windowLines) {
+    const width = windowLines.length;
+    if (width === 0) return { count: 0, at: -1 };
+    let count = 0;
+    let at = -1;
+    for (let i = 0; i + width <= haystack.length; i++) {
+      let same = true;
+      for (let j = 0; j < width; j++) {
+        if (haystack[i + j] !== windowLines[j]) { same = false; break; }
+      }
+      if (!same) continue;
+      count++;
+      at = i;
+      if (count > 1) return { count: count, at: at };
+    }
+    return { count: count, at: at };
+  }
+
+  // Where the on-screen line range went after a round. Widens until the
+  // quoted lines are unique in the previous text, then finds that quote in
+  // the new text. Null when the quoted lines themselves changed.
+  function mapDisplayedLineRange(previousContent, nextContent, start, end) {
+    const oldLines = previousContent.split('\n');
+    const newLines = nextContent.split('\n');
+    if (start < 1 || end < start || end > oldLines.length) return null;
+    let lo = start - 1;
+    let hi = end;
+    let windowLines = oldLines.slice(lo, hi);
+    let guard = oldLines.length;
+    while (countLineWindow(oldLines, windowLines).count > 1 && guard > 0) {
+      guard--;
+      if (lo > 0) lo--;
+      else if (hi < oldLines.length) hi++;
+      else break;
+      windowLines = oldLines.slice(lo, hi);
+    }
+    if (countLineWindow(oldLines, windowLines).count !== 1) return null;
+    const found = countLineWindow(newLines, windowLines);
+    if (found.count !== 1) return null;
+    const newStart = found.at + (start - 1 - lo) + 1;
+    const newEnd = newStart + (end - start);
+    if (newEnd > newLines.length) return null;
+    return { start: newStart, end: newEnd };
+  }
+
+  function lineBlockCovering(file, start, end) {
+    const blocks = file.lineBlocks || [];
+    let best = null;
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      if (block.startLine > start || block.endLine < end) continue;
+      if (!best || (block.endLine - block.startLine) < (best.endLine - best.startLine)) best = block;
+    }
+    return best;
+  }
+
+  // A line-number anchor names a block that a round may have shifted. Point
+  // it at the same lines in the new document before the re-render. A comment
+  // card is named by id, and the section itself has no line numbers; neither
+  // needs this. Drop the anchor when the quoted lines changed, rather than
+  // pin a different block.
+  function remapPierreReaderAnchor(section, file) {
+    const anchor = pierreReaderAnchor;
+    if (!roundPreviousContent || !anchor || anchor.section !== section || !anchor.selector) return;
+    if (anchor.selector.indexOf('data-start-line=') === -1) return;
+    const previous = roundPreviousContent.get(file.path);
+    const match = /data-start-line="(\d+)"\]\[data-end-line="(\d+)"\]/.exec(anchor.selector);
+    if (previous === undefined || !match) { pierreReaderAnchor = null; return; }
+    const shifted = mapDisplayedLineRange(previous, file.content || '', Number(match[1]), Number(match[2]));
+    const block = shifted && lineBlockCovering(file, shifted.start, shifted.end);
+    if (!block) { pierreReaderAnchor = null; return; }
+    anchor.selector = '.line-block[data-start-line="' + block.startLine + '"][data-end-line="' + block.endLine + '"]';
+  }
+
+  // Put the anchored block back before the browser paints. The resize
+  // observer does this for later height changes; a round's re-render also
+  // needs it in the same turn, or the first frame shows the shifted lines.
+  function holdPierreReaderAnchor() {
+    const anchor = pierreReaderAnchor;
+    if (!anchor || !anchor.section.isConnected) return;
+    const el = anchor.selector ? anchor.section.querySelector(anchor.selector) : anchor.section;
+    const scroller = document.getElementById('filesContainer');
+    if (!el || !scroller) return;
+    const shift = el.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(shift) >= 1) scroller.scrollTop += shift;
+    const placed = anchor.selector ? anchor.section.querySelector(anchor.selector) : anchor.section;
+    if (placed) anchor.top = placed.getBoundingClientRect().top;
+  }
+
+  // The document block or thread the top edge of the review pane cuts
+  // through, or the document itself when the edge cuts the part of its item
+  // above it (the file header, file-level threads): Pierre keeps an item in
+  // place only while the item's top is on screen.
+  // Null when the whole item starts on screen (Pierre's anchor is right).
+  // Blocks are in vertical order, so a binary search keeps this cheap on
+  // long documents.
+  function rememberPierreReaderAnchor() {
+    // A refetch render scrolls while the line numbers are still the old ones.
+    // Remembering that position would replace the anchor remap is about to
+    // retarget, and the reader would stay where the jump landed.
+    if (roundPreviousContent) return;
+    pierreReaderAnchor = null;
+    const scroller = document.getElementById('filesContainer');
+    if (!scroller) return;
+    const edge = scroller.getBoundingClientRect().top;
+    const sections = scroller.querySelectorAll('.pierre-document');
+    for (const section of sections) {
+      const rect = section.getBoundingClientRect();
+      if (rect.bottom <= edge) continue;
+      if (rect.top >= edge) {
+        const item = section.closest('diffs-container');
+        if (item && item.getBoundingClientRect().top < edge) {
+          pierreReaderAnchor = { section: section, selector: null, top: rect.top };
+        }
+        return;
+      }
+      const blocks = section.querySelectorAll('.line-block[data-start-line], .comment-card[data-comment-id]');
+      let low = 0;
+      let high = blocks.length - 1;
+      let found = null;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (blocks[mid].getBoundingClientRect().bottom > edge) {
+          found = blocks[mid];
+          high = mid - 1;
+        } else {
+          low = mid + 1;
+        }
+      }
+      if (found) {
+        pierreReaderAnchor = { section: section, selector: readerAnchorSelector(found), top: found.getBoundingClientRect().top };
+      }
+      return;
+    }
+  }
+
+  function observePierreDocumentResize(section) {
+    if (!pierreDocumentResizeObserver) {
+      pierreDocumentResizeObserver = new ResizeObserver(function(entries) {
+        const anchor = pierreReaderAnchor;
+        if (!anchor || !entries.some(function(entry) { return entry.target === anchor.section; })) return;
+        // A removed or hidden section reports a zero rect; there is nothing
+        // to keep in place.
+        if (!anchor.section.isConnected || !anchor.section.getClientRects().length) return;
+        const el = anchor.selector ? anchor.section.querySelector(anchor.selector) : anchor.section;
+        const scroller = document.getElementById('filesContainer');
+        if (!el || !scroller) return;
+        const shift = el.getBoundingClientRect().top - anchor.top;
+        if (Math.abs(shift) >= 1) scroller.scrollTop += shift;
+      });
+    }
+    pierreDocumentResizeObserver.observe(section);
   }
 
   // Re-render a mounted document's contents in place. Swapping the
@@ -1914,10 +2271,12 @@
     const file = getFileByPath(filePath);
     if (!file || file.lazy || !pierreIsDocumentView(file)) return;
     saveOpenFormContent(filePath);
+    remapPierreReaderAnchor(section, file);
     const body = section.querySelector(':scope > .file-body');
     populateDocumentBody(body, file);
     highlightQuotesInSection(section, file);
-    if (section.isConnected) renderMermaidBlocks();
+    if (section.isConnected) renderPluggableBlocks();
+    holdPierreReaderAnchor();
   }
 
   function buildPierreThread(filePath, commentId) {
@@ -1994,6 +2353,7 @@
     function toggle() {
       const refocus = document.activeElement === chevron;
       pierreView.setCollapsed(file, !file.collapsed);
+      critFind.filesChanged();
       header.classList.toggle('collapsed', !!file.collapsed);
       chevron.setAttribute('aria-expanded', String(!file.collapsed));
       if (refocus) keepChevronFocus(filePath);
@@ -2046,7 +2406,11 @@
         return ensurePreviousLineBlocks(loaded).then(function() { return loaded; });
       });
     },
-    changed: updateTreeCommentBadges,
+    changed: function(path) {
+      updateTreeCommentBadges(path);
+      const file = getFileByPath(path);
+      if (file) recheckViewedMark(file);
+    },
   });
   const loadPierreFile = pierreLoader.load;
 
@@ -2091,6 +2455,9 @@
             disposePierreView();
             renderAllFiles();
             if (storyActive()) renderStory();
+            // A find jump made while the workers were starting went to the
+            // old view; make it again in the new one.
+            critFind.revealCurrent();
           });
         },
       });
@@ -2151,6 +2518,8 @@
     if (pierreUnsubscribeTree) pierreUnsubscribeTree();
     let treeSyncQueued = false;
     pierreUnsubscribeTree = pierreView.viewer.subscribeToScroll(function() {
+      critFind.rowsChanged();
+      rememberPierreReaderAnchor();
       if (treeSyncQueued) return;
       treeSyncQueued = true;
       requestAnimationFrame(function() { treeSyncQueued = false; syncTreeActiveFromPierre(); });
@@ -2161,6 +2530,37 @@
   // ----- Keyboard focus (model-driven; Pierre rows are virtualized) -----
   let pierreFocus = null; // { path, line, side }
   let pierreVisualAnchor = null; // same shape, set by Shift+V
+
+  // Mouse (or pen) state for toggle_viewed / toggle_collapse: whether it is
+  // over the review list, and whether it moved there since the keyboard
+  // focus was last shown (then it, not the focus, picks the file). Moves
+  // synthesized when content scrolls under a still pointer keep the same
+  // position and report no movement, and touch has no hover, so neither
+  // counts.
+  let mouseInList = false;
+  let mouseMovedSinceFocus = false;
+  const reviewList = document.getElementById('filesContainer');
+  let lastPointerPoint = null;
+  reviewList.addEventListener('pointermove', function(e) {
+    if (e.pointerType === 'touch') return;
+    const point = { x: e.clientX, y: e.clientY };
+    const moved = e.movementX || e.movementY ||
+      (lastPointerPoint && (lastPointerPoint.x !== point.x || lastPointerPoint.y !== point.y));
+    lastPointerPoint = point;
+    if (!moved) return;
+    mouseInList = true;
+    mouseMovedSinceFocus = true;
+  });
+  reviewList.addEventListener('pointerleave', function(e) {
+    if (e.pointerType !== 'touch') mouseInList = false;
+  });
+  // Story chapters render outside the review list; there only the pointer
+  // type matters (a tap leaves :hover stuck on the tapped element; mouse and
+  // pen hover, as in the review list).
+  let pointerHovers = false;
+  ['pointerdown', 'pointermove'].forEach(function(type) {
+    document.addEventListener(type, function(e) { pointerHovers = e.pointerType !== 'touch'; }, true);
+  });
 
   // Keyboard rows for a file: diff rows, or the rendered document's blocks
   // when a markdown file is in Document view (same stops as the classic view).
@@ -2219,6 +2619,7 @@
   function showPierreFocus() {
     if (!pierreView) return;
     if (!pierreFocus) { pierreView.setSelectedLine(null); return; }
+    mouseMovedSinceFocus = false;
     if (pierreFocus.block !== undefined) {
       const focus = pierreFocus;
       const anchor = pierreVisualAnchor && pierreVisualAnchor.path === focus.path ? pierreVisualAnchor : null;
@@ -2280,7 +2681,16 @@
       });
     }
     if (fileIdx < 0) {
-      enter(order[direction > 0 ? 0 : order.length - 1]);
+      // Focus left in a file that has since collapsed (e.g. marked viewed):
+      // continue from its place in the list instead of the list's ends.
+      const at = pierreFocus ? files.findIndex(function(f) { return f.path === pierreFocus.path; }) : -1;
+      if (at < 0) {
+        enter(order[direction > 0 ? 0 : order.length - 1]);
+        return;
+      }
+      for (let i = at + direction; i >= 0 && i < files.length; i += direction) {
+        if (!files[i].collapsed && !files[i].orphaned) { enter(files[i]); return; }
+      }
       return;
     }
     const file = order[fileIdx];
@@ -2330,15 +2740,32 @@
   // ancestor scroll container. The comments panel and other fixed chrome can
   // otherwise make native scrollIntoView move the document instead of the
   // virtualized review list.
-  function scrollPierreElementIntoView(el) {
+  // `isCurrent` (optional) stops the alignment once a newer jump has started,
+  // so a card that cannot reach the center (the top of the list) does not keep
+  // pulling the list back over the next jump.
+  // An element taller than the list is aligned by its top instead, so its
+  // start (and the line just above a comment card) stays in view.
+  function scrollPierreElementIntoView(el, isCurrent) {
     const root = document.getElementById('filesContainer');
     if (!root || !el) return;
+    // A rebuild (scope, palette, SSE) does not supersede the jump, so check
+    // the card and view are still the ones this alignment started on.
+    const view = pierreView;
     let frames = 0;
     (function align() {
+      if (isCurrent && !isCurrent()) return;
+      if (!el.isConnected || view !== pierreView) return;
       const rootRect = root.getBoundingClientRect();
       const elRect = el.getBoundingClientRect();
-      const offset = elRect.top - rootRect.top - (root.clientHeight - elRect.height) / 2;
-      if (Math.abs(offset) < 2 || frames++ >= 12) return;
+      const gap = Math.max(0, (root.clientHeight - elRect.height) / 2);
+      const offset = elRect.top - rootRect.top - gap;
+      if (Math.abs(offset) < 2 || frames++ >= 12) {
+        // The card now sits away from the file or line Pierre was asked to
+        // scroll to. Left pending, that target would be re-applied on the
+        // next render (e.g. the next click) and pull the card off-center.
+        if (view) view.releaseScroll();
+        return;
+      }
       // Make each layout correction immediate instead of starting overlapping
       // browser scroll animations during the bounded alignment loop.
       root.scrollTo({ top: root.scrollTop + offset, behavior: 'instant' });
@@ -2347,7 +2774,8 @@
   }
 
   // Jump to a comment: load/expand its file, let Pierre scroll the anchor
-  // line into place, then hand the mounted card to `done` (flash/highlight).
+  // line into place, center the mounted card, then hand it to `done`
+  // (highlight only; `done` must not scroll again).
   // Outdated and file-level comments anchor at the file top.
   // Each jump takes a sequence number; a jump that a newer one has replaced
   // (rapid next-comment navigation) skips its alignment and `done`.
@@ -2367,8 +2795,21 @@
       const comment = (file.comments || []).find(function(c) { return c.id === commentId; });
       const inDocument = pierreIsDocumentView(file) && comment && comment.scope !== 'file';
       const anchored = comment && comment.scope !== 'file' && !inDocument && pierreAnchorTest(file)(comment);
-      ignoreTreeObserverUntil = Date.now() + 400;
-      updateTreeActive(filePath);
+      if (anchored) pinTreeActive(filePath);
+      else {
+        ignoreTreeObserverUntil = Date.now() + 400;
+        updateTreeActive(filePath);
+      }
+      // A mounted card is centered directly. Asking Pierre to scroll too
+      // would race the alignment: Pierre applies its scroll a frame later,
+      // after the align loop saw the card in place and stopped, so repeat
+      // clicks on the same comment bounced between the file top and the card.
+      const mounted = card();
+      if (mounted) {
+        scrollPierreElementIntoView(mounted, isCurrent);
+        done(mounted);
+        return;
+      }
       const scrolled = anchored
         ? pierreView.scrollToLine(filePath, comment.end_line, comment.side, 'center')
         : pierreView.scrollToFile(filePath);
@@ -2376,15 +2817,20 @@
         whenMounted(card, function(el) {
           if (!isCurrent()) return;
           // Diff jumps don't wait for the list to settle. The view's scrollTo
-          // passes no smooth behavior, so the list is already in place, and
-          // Pierre itself places an anchored line. Waiting would add 250ms+
-          // to every next-comment step. Only document comments need the
-          // inner alignment below, after the outer scroll stops.
-          if (!inDocument) { done(el); return; }
+          // passes no smooth behavior, so the list is already in place; the
+          // card is then centered right away (top-aligned when taller than
+          // the list). Waiting would add 250ms+ to every next-comment step.
+          // Only document comments wait for the outer scroll to stop before
+          // the alignment below.
+          if (!inDocument) {
+            scrollPierreElementIntoView(el, isCurrent);
+            done(el);
+            return;
+          }
           whenListScrollSettled(document.getElementById('filesContainer'), function() {
             whenMounted(card, function(mountedCard) {
               if (!isCurrent()) return;
-              scrollPierreElementIntoView(mountedCard);
+              scrollPierreElementIntoView(mountedCard, isCurrent);
               done(mountedCard);
             });
           }, isCurrent);
@@ -2439,12 +2885,96 @@
     return container;
   }
 
+  // ----- Find in diff (Cmd/Ctrl+F) -----
+  // Pierre only mounts rows near the viewport, so the browser's find misses
+  // the rest. crit-find.js searches the model and jumps with Pierre's scroll
+  // API. Rows match what Pierre shows: the prepared hunks for diffs, the
+  // whole file in files mode. Collapsed (and viewed) files, rendered
+  // documents and placeholders show no code rows and are skipped.
+  // Rows are cached per file while what they are built from is unchanged,
+  // so re-searching (as lazy files land) does not rebuild every file. Hunks
+  // are compared one by one: comment and small-gap expansion splice merged
+  // hunks into the same array.
+  const pierreFindRowCache = new WeakMap();
+  function pierreFindRows(file) {
+    if (!file || file.lazy || file.orphaned || file.collapsed) return [];
+    if (pierreIsDocumentView(file) || pierrePlaceholderText(file)) return [];
+    const fileView = pierreIsFileView(file);
+    const hunks = fileView ? [] : pierrePreparedHunks(file);
+    const cached = pierreFindRowCache.get(file);
+    if (cached && cached.fileView === fileView && cached.content === file.content &&
+        cached.hunks.length === hunks.length && cached.hunks.every(function(h, i) { return h === hunks[i]; })) {
+      return cached.rows;
+    }
+    const rows = fileView ? pierreFileFindRows(file) : pierreDiffFindRows(hunks);
+    pierreFindRowCache.set(file, { fileView: fileView, content: file.content, hunks: hunks.slice(), rows: rows });
+    return rows;
+  }
+
+  function pierreFileFindRows(file) {
+    const lines = (file.content || '').split('\n');
+    return lines.map(function(text, i) { return { side: '', line: i + 1, text: text }; });
+  }
+
+  function pierreDiffFindRows(hunks) {
+    const rows = [];
+    for (let h = 0; h < hunks.length; h++) {
+      const lines = hunks[h].Lines || [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (l.Type === 'del') rows.push({ side: 'old', line: l.OldNum, text: l.Content || '' });
+        else rows.push({ side: '', line: l.NewNum, text: l.Content || '' });
+      }
+    }
+    return rows;
+  }
+
+  const critFind = window.crit.find.createFind({
+    // Story chapters are Pierre hosts too; only the review list is searched.
+    hostSelector: '#filesContainer diffs-container',
+    // Esc from here (or the page body) closes the bar.
+    scopeSelector: '#filesContainer',
+    files: function() { return files; },
+    linesFor: pierreFindRows,
+    // With only rendered documents (a plan review) there is nothing to
+    // search; leave Cmd+F to the browser.
+    isActive: function() {
+      // The diagram overlay (z-index 500) covers the bar (300).
+      return !!pierreView && pierreViewActive() && !settingsPanelOpen &&
+        !document.querySelector('.diagram-overlay.active') &&
+        files.some(function(f) { return !f.orphaned && !pierreIsDocumentView(f) && !pierrePlaceholderText(f); });
+    },
+    isPending: function(file) { return !!file.lazy && !file.collapsed; },
+    // Start from the file at the top of the list, like the browser's find
+    // starts from the viewport.
+    startFile: function() {
+      const viewer = pierreView && pierreView.viewer;
+      const paths = pierreView ? pierreView.renderedPaths() : [];
+      if (!viewer || paths.length === 0) return null;
+      const top = viewer.getScrollTop();
+      let topPath = paths[0];
+      for (let i = 0; i < paths.length; i++) {
+        if (viewer.getTopForItem(paths[i]) <= top + 60) topPath = paths[i];
+      }
+      return topPath;
+    },
+    load: function(path) { return pierreView ? pierreView.ensureLoaded(path) : null; },
+    reveal: function(match, isCurrent) {
+      if (!pierreView) return null;
+      return pierreView.ensureLoaded(match.path).then(function() {
+        if (!pierreView || !isCurrent()) return null;
+        pinTreeActive(match.path);
+        return pierreView.scrollToLine(match.path, match.line, match.side, 'center');
+      });
+    },
+  });
+
   // ----- Quote highlights inside Pierre (CSS Custom Highlight API) -----
   // Comments created from a text selection carry `quote` (+ quote_offset).
   // Pierre owns the code DOM (shadow roots, virtualized), so instead of
   // wrapping text in <mark> we register Ranges with CSS.highlights; the
   // ::highlight(crit-quote) rule is injected into Pierre via unsafeCSS.
-  const PIERRE_UNSAFE_CSS = window.crit.pierreDOM.unsafeCSS;
+  const PIERRE_UNSAFE_CSS = window.crit.pierreDOM.unsafeCSS + window.crit.find.unsafeCSS;
   const pierreDecorations = window.crit.pierreDOM.createDecorations();
 
   function pierreQuotedComments(file) {
@@ -2511,12 +3041,15 @@
   function onPierrePostRender(filePath, node, phase) {
     const host = window.crit.pierreDOM.hostFor(node);
     if (!host) return;
+    critFind.rowsChanged();
     if (phase === 'unmount') { pierreDecorations.unmount(host); return; }
     host.toggleAttribute('data-crit-file-view', session.mode === 'files' && pierreIsFileView(getFileByPath(filePath)));
     pierreDecorations.mount(host, filePath, pierreQuotedComments(getFileByPath(filePath)));
     if (host.querySelector('.pierre-document')) {
       if (pierreStaleDocuments.has(filePath)) refreshPierreDocument(filePath);
-      if (host.querySelector('.pierre-document code.language-mermaid')) renderMermaidBlocks();
+      // Render new targets, and re-render ones Pierre kept detached while
+      // the theme changed (they remount in the old theme otherwise).
+      if (window.crit.renderers.needsRender(host)) renderPluggableBlocks();
     }
   }
 
@@ -2537,8 +3070,26 @@
   // at the top of a long file. Bring it into view, then focus it once Pierre
   // has mounted the annotation. Line forms use 'nearest', so a gutter click
   // on a visible line does not move the page.
-  function pierreRevealForm(form) {
-    if (!pierreView || !pierreViewActive() || !form) return;
+  // onRevealed(formEl) runs once the form is on screen (optional) — used to
+  // flash a newly opened form after scroll/mount, not in parallel with it.
+  function pierreRevealForm(form, onRevealed) {
+    if (!form) return;
+    const formEl = function() {
+      return document.querySelector('.comment-form[data-form-key="' + CSS.escape(form.formKey) + '"]');
+    };
+    const done = function(ta) {
+      if (onRevealed) onRevealed(ta ? ta.closest('.comment-form') : formEl());
+    };
+    if (!pierreView || !pierreViewActive()) {
+      if (onRevealed) {
+        whenMounted(function() {
+          const el = formEl();
+          const r = el && el.getBoundingClientRect();
+          return r && r.height > 0 ? el : null;
+        }, onRevealed);
+      }
+      return;
+    }
     const textarea = function() {
       return document.querySelector('#filesContainer .comment-form[data-form-key="' + CSS.escape(form.formKey) + '"] textarea');
     };
@@ -2547,12 +3098,14 @@
     const r = current && current.getBoundingClientRect();
     if (r && r.height > 0 && r.top >= root.top && r.bottom <= root.bottom) {
       current.focus({ preventScroll: true });
+      done(current);
       return; // already visible — don't move the page
     }
     if (r && r.height > 0) {
       // Mounted but partly off screen: move just enough to show it.
       current.scrollIntoView({ block: 'nearest' });
       current.focus({ preventScroll: true });
+      done(current);
       return;
     }
     // Not mounted yet: have Pierre bring its line (or file) into the list.
@@ -2569,6 +3122,7 @@
       }, function(ta) {
         if (byFile) ta.scrollIntoView({ block: 'nearest' });
         ta.focus({ preventScroll: true });
+        done(ta);
       });
     });
   }
@@ -2591,12 +3145,27 @@
     pierreSelectionShown = false;
   }
 
+  function pinnedOnScreen(paths, viewer, top) {
+    const i = paths.indexOf(treePin.path);
+    if (i < 0) return false;
+    const root = document.getElementById('filesContainer');
+    const bottom = top + (root ? root.clientHeight : 0);
+    const itemTop = viewer.getTopForItem(treePin.path);
+    const itemBottom = i + 1 < paths.length ? viewer.getTopForItem(paths[i + 1]) : Infinity;
+    return itemBottom > top && itemTop < bottom;
+  }
+
   function syncTreeActiveFromPierre() {
     if (Date.now() < ignoreTreeObserverUntil) return;
     const paths = pierreView ? pierreView.renderedPaths() : [];
     const viewer = pierreView && pierreView.viewer;
     if (!viewer || paths.length === 0) return;
     const top = viewer.getScrollTop();
+    if (treePin && pinnedOnScreen(paths, viewer, top)) {
+      updateTreeActive(treePin.path);
+      return;
+    }
+    const pin = treePin && Date.now() < treePin.until ? treePin : null;
     // Above the first file sits the review conversation (the list header).
     const conversation = document.getElementById('reviewConversation');
     let best = conversation && !conversation.hidden && top + 60 < viewer.getTopForItem(paths[0])
@@ -2605,6 +3174,7 @@
       if (viewer.getTopForItem(paths[i]) <= top + 60) best = paths[i];
     }
     updateTreeActive(best);
+    treePin = pin; // updateTreeActive drops a pin for another file; keep it for 2s
   }
 
   function disposePierreView() {
@@ -2618,6 +3188,10 @@
       container.parentNode.insertBefore(conversation, container);
     }
     if (pierreView) { pierreView.destroy(); pierreView = null; }
+    // The next view creates its own ResizeObserver. Ours must be created after
+    // it to run after Pierre's scroll fix, so drop it with the view.
+    if (pierreDocumentResizeObserver) { pierreDocumentResizeObserver.disconnect(); pierreDocumentResizeObserver = null; }
+    pierreReaderAnchor = null;
     document.body.classList.remove('pierre-review');
   }
 
@@ -2644,10 +3218,18 @@
     view.setRenderOptions(Object.assign(pierreDisplayOptions(), { layout: pierreListLayout() }));
     view.setDiffStyle(diffMode);
     syncPierreCommentRanges();
+    const scroller = document.getElementById('filesContainer');
+    const savedScroll = roundPreviousContent && scroller ? scroller.scrollTop : null;
     view.setFiles(files);
+    // setItems replaces every row. Pierre drops its scroll anchor when the
+    // row it was holding is replaced, which throws the reader down the file.
+    // Put the scroll back before the document is redrawn, so the line-number
+    // retarget only has to account for lines inserted above it.
+    if (savedScroll !== null) scroller.scrollTop = savedScroll;
     files.forEach(function(f) { if (pierreIsDocumentView(f)) refreshPierreDocument(f.path); });
     rebuildNavList();
     applyHideResolved();
+    critFind.filesChanged();
   }
 
   // Re-publish one file after a comment/form change. Thread cards are
@@ -2660,6 +3242,7 @@
     for (let i = 0; i < file.comments.length; i++) keys.push(pierreThreadKey(file.comments[i].id));
     keys.push('outdated:' + filePath, 'placeholder:' + filePath);
     pierreView.refreshFile(file, keys);
+    critFind.filesChanged();
     // The document keeps its element; its contents (line comments, forms,
     // typed text via saveOpenFormContent) are rebuilt in place.
     refreshPierreDocument(filePath);
@@ -3038,9 +3621,21 @@
     return document.getElementById('file-section-' + filePath);
   }
 
+  // Single-file file mode: the header bar names the file, so file headers
+  // (and their Viewed box) are hidden.
+  function isSingleFileMode() {
+    return session.mode !== 'git' && files.length === 1;
+  }
+
+  // Tooltip for a file header control, naming its shortcut when bound.
+  function shortcutTitle(label, id) {
+    const shortcutRegistry = window.crit && window.crit.shortcuts;
+    const keys = shortcutRegistry ? shortcutRegistry.getBinding(id) : '';
+    return keys ? label + ' (' + keys + ')' : label;
+  }
+
   // Fill a file header (name, badge, stats, markdown toggle, change nav,
-  // file-comment button, viewed checkbox). Shared by the classic <summary>
-  // header and Pierre's custom header slot.
+  // file-comment button, viewed checkbox) for Pierre's custom header slot.
   function populateFileHeader(file, header) {
     const dirParts = file.path.split('/');
     const fileName = dirParts.pop();
@@ -3056,8 +3651,7 @@
     if (file.status === 'renamed') badgeLabel = 'Renamed';
 
     // In single-file file mode, hide the file header (filename is shown in the header bar)
-    const singleFileMode = session.mode !== 'git' && files.length === 1;
-    if (singleFileMode) header.style.display = 'none';
+    if (isSingleFileMode()) header.style.display = 'none';
 
     const renameHeader = file.status === 'renamed' && file.oldPath
       ? '<span class="rename-paths"><span class="rename-old">' + escapeHtml(file.oldPath) + '</span>' +
@@ -3065,7 +3659,7 @@
       : '<span class="dir">' + escapeHtml(dirPath) + '</span><span class="filename">' + escapeHtml(fileName) + '</span>';
 
     header.innerHTML =
-      '<button type="button" class="file-header-chevron" aria-label="Toggle ' + escapeHtml(file.path) + '"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></button>' +
+      '<button type="button" class="file-header-chevron" aria-label="Toggle ' + escapeHtml(file.path) + '" title="' + escapeHtml(shortcutTitle('Collapse or expand', 'toggle_collapse')) + '"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></button>' +
       ICON_FILE +
       '<span class="file-header-name">' + renameHeader +
         '<button type="button" class="file-header-copy-path" aria-label="Copy file path">' + ICON_COPY_PATH + '</button>' +
@@ -3092,12 +3686,15 @@
       });
     })(file.path);
 
-    // Add document/diff toggle for markdown files that have diff hunks.
+    // Document / Diff / Source toggle for markdown: Diff when the file has
+    // hunks, Source (the whole file as code) in files mode.
     // In git mode with base content available, offer a third Rendered view:
     // Previous-vs-Current split/unified (follows the existing split/unified
-    // toggle). Markdown only. Hide when diffActive is on (header-level
-    // rendered diff overrides per-file toggle).
-    if (file.fileType === 'markdown' && file.diffHunks && file.diffHunks.length > 0 && !diffActive) {
+    // toggle). Hide when diffActive is on (header-level rendered diff
+    // overrides per-file toggle).
+    const hasHunks = !!(file.diffHunks && file.diffHunks.length > 0);
+    const showSource = session.mode !== 'git' && !file.orphaned;
+    if (file.fileType === 'markdown' && (hasHunks || showSource) && !diffActive) {
       const hasRendered = hasRenderedDiff(file);
       const toggle = document.createElement('div');
       toggle.className = 'file-header-toggle';
@@ -3106,11 +3703,12 @@
       toggle.innerHTML =
         '<button type="button" class="toggle-btn' + (file.viewMode === 'document' ? ' active' : '') + '" data-mode="document" aria-pressed="' + (file.viewMode === 'document' ? 'true' : 'false') + '">Document</button>' +
         (hasRendered ? '<button type="button" class="toggle-btn' + (file.viewMode === 'rendered-diff' ? ' active' : '') + '" data-mode="rendered-diff" aria-pressed="' + (file.viewMode === 'rendered-diff' ? 'true' : 'false') + '">Rendered</button>' : '') +
-        '<button type="button" class="toggle-btn' + (file.viewMode === 'diff' ? ' active' : '') + '" data-mode="diff" aria-pressed="' + (file.viewMode === 'diff' ? 'true' : 'false') + '">Diff</button>';
+        (hasHunks ? '<button type="button" class="toggle-btn' + (file.viewMode === 'diff' ? ' active' : '') + '" data-mode="diff" aria-pressed="' + (file.viewMode === 'diff' ? 'true' : 'false') + '">Diff</button>' : '') +
+        (showSource ? '<button type="button" class="toggle-btn' + (file.viewMode === 'source' ? ' active' : '') + '" data-mode="source" aria-pressed="' + (file.viewMode === 'source' ? 'true' : 'false') + '">Source</button>' : '');
       toggle.addEventListener('click', function(e) {
         const btn = e.target.closest('.toggle-btn');
         if (!btn) return;
-        e.preventDefault(); // Don't toggle the <details>
+        e.preventDefault();
         const fileForms = getFormsForFile(file.path);
         fileForms.forEach(function(f) { removeForm(f.formKey); });
         if (activeFilePath === file.path) {
@@ -3130,7 +3728,7 @@
       header.appendChild(toggle);
 
       // Change navigation widget (file mode, both document and diff view)
-      if (session.mode !== 'git') {
+      if (session.mode !== 'git' && hasHunks) {
         const changeNav = document.createElement('div');
         changeNav.className = 'change-nav';
         const sc = window.crit && window.crit.shortcuts;
@@ -3151,6 +3749,37 @@
       }
     }
 
+    // <label> / Source toggle for a file a pluggable renderer claims. Source
+    // is the file's usual view: the diff in git mode, the file in files mode.
+    const fileRenderer = fileRendererFor(file);
+    if (fileRenderer) {
+      const sourceMode = session.mode === 'git' ? 'diff' : 'document';
+      const toggle = document.createElement('div');
+      toggle.className = 'file-header-toggle';
+      toggle.setAttribute('role', 'group');
+      toggle.setAttribute('aria-label', 'View for ' + file.path);
+      const toggleBtn = function(mode, label) {
+        const on = file.viewMode === mode;
+        return '<button type="button" class="toggle-btn' + (on ? ' active' : '') + '" data-mode="' + mode +
+          '" aria-pressed="' + on + '">' + escapeHtml(label) + '</button>';
+      };
+      toggle.innerHTML = toggleBtn('rendered', fileRenderer.label) + toggleBtn(sourceMode, 'Source');
+      toggle.addEventListener('click', function(e) {
+        const btn = e.target.closest('.toggle-btn');
+        if (!btn) return;
+        e.preventDefault();
+        if (btn.dataset.mode === file.viewMode) return;
+        getFormsForFile(file.path).forEach(function(f) { removeForm(f.formKey); });
+        if (activeFilePath === file.path) {
+          selectionStart = null;
+          selectionEnd = null;
+        }
+        file.viewMode = btn.dataset.mode;
+        renderFileByPath(file.path);
+      });
+      header.appendChild(toggle);
+    }
+
     // File comment button — not for orphaned files (no point adding comments to removed files)
     if (!file.orphaned) {
       const fileCommentBtn = document.createElement('button');
@@ -3159,7 +3788,7 @@
       fileCommentBtn.setAttribute('aria-label', 'Add file-level comment');
       fileCommentBtn.innerHTML = ICON_COMMENT;
       fileCommentBtn.addEventListener('click', function(e) {
-        e.stopPropagation(); // Don't toggle the <details>
+        e.stopPropagation(); // Don't collapse the file (header click)
         e.preventDefault();
         openFileCommentForm(file.path);
       });
@@ -3169,10 +3798,10 @@
     // Viewed checkbox
     const viewedLabel = document.createElement('label');
     viewedLabel.className = 'file-header-viewed';
-    viewedLabel.title = 'Viewed';
+    viewedLabel.title = shortcutTitle('Viewed', 'toggle_viewed');
     viewedLabel.innerHTML = '<input type="checkbox"' + (file.viewed ? ' checked' : '') + '><span>Viewed</span>';
     viewedLabel.addEventListener('click', function(e) {
-      e.stopPropagation(); // Don't toggle the <details>
+      e.stopPropagation(); // Don't collapse the file (header click)
     });
     viewedLabel.querySelector('input').addEventListener('change', function() {
       toggleViewed(file.path);
@@ -3393,10 +4022,15 @@
 
     const contentEl = document.createElement('div');
     contentEl.className = buildContentClasses(block);
-    let html = block.wordDiffHtml || block.html;
+    // Word-diff spans are spliced into already-sanitized HTML as a string, so
+    // clean the result again before it reaches the page.
+    let html = block.wordDiffHtml
+      ? window.crit.documentRawHtml.sanitizeRendered(block.wordDiffHtml)
+      : block.html;
     html = processTaskLists(html);
     html = rewriteImageSrcs(html, file.path);
     contentEl.innerHTML = html;
+    window.crit.shared.applyAutoTextDirection(contentEl);
     lineBlockEl.appendChild(contentEl);
 
     frag.appendChild(lineBlockEl);
@@ -3698,7 +4332,10 @@
           if (renderedRow) {
             while (renderedRow.firstChild) {
               const cell = renderedRow.firstChild;
-              cell.className = buildContentClasses(block) + (cell.className ? ' ' + cell.className : '');
+              if (cell.nodeType === 1) {
+                cell.className = buildContentClasses(block) + (cell.className ? ' ' + cell.className : '');
+                window.crit.shared.applyAutoTextDirection(cell);
+              }
               lineBlockEl.appendChild(cell);
             }
           }
@@ -3710,6 +4347,7 @@
         html = processTaskLists(html);
         html = rewriteImageSrcs(html, file.path);
         content.innerHTML = html;
+        window.crit.shared.applyAutoTextDirection(content);
         lineBlockEl.appendChild(gutter);
         lineBlockEl.appendChild(content);
       }
@@ -3855,6 +4493,47 @@
       if (m) suffix = m[1];
     }
     return '@@ -' + oldStart + ',' + oldCount + ' +' + newStart + ',' + newCount + ' @@' + suffix;
+  }
+
+  // ===== LSP =====
+
+  // applyLspConfig wires hover / go-to-definition to what /api/config
+  // reports. Both lsp_available and lsp_extensions depend on the focus (a PR
+  // review offers no server where nothing can confine one), so this runs on
+  // load and again after every focus change. crit-lsp owns its listeners
+  // and init is idempotent; an empty extension list switches it off.
+  function applyLspConfig(config) {
+    if (!window.crit.lsp) return;
+    const extensions = config.lsp_available && Array.isArray(config.lsp_extensions) ? config.lsp_extensions : [];
+    if (extensions.length) {
+      window.crit.lsp.init({
+        jumpToLocation: lspJumpToLocation,
+        mountLineWidget: mountPierreLineWidget,
+        unmountLineWidget: unmountPierreLineWidget,
+        languageForPath: pierreLanguageForPath,
+        toast: function (message) { showMiniToast(message); },
+        extensions: extensions,
+      });
+    }
+    window.crit.lsp.setExtensions(extensions);
+  }
+
+  // Lookups are switched off until the answer arrives: one still pending
+  // would act on the previous focus, and a failed refresh must not leave
+  // them on for a review the server may refuse. A second focus change can
+  // overtake the first one's response; only the latest request is applied.
+  let lspConfigRequest = 0;
+  function refreshLspConfig() {
+    if (window.crit.lsp) window.crit.lsp.setExtensions([]);
+    const request = ++lspConfigRequest;
+    fetch('/api/config').then(function (r) {
+      if (!r.ok) throw new Error('config: ' + r.status);
+      return r.json();
+    }).then(function (config) {
+      if (request === lspConfigRequest) applyLspConfig(config);
+    }).catch(function (err) {
+      console.error('refreshing LSP availability:', err);
+    });
   }
 
   // ===== LSP definition jump =====
@@ -4273,7 +4952,15 @@
     selectionEnd = newForm.endLine;
     renderFileByPath(newForm.filePath);
     focusCommentTextarea(newForm.formKey);
-    pierreRevealForm(newForm);
+    // Flash after reveal settles — a parallel whenMounted can expire while
+    // Pierre is still scrolling a file-level form into view.
+    pierreRevealForm(newForm, newForm.editingId ? null : flashNewCommentForm);
+  }
+
+  // A new form can open below an existing thread; flash it once it is on
+  // screen so it is easy to spot (a softer accent pulse than a comment-ref jump).
+  function flashNewCommentForm(formEl) {
+    if (formEl) restartFlash(formEl, 'comment-form-flash');
   }
 
   function openFileCommentForm(filePath) {
@@ -4297,7 +4984,7 @@
     addForm(newForm);
     renderFileByPath(filePath);
     focusCommentTextarea(newForm.formKey);
-    pierreRevealForm(newForm);
+    pierreRevealForm(newForm, flashNewCommentForm);
   }
 
   function createFileCommentForm(formObj) {
@@ -4776,6 +5463,7 @@
 
     const textarea = document.createElement('textarea');
     textarea.placeholder = 'Leave a review comment... (Ctrl+Enter to submit, Escape to cancel)';
+    textarea.dir = 'auto';
     textarea.dataset.formKey = formObj.formKey;
     if (opts.initialBody) textarea.value = opts.initialBody;
 
@@ -5320,6 +6008,7 @@
       replyBody.className = 'reply-body';
       replyBody.dataset.rawBody = reply.body;
       replyBody.innerHTML = commentMd.render(reply.body);
+      window.crit.shared.applyAutoTextDirection(replyBody);
       linkifyCommentRefsInDom(replyBody);
       replyEl.appendChild(replyBody);
 
@@ -5330,7 +6019,9 @@
 
   // ===== Quote Highlighting in Document/Diff Body =====
 
-  function highlightQuotesInSection(sectionEl, file) {
+  // onlyContent limits the pass to one .line-content (a block re-rendered
+  // after the first pass, e.g. a diagram drawn later).
+  function highlightQuotesInSection(sectionEl, file, onlyContent) {
     const quotedComments = file.comments.filter(function(c) { return c.quote && !c.resolved; });
 
     // Also highlight quotes from open (unsaved) comment forms
@@ -5382,6 +6073,11 @@
         }
       }
 
+      if (onlyContent) {
+        if (contentEls.indexOf(onlyContent) === -1) return;
+        contentEls.length = 0;
+        contentEls.push(onlyContent);
+      }
       if (contentEls.length === 0) return;
 
       // Preserve a whitespace boundary between cells/line blocks while retaining
@@ -5394,6 +6090,10 @@
         let node;
         while ((node = walker.nextNode())) {
           if (node.textContent.length === 0) continue;
+          // A rendered block's hidden source is not what the reader sees.
+          if (node.parentElement.closest('.crit-render-source[hidden], .crit-render-expand')) continue;
+          // Nor is a drawn diagram's <style>, <title> or <desc>.
+          if (!isVisibleSvgText(node)) continue;
           const start = fullText.length;
           fullText += node.textContent;
           nodeRanges.push({ node: node, start: start, end: fullText.length });
@@ -5466,9 +6166,7 @@
 
         if (startInNode === 0 && endInNode === node.textContent.length) {
           // Wrap entire text node
-          const mark = document.createElement('mark');
-          mark.className = 'quote-highlight';
-          mark.dataset.commentId = comment.id;
+          const mark = quoteMark(node, comment.id);
           node.parentNode.replaceChild(mark, node);
           mark.appendChild(node);
         } else {
@@ -5478,9 +6176,7 @@
           const after = node.textContent.slice(endInNode);
           const frag = document.createDocumentFragment();
           if (before) frag.appendChild(document.createTextNode(before));
-          const mark = document.createElement('mark');
-          mark.className = 'quote-highlight';
-          mark.dataset.commentId = comment.id;
+          const mark = quoteMark(node, comment.id);
           mark.textContent = middle;
           frag.appendChild(mark);
           if (after) frag.appendChild(document.createTextNode(after));
@@ -5488,6 +6184,25 @@
         }
       }
     });
+  }
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // Text directly in an SVG element is visible only in <text>, <tspan> and
+  // <textPath>; a diagram's <style>, <title> and <desc> hold text too.
+  function isVisibleSvgText(node) {
+    const parent = node.parentElement;
+    return parent.namespaceURI !== SVG_NS || /^(text|tspan|textPath)$/.test(parent.localName);
+  }
+
+  // The element that wraps a quoted part of textNode. SVG <text> does not draw
+  // an HTML <mark>, so a diagram label gets an SVG <tspan>.
+  function quoteMark(textNode, commentId) {
+    const inSvg = textNode.parentElement.namespaceURI === SVG_NS;
+    const mark = inSvg ? document.createElementNS(SVG_NS, 'tspan') : document.createElement('mark');
+    mark.setAttribute('class', 'quote-highlight');
+    mark.dataset.commentId = commentId;
+    return mark;
   }
 
   function createInlineEditor(comment, filePath) {
@@ -5859,6 +6574,7 @@
       pendingNewDraft = existingNewTa.value;
     }
 
+    const focusedCtl = focusedCommitCtl();
     section.hidden = false;
     section.innerHTML = '';
 
@@ -5873,6 +6589,12 @@
 
     const collapsed = isReviewConversationCollapsed() && !reviewCommentFormActive;
     section.classList.toggle('collapsed', collapsed);
+
+    const commitCard = buildCommitContextCard();
+    if (commitCard) {
+      section.appendChild(commitCard);
+      restoreCommitCardFocus(commitCard, focusedCtl);
+    }
 
     // Header — chevron on the left, matching `.tree-folder` and `.comment-card`
     // collapse conventions elsewhere in the UI.
@@ -5984,26 +6706,30 @@
   }
 
   // Scroll to and flash a specific review-level comment card. Mirrors scrollToComment.
-  function scrollToReviewComment(commentId) {
+  // `flash` (optional) replaces the default highlight; it runs before the
+  // scroll so a card it expands is placed at its full height.
+  function scrollToReviewComment(commentId, flash) {
     if (isReviewConversationCollapsed()) {
       setReviewConversationCollapsed(false);
       renderReviewConversation();
     }
     const section = document.getElementById('reviewConversation');
     if (!section) return;
+    // Supersede a file jump still in flight so it does not scroll back down.
+    const seq = ++pierreJumpSeq;
     const card = section.querySelector('.comment-card[data-comment-id="' + CSS.escape(commentId) + '"]');
     if (!card) {
       scrollToReviewConversation();
       return;
     }
     ignoreTreeObserverUntil = Date.now() + 200;
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.classList.remove('comment-card-highlight');
-    void card.offsetWidth;
-    card.classList.add('comment-card-highlight');
-    card.addEventListener('animationend', function() {
-      card.classList.remove('comment-card-highlight');
-    }, { once: true });
+    if (flash) flash(card);
+    else restartFlash(card, 'comment-card-highlight');
+    // The conversation is the review list's header. A smooth scroll there
+    // stops partway: files mounting on the way up adjust scrollTop, and that
+    // cancels the browser's animation.
+    if (section.closest('#filesContainer')) scrollPierreElementIntoView(card, function() { return seq === pierreJumpSeq; });
+    else card.scrollIntoView({ block: 'center', behavior: 'instant' });
     updateTreeActive(REVIEW_CONVERSATION_PATH);
   }
 
@@ -6035,6 +6761,7 @@
 
     const textarea = document.createElement('textarea');
     textarea.className = 'comment-textarea';
+    textarea.dir = 'auto';
     textarea.value = currentText;
     textarea.rows = 3;
     bodyEl.replaceWith(textarea);
@@ -6111,6 +6838,7 @@
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'reply-input';
+    input.dir = 'auto';
     input.placeholder = isPending ? 'Waiting for @' + agentName + '\u2026' : 'Write a reply\u2026';
     if (isPending) input.disabled = true;
     form.appendChild(input);
@@ -6118,6 +6846,7 @@
     // Expanded state elements (hidden initially)
     const textarea = document.createElement('textarea');
     textarea.className = 'reply-textarea';
+    textarea.dir = 'auto';
     textarea.placeholder = isPending ? 'Waiting for @' + agentName + '\u2026' : 'Write a reply\u2026';
     textarea.rows = 3;
     if (isPending) textarea.disabled = true;
@@ -6597,15 +7326,10 @@
   }
 
 
+  // Highlight only. pierreJumpToComment has already placed the card, and
+  // the story path scrolls it itself.
   function flashCommentCard(commentCard) {
-    if (pierreView && pierreViewActive()) scrollPierreElementIntoView(commentCard);
-    else commentCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    commentCard.classList.remove('comment-card-highlight');
-    void commentCard.offsetWidth;
-    commentCard.classList.add('comment-card-highlight');
-    commentCard.addEventListener('animationend', function() {
-      commentCard.classList.remove('comment-card-highlight');
-    }, { once: true });
+    restartFlash(commentCard, 'comment-card-highlight');
   }
 
   function scrollToComment(commentId, filePath) {
@@ -6636,7 +7360,9 @@
         const pane = document.getElementById('storyPane');
         if (!pane) return;
         const card = pane.querySelector('.comment-card[data-comment-id="' + CSS.escape(commentId) + '"]');
-        if (card) flashCommentCard(card);
+        if (!card) return;
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        flashCommentCard(card);
       };
       if (navigated) requestAnimationFrame(locate); else locate();
       return;
@@ -6813,6 +7539,9 @@
 
   function setUIState(state) {
     uiState = state;
+    // The files-changed toast belongs to the review; its Reload must not
+    // run over the waiting dialog.
+    if (state !== 'reviewing') dismissToast('files-changed');
     if (state === 'reviewing') {
       waitingNotApproved = false;
       stopTipRotation();
@@ -6852,6 +7581,7 @@
         document.getElementById('tipSection').style.display = '';
         startTipRotation();
         waitingOverlay.classList.add('active');
+        waitingOpenedAt = Date.now();
         break;
     }
   }
@@ -6859,11 +7589,21 @@
   // ===== General Comment Button (in panel header) =====
 
   // ===== Finish Review =====
+  // One finish at a time: a double or triple click on Finish Review would
+  // otherwise post /api/finish once per click before the first answer arrives.
+  let finishInFlight = false;
+  const finishDedup = {
+    busy: function () { return finishInFlight; },
+    set: function () { finishInFlight = true; },
+    clear: function () { finishInFlight = false; },
+  };
+
   // The DOM/clipboard/animation logic lives in crit.shared.runFinishReview;
   // this thin wrapper preserves the app.js-specific waitingNotApproved flag
   // and uiState transition (live-mode wires its own state machine).
   async function doFinishReview() {
     return await window.crit.shared.runFinishReview({
+      dedup: finishDedup,
       checkConsent: function () {
         return window.crit.shared.ensureProjectPromptTrust(promptTrustConfig).then(function (ok) {
           if (ok) {
@@ -6968,8 +7708,11 @@
     setUIState('reviewing');
   });
 
+  // The backdrop opens where Finish Review was, so the rest of a double or
+  // triple click lands on it. Ignore backdrop clicks for a moment after the
+  // dialog opens; a later click still goes back to editing.
   document.getElementById('waitingOverlay').addEventListener('click', function(e) {
-    if (e.target === this) setUIState('reviewing');
+    if (e.target === this && Date.now() - waitingOpenedAt > 1000) setUIState('reviewing');
   });
 
   document.getElementById('waitingClipboard').addEventListener('click', async function() {
@@ -6998,54 +7741,24 @@
     const conn = window.crit.sse.createSSE('/api/events', {
       'file-changed': async function() {
       try {
-        // Reset action tracking for new round
-        userActedThisRound = false;
-
-        // Capture per-file user state before rebuilding
-        const prevState = {};
-        for (let pi = 0; pi < files.length; pi++) {
-          prevState[files[pi].path] = {
-            viewMode: files[pi].viewMode,
-            collapsed: files[pi].collapsed,
-            viewed: files[pi].viewed,
-            fileHash: files[pi].fileHash,
-          };
-        }
-
         // Clear commit filter on round-complete
         clearCommitPins();
 
-        // Re-fetch everything on file-changed (round complete)
-        let sessionRes = await hydrateStoryIfMissing(await fetchWhenReady('/api/session?scope=' + enc(currentSessionFetchScope())));
-        sessionRes = await hydrateFullSessionForStoryIfNeeded(sessionRes);
-        session = sessionRes;
-        reviewComments = sessionRes.review_comments || [];
+        // Re-fetch everything on file-changed (round complete), keeping each
+        // file's view state. false: a newer fetch (a Reload, or a later
+        // round) already took over the page data and reviewPreviousContent.
+        // Stop before the form reset and redraw. A second pass would
+        // snapshot the winner's DOM, then remap those lines through the
+        // winner's previous content and jump the reader.
+        if (!await refetchReviewFiles()) return;
 
-        // Reload all files
-        files = await loadAllFileData(session.files || [], currentFileDataScope());
-        hiddenUnresolved = session.hidden_unresolved || 0;
-
-        // Restore per-file user state from previous round
-        for (let fi = 0; fi < files.length; fi++) {
-          const prev = prevState[files[fi].path];
-          if (prev) {
-            const contentChanged = prev.fileHash && files[fi].fileHash && prev.fileHash !== files[fi].fileHash;
-            // Rendered needs base content; a loaded file without it falls
-            // back to Document. Lazy files are checked once they load.
-            files[fi].viewMode = prev.viewMode === 'rendered-diff' && !files[fi].lazy && !hasRenderedDiff(files[fi])
-              ? 'document'
-              : prev.viewMode;
-            // Lazy files must stay collapsed — they have no content to render
-            if (!files[fi].lazy && !contentChanged) files[fi].collapsed = prev.collapsed;
-            if (prev.viewed && !contentChanged) files[fi].viewed = true;
-          }
-        }
-
-        await Promise.all(files.map(function(f) {
-          return f.viewMode === 'rendered-diff' && !f.lazy ? ensurePreviousLineBlocks(f) : null;
-        }));
-
-        files.sort(fileSortComparator);
+        // This handler still owns the outcome. Reset the round, and dismiss
+        // the files-changed toast — including one raised during the fetch —
+        // because this round's content supersedes it. A lost handler returns
+        // above, so it cannot clear an action the winner is keeping or
+        // dismiss a toast the winner just showed.
+        userActedThisRound = false;
+        dismissToast('files-changed');
 
         activeForms = [];
         activeReplyForms.clear();
@@ -7061,19 +7774,8 @@
         reviewCommentEditingId = null;
         navCommentId = null;
 
-        saveViewedState();
         updateHeaderRound();
-        updateDiffModeToggle();
-        renderFileTree();
-        renderAllFiles();
-        buildToc();
-        updateCommentCount();
-        updateViewedCount();
-        updateTreeViewedState();
-        // Re-render the story layer against the fresh file data (or tear it
-        // down if the round dropped the story). Preserves position when the
-        // current chapter still exists (storyFromHash re-reads the hash).
-        applyStoryPresence();
+        rerenderReview();
         setUIState('reviewing');
         // Signal "ready" in the tab bar if the user has tabbed away.
         // Cleared on visibilitychange → visible.
@@ -7084,6 +7786,14 @@
       },
       'edit-detected': function(data) {
       try {
+        // Mid-round (files and plan mode): the server has the new content,
+        // but the page's file content is only refreshed by round-complete, so
+        // offer a reload.
+        // Git mode is left alone: its edits arrive as the next round.
+        if (uiState === 'reviewing' && session.mode !== 'git') {
+          showFilesChangedToast();
+          return;
+        }
         const count = parseInt(data.content, 10);
         const el = document.getElementById('waitingEdits');
         if (el && uiState === 'waiting') {
@@ -7116,16 +7826,21 @@
         } catch {}
         // Save form drafts and focused element before re-render
         let focusedFormKey = null;
+        let focusedReplyCommentId = null;
         let focusedSelStart = 0;
         let focusedSelEnd = 0;
         const activeEl = document.activeElement;
         if (activeEl && activeEl.tagName === 'TEXTAREA') {
           const formEl = activeEl.closest('.comment-form');
+          // A reply draft lives in .reply-form, outside any .comment-form, so it is keyed by its comment card.
+          const replyCard = activeEl.classList.contains('reply-textarea') ? activeEl.closest('.comment-card') : null;
           if (formEl) {
             focusedFormKey = formEl.dataset.formKey;
-            focusedSelStart = activeEl.selectionStart;
-            focusedSelEnd = activeEl.selectionEnd;
+          } else if (replyCard && replyCard.dataset.commentId) {
+            focusedReplyCommentId = replyCard.dataset.commentId;
           }
+          focusedSelStart = activeEl.selectionStart;
+          focusedSelEnd = activeEl.selectionEnd;
         }
         for (let i = 0; i < files.length; i++) {
           checkAgentReplies(files[i].comments);
@@ -7147,14 +7862,18 @@
         updateCommentCount();
         updateTreeCommentBadges();
         renderCommentsPanel();
-        // Restore focus
+        // Restore focus. Without it, keys typed after the re-render land on the page and fire
+        // single-key shortcuts (d deletes a comment, Shift+F finishes the review).
+        let focusTarget = null;
         if (focusedFormKey) {
-          const ta = document.querySelector('.comment-form[data-form-key="' + focusedFormKey + '"] textarea');
-          if (ta) {
-            ta.focus();
-            ta.selectionStart = focusedSelStart;
-            ta.selectionEnd = focusedSelEnd;
-          }
+          focusTarget = document.querySelector('.comment-form[data-form-key="' + focusedFormKey + '"] textarea');
+        } else if (focusedReplyCommentId) {
+          focusTarget = document.querySelector('.comment-card[data-comment-id="' + focusedReplyCommentId + '"] .reply-textarea');
+        }
+        if (focusTarget) {
+          focusTarget.focus();
+          focusTarget.selectionStart = focusedSelStart;
+          focusTarget.selectionEnd = focusedSelEnd;
         }
       } catch (err) {
         console.error('Error handling comments-changed:', err);
@@ -7197,6 +7916,7 @@
       } catch (err) {
         console.error('focus-changed parse:', err);
       }
+      refreshLspConfig();
       // Reuse the same refresh path as base-changed.
       reloadForScope();
       fetchCommits();
@@ -7253,9 +7973,199 @@
   // Announce copy action to screen readers via live region. Used by the
   // finish-review copy flow and the settings overlay.
   function announceCopy() {
-    const el = document.getElementById('copyStatus');
-    if (el) { el.textContent = ''; el.textContent = 'Copied to clipboard'; }
+    announce('Copied to clipboard');
   }
+
+  // Write a short message to the polite live region for screen readers.
+  // Clearing first and setting the text a frame later makes a repeat of the
+  // same message count as a change, so it is read again.
+  function announce(message) {
+    const el = document.getElementById('copyStatus');
+    if (!el) return;
+    el.textContent = '';
+    requestAnimationFrame(function() { el.textContent = message; });
+  }
+
+  // ===== Toast System =====
+  function showToast(id, type, content, opts) {
+    const container = document.getElementById('toastContainer');
+    // A toast mid-exit keeps its id until animationend. Drop every node
+    // with this id before inserting, so the replacement is the only one
+    // and Dismiss cannot hit a fading sibling.
+    const toastId = 'toast-' + id;
+    for (let i = container.children.length - 1; i >= 0; i--) {
+      if (container.children[i].id === toastId) container.children[i].remove();
+    }
+    const el = document.createElement('div');
+    el.className = 'toast toast-' + type;
+    el.id = toastId;
+    el.innerHTML = content;
+    container.appendChild(el);
+    if (opts && opts.autoDismiss) {
+      // Dismiss this node, not whatever later reuses the id.
+      setTimeout(function() { dismissToast(id, el); }, 4000);
+    }
+    return el;
+  }
+
+  function dismissToast(id, target) {
+    const pending = [];
+    if (target) {
+      pending.push(target);
+    } else {
+      const container = document.getElementById('toastContainer');
+      if (!container) return;
+      const toastId = 'toast-' + id;
+      for (let i = 0; i < container.children.length; i++) {
+        if (container.children[i].id === toastId) pending.push(container.children[i]);
+      }
+    }
+    for (let i = 0; i < pending.length; i++) {
+      const el = pending[i];
+      el.classList.add('toast-out');
+      el.addEventListener('animationend', function() { el.remove(); }, { once: true });
+    }
+  }
+
+  // Re-fetch the session and every file, keeping each file's view state
+  // (view mode, collapsed, viewed). Used by round-complete and by the
+  // mid-round files-changed refresh. A newer call wins: an older one that
+  // finishes later returns false without touching the page's data.
+  let reviewFetchGen = 0;
+  // Previous file content from the fetch that won, so the following redraw
+  // can retarget the reader anchor. Null until a fetch commits.
+  let reviewPreviousContent = null;
+  async function refetchReviewFiles() {
+    const gen = ++reviewFetchGen;
+    const prevState = {};
+    for (let pi = 0; pi < files.length; pi++) {
+      prevState[files[pi].path] = {
+        viewMode: files[pi].viewMode,
+        collapsed: files[pi].collapsed,
+        viewed: files[pi].viewed,
+        viewedHunks: files[pi].viewedHunks,
+        fileHash: files[pi].fileHash,
+        content: files[pi].content || '',
+      };
+    }
+
+    let sessionRes = await hydrateStoryIfMissing(await fetchWhenReady('/api/session?scope=' + enc(currentSessionFetchScope())));
+    sessionRes = await hydrateFullSessionForStoryIfNeeded(sessionRes);
+    if (gen !== reviewFetchGen) return false;
+    session = sessionRes;
+    reviewComments = sessionRes.review_comments || [];
+    const loaded = await loadAllFileData(session.files || [], currentFileDataScope());
+    if (gen !== reviewFetchGen) return false;
+    files = loaded;
+    hiddenUnresolved = session.hidden_unresolved || 0;
+
+    for (let fi = 0; fi < files.length; fi++) {
+      const prev = prevState[files[fi].path];
+      if (prev) {
+        const contentChanged = prev.fileHash && files[fi].fileHash && prev.fileHash !== files[fi].fileHash;
+        // Rendered needs base content; a loaded file without it falls
+        // back to Document. Lazy files are checked once they load. A
+        // renderer's view needs a renderer that still applies (the file
+        // may have been deleted); without one the mode default applies.
+        if (prev.viewMode === 'rendered-diff' && !files[fi].lazy && !hasRenderedDiff(files[fi])) {
+          files[fi].viewMode = 'document';
+        } else if (prev.viewMode === 'rendered' && !fileRendererFor(files[fi])) {
+          files[fi].viewMode = session.mode === 'git' ? 'diff' : 'document';
+        } else if (prev.viewMode === 'diff' && session.mode !== 'git' && files[fi].fileType === 'markdown' &&
+            !files[fi].lazy && !(files[fi].diffHunks && files[fi].diffHunks.length > 0)) {
+          files[fi].viewMode = 'document';
+        } else {
+          files[fi].viewMode = prev.viewMode;
+        }
+        // Lazy files must stay collapsed — they have no content to render
+        if (!files[fi].lazy && !contentChanged) files[fi].collapsed = prev.collapsed;
+        if (prev.viewed && !contentChanged) files[fi].viewed = true;
+        files[fi].viewedHunks = prev.viewedHunks;
+        reconcileStoryViewed(files[fi]);
+      }
+    }
+
+    await Promise.all(files.map(function(f) {
+      return f.viewMode === 'rendered-diff' && !f.lazy ? ensurePreviousLineBlocks(f) : null;
+    }));
+    if (gen !== reviewFetchGen) return false;
+
+    files.sort(fileSortComparator);
+    saveViewedState();
+    reviewPreviousContent = prevState;
+    return true;
+  }
+
+  // Redraw the review from the current session and files. The review list
+  // keeps the reader's position as its items update, retargeting the anchor
+  // when lines shifted. Re-renders the story layer too (or tears it down if
+  // the data dropped the story); it keeps its position when the current
+  // chapter still exists.
+  function rerenderReview() {
+    // scrollIntoView does not notify Pierre's scroll listener, so the stored
+    // anchor can still name a line from an earlier position. Snapshot what
+    // the top edge cuts now, before the refetch render moves it.
+    rememberPierreReaderAnchor();
+    const previous = reviewPreviousContent;
+    updateDiffModeToggle();
+    renderFileTree();
+    // Retarget the reader anchor at the shifted lines during the re-render
+    // below. Clearing it lets the first painted frame jump, then a later
+    // frame puts the block back.
+    roundPreviousContent = new Map();
+    if (previous) {
+      for (let ri = 0; ri < files.length; ri++) {
+        const prev = previous[files[ri].path];
+        if (prev) roundPreviousContent.set(files[ri].path, prev.content);
+      }
+    }
+    try {
+      renderAllFiles();
+      holdPierreReaderAnchor();
+    } finally {
+      roundPreviousContent = null;
+    }
+    buildToc();
+    updateCommentCount();
+    updateViewedCount();
+    updateTreeViewedState();
+    applyStoryPresence();
+  }
+
+  // A file under review changed on disk during the round (files and plan
+  // mode). File content is otherwise only refreshed by round-complete, so
+  // offer to refresh the files in place the same way, without starting a
+  // new round. Shown once until dismissed or refreshed.
+  function showFilesChangedToast() {
+    const existing = document.getElementById('toast-files-changed');
+    if (existing && !existing.classList.contains('toast-out')) return;
+    const el = showToast('files-changed', 'info',
+      '<span>Files in this review changed on disk.</span>' +
+      '<div class="toast-actions">' +
+        '<button class="toast-btn toast-btn-filled" id="filesChangedReloadBtn">Reload</button>' +
+        '<button class="toast-btn toast-btn-ghost" data-dismiss-toast="files-changed">Dismiss</button>' +
+      '</div>');
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.querySelector('#filesChangedReloadBtn').addEventListener('click', async function() {
+      dismissToast('files-changed');
+      try {
+        // false: a newer fetch (another Reload, or a new round) took over.
+        if (await refetchReviewFiles()) rerenderReview();
+      } catch (err) {
+        console.error('Error reloading changed files:', err);
+        showFilesChangedToast();
+      }
+    });
+  }
+
+  // Event delegation for toast dismiss buttons (replaces inline onclick)
+  document.getElementById('toastContainer').addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-dismiss-toast]');
+    // Dismiss the toast that was clicked. getElementById would return the
+    // first node when a duplicate id is still leaving.
+    if (btn) dismissToast(btn.dataset.dismissToast, btn.closest('.toast'));
+  });
 
   // ===== Table of Contents =====
   function buildToc() {
@@ -7393,7 +8303,13 @@
   function scrollToHashHeading() {
     const hash = window.location.hash;
     if (!hash || hash === '#') return;
-    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    const id = decodeURIComponent(hash.slice(1));
+    // Ids and names in a document's raw HTML carry a user-content- prefix
+    // (document-html.js), so #foo also finds the author's id="foo" or
+    // name="foo", as on GitHub.
+    const target = document.getElementById(id) ||
+      document.getElementById('user-content-' + id) ||
+      document.querySelector('[name="' + CSS.escape('user-content-' + id) + '"]');
     if (!target) return;
     scrollReviewToElement(target, 8, 'instant');
   }
@@ -7413,28 +8329,6 @@
     }).catch(function() { return; });
   });
 
-  // ===== Mermaid =====
-  function getMermaidTheme() {
-    const dataTheme = document.documentElement.getAttribute('data-theme');
-    if (dataTheme === 'light') return 'default';
-    if (dataTheme === 'dark') return 'dark';
-    // System theme: check prefers-color-scheme
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'default' : 'dark';
-  }
-
-  function mermaidOptions() {
-    if (!document.documentElement.dataset.critPalette) return { startOnLoad: false, theme: getMermaidTheme() };
-    const css = getComputedStyle(document.documentElement);
-    const role = function(name) { return css.getPropertyValue('--crit-palette-' + name).trim(); };
-    return { startOnLoad: false, theme: 'base', themeVariables: {
-      darkMode: getMermaidTheme() === 'dark', background: role('bg'),
-      primaryColor: role('surface'), primaryTextColor: role('fg'), primaryBorderColor: role('border'),
-      secondaryColor: role('elevated'), tertiaryColor: role('bg'), lineColor: role('muted'),
-      textColor: role('fg'), mainBkg: role('surface'), nodeBorder: role('border'),
-      edgeLabelBackground: role('bg'), fontFamily: css.getPropertyValue('--crit-font-body').trim(),
-    } };
-  }
-
   // Fenced code outside rendered documents (comment cards, replies, the
   // comments panel, PR description, story text) renders plain and is
   // highlighted once its grammar has loaded. One observer covers every place
@@ -7453,309 +8347,52 @@
     }).observe(document.body, { childList: true, subtree: true });
   }
 
-  function renderMermaidBlocks() {
-    // Any document rebuild invalidates the detached overlay clone (and its
-    // theme) — close the overlay rather than show a stale diagram.
-    closeMermaidOverlay();
-    if (typeof mermaid === 'undefined') return;
-    mermaid.initialize(mermaidOptions());
-    const codes = document.querySelectorAll('code.language-mermaid');
-    codes.forEach(function(code) {
-      const pre = code.parentElement;
-      if (!pre || pre.tagName !== 'PRE') return;
-      const container = document.createElement('div');
-      container.className = 'mermaid';
-      container.textContent = code.textContent;
-      pre.replaceWith(container);
-    });
-    try { mermaid.run(); } catch {}
-    decorateMermaidBlocks();
-  }
-
-  // ===== Mermaid fullscreen overlay (GitHub-style pan/zoom) =====
-  // Expand button on each rendered diagram opens #mermaidOverlay with a
-  // detached SVG clone. Pan via drag, zoom via wheel / pinch / buttons.
-  // Pure CSS transform — no new dependencies. The clone is detached, so
-  // inline re-renders never disturb the overlay; a theme change closes it
-  // because the clone keeps the old theme's colors.
-  const mermaidOverlayState = {
-    open: false,
-    trigger: null,
-    scale: 1,
-    x: 0,
-    y: 0,
-    installed: false
-  };
-  const MERMAID_ZOOM_MIN = 0.1;
-  const MERMAID_ZOOM_MAX = 8;
-
-  function mermaidOverlayNodes() {
-    return {
-      overlay: document.getElementById('mermaidOverlay'),
-      viewport: document.getElementById('mermaidOverlayViewport'),
-      canvas: document.getElementById('mermaidOverlayCanvas'),
-      label: document.getElementById('mermaidZoomLabel'),
-      closeBtn: document.getElementById('mermaidOverlayClose'),
-      zoomIn: document.getElementById('mermaidZoomIn'),
-      zoomOut: document.getElementById('mermaidZoomOut'),
-      zoomReset: document.getElementById('mermaidZoomReset')
-    };
-  }
-
-  function mermaidOverlayApply() {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.canvas) return;
-    nodes.canvas.style.transform = 'translate(' + mermaidOverlayState.x + 'px, ' + mermaidOverlayState.y + 'px) scale(' + mermaidOverlayState.scale + ')';
-    if (nodes.label) nodes.label.textContent = Math.round(mermaidOverlayState.scale * 100) + '%';
-  }
-
-  function mermaidOverlayZoomAt(factor, clientX, clientY) {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.viewport) return;
-    const rect = nodes.viewport.getBoundingClientRect();
-    const px = clientX - rect.left;
-    const py = clientY - rect.top;
-    const next = Math.min(MERMAID_ZOOM_MAX, Math.max(MERMAID_ZOOM_MIN, mermaidOverlayState.scale * factor));
-    if (next === mermaidOverlayState.scale) return;
-    const ratio = next / mermaidOverlayState.scale;
-    mermaidOverlayState.x = px - (px - mermaidOverlayState.x) * ratio;
-    mermaidOverlayState.y = py - (py - mermaidOverlayState.y) * ratio;
-    mermaidOverlayState.scale = next;
-    mermaidOverlayApply();
-  }
-
-  function mermaidOverlayZoomCenter(factor) {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.viewport) return;
-    const rect = nodes.viewport.getBoundingClientRect();
-    mermaidOverlayZoomAt(factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
-  }
-
-  // Fit the cloned SVG into the viewport (capped so tiny diagrams don't blow up).
-  function mermaidOverlayFit() {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.viewport || !nodes.canvas) return;
-    const svg = nodes.canvas.querySelector('svg');
-    mermaidOverlayState.scale = 1;
-    mermaidOverlayState.x = 0;
-    mermaidOverlayState.y = 0;
-    if (svg) {
-      let w = 0;
-      let h = 0;
-      const vb = svg.getAttribute('viewBox');
-      if (vb) {
-        const parts = vb.trim().split(/[\s,]+/);
-        w = parseFloat(parts[2]);
-        h = parseFloat(parts[3]);
-      }
-      if (!(w > 0) || !(h > 0)) {
-        const r = svg.getBoundingClientRect();
-        w = r.width;
-        h = r.height;
-      }
-      if (w > 0 && h > 0) {
-        const vw = nodes.viewport.clientWidth - 48;
-        const vh = nodes.viewport.clientHeight - 48;
-        if (vw > 0 && vh > 0) {
-          mermaidOverlayState.scale = Math.min(vw / w, vh / h, 2);
-          mermaidOverlayState.x = (nodes.viewport.clientWidth - w * mermaidOverlayState.scale) / 2;
-          mermaidOverlayState.y = (nodes.viewport.clientHeight - h * mermaidOverlayState.scale) / 2;
-        }
-      }
-    }
-    mermaidOverlayApply();
-  }
-
-  function openMermaidOverlay(sourceSvg, trigger) {
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.overlay || !sourceSvg || !nodes.canvas) return;
-    nodes.canvas.innerHTML = '';
-    const clone = sourceSvg.cloneNode(true);
-    // Mermaid emits width="100%" + a max-width cap. Inside the overlay the
-    // canvas sizes to content (width: max-content), which makes a percentage
-    // width resolve circularly and the diagram collapse. Pin the clone to its
-    // natural size so fit/center math holds. Prefer the viewBox; fall back to
-    // the live source rect (the clone itself may already be collapsed).
-    let natW = 0;
-    let natH = 0;
-    const vb = clone.getAttribute('viewBox');
-    if (vb) {
-      const parts = vb.trim().split(/[\s,]+/);
-      natW = parseFloat(parts[2]);
-      natH = parseFloat(parts[3]);
-    }
-    if (!(natW > 0) || !(natH > 0)) {
-      const srcRect = sourceSvg.getBoundingClientRect();
-      natW = srcRect.width;
-      natH = srcRect.height;
-    }
-    if (natW > 0 && natH > 0) {
-      clone.setAttribute('width', String(natW));
-      clone.setAttribute('height', String(natH));
-      if (clone.style) clone.style.removeProperty('max-width');
-    }
-    nodes.canvas.appendChild(clone);
-    mermaidOverlayState.open = true;
-    mermaidOverlayState.trigger = trigger || null;
-    installMermaidOverlay();
-    nodes.overlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
-    mermaidOverlayFit();
-    if (nodes.closeBtn && nodes.closeBtn.focus) nodes.closeBtn.focus();
-  }
-
-  function closeMermaidOverlay() {
-    const nodes = mermaidOverlayNodes();
-    if (!mermaidOverlayState.open) return;
-    mermaidOverlayState.open = false;
-    if (nodes.overlay) nodes.overlay.classList.remove('active');
-    if (nodes.canvas) nodes.canvas.innerHTML = '';
-    document.body.style.overflow = '';
-    const trigger = mermaidOverlayState.trigger;
-    mermaidOverlayState.trigger = null;
-    // The trigger stays rendered (transparent until hover/focus), so focus()
-    // lands even outside hover — e.g. the keyboard flow.
-    if (trigger && document.contains(trigger) && trigger.focus) trigger.focus();
-  }
-
-  function mermaidOverlayTrapTab(e) {
-    if (e.key !== 'Tab') return;
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.overlay) return;
-    const focusables = nodes.overlay.querySelectorAll('button:not([disabled])');
-    if (!focusables || focusables.length === 0) return;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }
-
-  // One-pointer drag pans; two-pointer pinch zooms. Installed once — the
-  // overlay shell lives in index.html and survives document re-renders.
-  function installMermaidOverlay() {
-    if (mermaidOverlayState.installed) return;
-    const nodes = mermaidOverlayNodes();
-    if (!nodes.overlay || !nodes.viewport) return;
-    mermaidOverlayState.installed = true;
-
-    const activePointers = new Map();
-    let panAnchor = null;
-    let pinchStart = 0;
-    let pinchScale = 1;
-
-    // Re-anchor the pinch baseline on every pointer-count change so adding
-    // or lifting a finger mid-gesture never causes a zoom jump.
-    function capturePinchBaseline() {
-      const pts = Array.from(activePointers.values());
-      if (pts.length < 2) return;
-      pinchStart = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      pinchScale = mermaidOverlayState.scale;
-    }
-
-    if (nodes.zoomIn) nodes.zoomIn.addEventListener('click', function () { mermaidOverlayZoomCenter(1.25); });
-    if (nodes.zoomOut) nodes.zoomOut.addEventListener('click', function () { mermaidOverlayZoomCenter(1 / 1.25); });
-    if (nodes.zoomReset) nodes.zoomReset.addEventListener('click', function () { mermaidOverlayFit(); });
-    if (nodes.closeBtn) nodes.closeBtn.addEventListener('click', function () { closeMermaidOverlay(); });
-    nodes.overlay.addEventListener('click', function (e) {
-      if (e.target === nodes.overlay) closeMermaidOverlay();
-    });
-    nodes.overlay.addEventListener('keydown', mermaidOverlayTrapTab);
-    document.addEventListener('keydown', function (e) {
-      // Note: no defaultPrevented check — the app-wide keymap (below)
-      // unconditionally preventDefaults Escape, so honoring it would break
-      // Esc-to-close entirely. Esc dismissing both the overlay and any
-      // background form matches the existing "cancel whatever" convention.
-      if (e.key !== 'Escape') return;
-      if (mermaidOverlayState.open) {
-        e.preventDefault();
-        closeMermaidOverlay();
-      }
-    });
-
-    nodes.viewport.addEventListener('wheel', function (e) {
-      if (!mermaidOverlayState.open) return;
-      e.preventDefault();
-      mermaidOverlayZoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY);
-    }, { passive: false });
-
-    nodes.viewport.addEventListener('pointerdown', function (e) {
-      if (!mermaidOverlayState.open) return;
-      try { nodes.viewport.setPointerCapture(e.pointerId); } catch { /* noop */ }
-      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (activePointers.size === 1) {
-        panAnchor = { x: e.clientX - mermaidOverlayState.x, y: e.clientY - mermaidOverlayState.y };
-        nodes.viewport.classList.add('panning');
-      } else {
-        panAnchor = null;
-        capturePinchBaseline();
-      }
-    });
-    nodes.viewport.addEventListener('pointermove', function (e) {
-      if (!activePointers.has(e.pointerId)) return;
-      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (activePointers.size === 2) {
-        const pts = Array.from(activePointers.values());
-        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        if (pinchStart > 0 && dist > 0) {
-          const midX = (pts[0].x + pts[1].x) / 2;
-          const midY = (pts[0].y + pts[1].y) / 2;
-          // Zoom relative to the scale captured when the second pointer
-          // landed, anchored at the gesture midpoint.
-          const rel = (pinchScale * dist / pinchStart) / mermaidOverlayState.scale;
-          mermaidOverlayZoomAt(rel, midX, midY);
-        }
-        return;
-      }
-      if (panAnchor) {
-        mermaidOverlayState.x = e.clientX - panAnchor.x;
-        mermaidOverlayState.y = e.clientY - panAnchor.y;
-        mermaidOverlayApply();
-      }
-    });
-    function endMermaidPointer(e) {
-      activePointers.delete(e.pointerId);
-      if (activePointers.size === 1) {
-        const remaining = Array.from(activePointers.values())[0];
-        panAnchor = { x: remaining.x - mermaidOverlayState.x, y: remaining.y - mermaidOverlayState.y };
-      } else if (activePointers.size >= 2) {
-        capturePinchBaseline();
-      } else {
-        panAnchor = null;
-        nodes.viewport.classList.remove('panning');
-      }
-    }
-    nodes.viewport.addEventListener('pointerup', endMermaidPointer);
-    nodes.viewport.addEventListener('pointercancel', endMermaidPointer);
-  }
-
-  // Expand affordance on each rendered diagram. Idempotent — safe to run
-  // after every renderMermaidBlocks() call. The button lives on the
-  // .mermaid-block (not inside .mermaid) so mermaid re-renders never wipe
-  // it, and clicks stopPropagation so comment gestures are unaffected.
-  function decorateMermaidBlocks() {
-    installMermaidOverlay();
-    const blocks = document.querySelectorAll('.line-content.mermaid-block');
-    blocks.forEach(function (block) {
-      if (block.querySelector('.mermaid-expand')) return;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'mermaid-expand';
-      btn.setAttribute('aria-label', 'Open diagram fullscreen');
-      btn.setAttribute('title', 'Open fullscreen');
-      btn.textContent = '⛶ Expand';
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        const svg = block.querySelector('.mermaid svg');
-        if (!svg) return;
-        openMermaidOverlay(svg, btn);
+  // ===== Pluggable renderers (issue #989) =====
+  // A click on a rendered diagram part that its renderer maps to source lines
+  // opens a comment on those lines. Before-side blocks of a rendered diff are
+  // the old content, so only the current document reacts.
+  function installRenderAnchorComments() {
+    document.addEventListener('crit:render-anchor', function(e) {
+      const d = e.detail || {};
+      const lineBlock = e.target.closest('.document-wrapper .line-block');
+      if (!lineBlock || !d.path || !getFileByPath(d.path)) return;
+      openForm({
+        filePath: d.path,
+        afterBlockIndex: parseInt(lineBlock.dataset.blockIndex, 10),
+        startLine: d.startLine,
+        endLine: d.endLine,
+        editingId: null,
+        quote: d.quote || null,
+        quoteOffset: null,
       });
-      block.appendChild(btn);
     });
+  }
+
+  // A diagram is drawn after the document's first highlight pass, which could
+  // only see its hidden source: highlight quotes again in the drawn output.
+  // The renderer caches its clean output before it sends the event.
+  function installRenderedQuoteHighlights() {
+    document.addEventListener('crit:rendered', function(e) {
+      const target = e.target;
+      const content = target.isConnected && target.closest('.line-content');
+      const block = content && content.closest('.line-block[data-file-path]');
+      const section = block && block.closest('.file-section');
+      const file = block && getFileByPath(block.dataset.filePath);
+      if (!section || !file) return;
+      content.querySelectorAll('.quote-highlight').forEach(function(mark) {
+        mark.replaceWith.apply(mark, Array.from(mark.childNodes));
+      });
+      content.normalize();
+      highlightQuotesInSection(section, file, content);
+    });
+  }
+
+  // Render every fence/file target a renderer claims (crit-renderers.js).
+  // Any document rebuild invalidates the detached fullscreen clone — close it
+  // rather than show a stale diagram.
+  function renderPluggableBlocks() {
+    window.crit.diagramOverlay.close();
+    window.crit.renderers.renderAll(document);
   }
 
   // ===== Theme =====
@@ -7780,13 +8417,10 @@
     if (pierreView) pierreView.setThemeType(window.crit.pierreAdapter.themeTypeFor(choice));
     if (storyActive() && window.PierreDiffs) renderStory();
 
-    // The fullscreen clone keeps the old theme's colors — close it.
-    closeMermaidOverlay();
-    // Re-initialize mermaid diagrams with updated theme
-    if (typeof mermaid !== 'undefined') {
-      mermaid.initialize(mermaidOptions());
-      try { mermaid.run(); } catch {}
-    }
+    // The fullscreen clone keeps the old theme's colors — close it, then
+    // re-render diagrams in the new theme.
+    window.crit.diagramOverlay.close();
+    window.crit.renderers.rerenderAll(document);
   };
 
   // ===== Width =====
@@ -7955,12 +8589,7 @@
     } else if (scopes.indexOf(diffScope) === -1) {
       diffScope = scopes.indexOf('branch') !== -1 ? 'branch' : 'all';
     }
-    const scopeToggle = document.getElementById('scopeToggle');
-    if (scopeToggle) {
-      scopeToggle.querySelectorAll('.toggle-btn').forEach(function(b) {
-        b.classList.toggle('active', b.dataset.scope === diffScope);
-      });
-    }
+    updateScopePinIndicator();
   }
 
   function compareTargetChromeVisible() {
@@ -8029,21 +8658,70 @@
     normalizeCommitPins();
     if (virtualCommitSelected && !commitFrom && !commitThrough) {
       diffCommit = VIRTUAL_WORKING_COMMIT;
-      return;
-    }
-    if (!commitFrom && !commitThrough) {
+    } else if (!commitFrom && !commitThrough) {
       diffCommit = '';
-      return;
-    }
-    if (commitFrom && !commitThrough) {
+    } else if (commitFrom && !commitThrough) {
       diffCommit = commitFrom;
-      return;
-    }
-    if (commitFrom && commitThrough) {
+    } else if (commitFrom && commitThrough) {
       diffCommit = commitFrom + '..' + commitThrough;
-      return;
+    } else {
+      diffCommit = '';
     }
-    diffCommit = '';
+    updateScopePinIndicator();
+    refreshCommitContextCard();
+  }
+
+  // Short label for a pinned ref: the commit's short sha, the virtual
+  // commit's message, or the compare-target label for anything else.
+  function commitPinRef(sha) {
+    const c = commitList.find(function(x) { return x.sha === sha; });
+    if (!c) return compareTargetChipLabel(sha);
+    return c.virtual ? c.message : c.short_sha;
+  }
+
+  const SCOPE_NAMES = { all: 'All', branch: 'Branch', staged: 'Staged', unstaged: 'Unstaged' };
+
+  // A pinned commit overrides the scope. The toggle recedes, a chip on its
+  // left names the pin, and the scope that comes back on unpin keeps a ghost
+  // outline instead of the active fill. The hint goes on each button, since
+  // the browser shows the innermost element's title.
+  function updateScopePinIndicator() {
+    if (!wtScopeToggleEl) return;
+    const pinned = !!diffCommit;
+    wtScopeToggleEl.classList.toggle('commit-pinned', pinned);
+    scopePinEl.hidden = !pinned;
+    const scopeName = SCOPE_NAMES[diffScope] || diffScope;
+    if (pinned) {
+      let kind;
+      let ref;
+      if (diffCommit === VIRTUAL_WORKING_COMMIT) {
+        const virtual = commitList.find(function(c) { return c.virtual; });
+        kind = '';
+        ref = virtual ? virtual.message : 'Working changes';
+      } else if (commitThrough) {
+        kind = 'Range';
+        ref = commitPinRef(commitFrom) + '\u2026' + commitPinRef(commitThrough);
+      } else {
+        kind = 'Commit';
+        ref = commitPinRef(commitFrom);
+      }
+      scopePinKindEl.textContent = kind;
+      scopePinRefEl.textContent = ref;
+      scopePinNoteEl.textContent = '. The scope is not applied while it is pinned; choosing a scope unpins it.';
+      scopePinLabelEl.title = 'The diff shows ' + (kind ? kind.toLowerCase() + ' ' : '') + ref + ' instead of a scope';
+      scopePinClearEl.setAttribute('aria-label', 'Unpin and show ' + scopeName + ' changes');
+      scopePinClearEl.title = 'Unpin (Esc) \u00b7 back to ' + scopeName;
+    }
+    wtScopeToggleEl.querySelectorAll('.toggle-btn').forEach(function(b) {
+      const current = b.dataset.scope === diffScope;
+      b.classList.toggle('active', current && !pinned);
+      b.classList.toggle('remembered', current && pinned);
+      b.setAttribute('aria-pressed', String(current && !pinned));
+      if (b.dataset.baseTitle === undefined) b.dataset.baseTitle = b.title || '';
+      b.title = pinned ? b.dataset.baseTitle + ' (unpins the commit)' : b.dataset.baseTitle;
+      if (pinned) b.setAttribute('aria-describedby', 'scopePinLabel');
+      else b.removeAttribute('aria-describedby');
+    });
   }
 
   function clearCommitPins() {
@@ -8118,15 +8796,9 @@
       if (label) {
         if (commitFrom && !commitThrough) {
           const sel = commitList.find(function(c) { return c.sha === commitFrom; });
-          label.textContent = sel
-            ? (sel.virtual ? sel.message : (sel.short_sha + ' only'))
-            : compareTargetChipLabel(commitFrom) + ' only';
+          label.textContent = sel && sel.virtual ? sel.message : commitPinRef(commitFrom) + ' only';
         } else if (commitFrom && commitThrough) {
-          const a = commitList.find(function(c) { return c.sha === commitFrom; });
-          const b = commitList.find(function(c) { return c.sha === commitThrough; });
-          const aLabel = a ? (a.virtual ? a.message : a.short_sha) : compareTargetChipLabel(commitFrom);
-          const bLabel = b ? (b.virtual ? b.message : b.short_sha) : compareTargetChipLabel(commitThrough);
-          label.textContent = aLabel + ' \u2192 ' + bLabel;
+          label.textContent = commitPinRef(commitFrom) + ' \u2192 ' + commitPinRef(commitThrough);
         }
       }
     }
@@ -8151,11 +8823,215 @@
       return '<div class="' + cls + '" data-commit="' + c.sha + '" role="button" tabindex="0">'
         + fromPin + throughPin
         + '<span class="commit-picker-item-sha">' + escapeHtml(c.short_sha) + '</span>'
-        + '<span class="commit-picker-item-msg">' + escapeHtml(c.message.length > 40 ? c.message.slice(0, 40) + '\u2026' : c.message) + '</span>'
+        + '<span class="commit-picker-item-msg" title="' + escapeHtml(commitTooltip(c)) + '">' + escapeHtml(c.message) + '</span>'
         + virtualPill
         + time
         + '</div>';
     }).join('');
+    refreshCommitContextCard();
+  }
+
+  function commitTooltip(c) {
+    if (c.virtual) return c.message;
+    const lines = (c.body || '').split('\n').slice(0, 12);
+    return c.message + (lines.join('').trim() ? '\n\n' + lines.join('\n') : '');
+  }
+
+  // Index range [newest, oldest] in commitList for the pinned scope, or null
+  // when nothing real is pinned.
+  function pinnedCommitSpan() {
+    if (!commitFrom) return null;
+    const fromIdx = commitIndexForSha(commitFrom);
+    if (fromIdx < 0 || commitList[fromIdx].virtual) return null;
+    if (!commitThrough) return { newest: fromIdx, oldest: fromIdx };
+    const throughIdx = commitIndexForSha(commitThrough);
+    if (throughIdx < 0) return null;
+    return { newest: Math.min(fromIdx, throughIdx), oldest: Math.max(fromIdx, throughIdx) };
+  }
+
+  function realCommits() {
+    return commitList.filter(function(c) { return !c.virtual; });
+  }
+
+  // Step the single-commit pin to an older (-1) or newer (+1) commit. With a
+  // range pinned, lands on the range's oldest (next) or newest (previous)
+  // commit; with nothing pinned, starts the walk at the oldest commit.
+  function stepPinnedCommit(dir) {
+    const real = realCommits();
+    // One commit alone is the whole branch, so there is nothing to step to.
+    // Beside uncommitted changes it is a scope of its own, as in the picker.
+    if (real.length === 0 || (real.length === 1 && real.length === commitList.length)) return false;
+    const indexOf = function(sha) { return real.findIndex(function(c) { return c.sha === sha; }); };
+    const span = pinnedCommitSpan();
+    let next;
+    if (span && span.newest === span.oldest) {
+      next = indexOf(commitFrom) - dir; // list is newest first
+    } else if (span) {
+      next = indexOf(commitList[dir > 0 ? span.oldest : span.newest].sha);
+    } else {
+      next = real.length - 1;
+    }
+    if (next < 0 || next >= real.length) return false;
+    focusSingleCommit(real[next].sha);
+    return true;
+  }
+
+  // Which card control has focus, so a rebuild can put it back.
+  function focusedCommitCtl() {
+    const active = document.activeElement;
+    const ctl = active && active.closest && active.closest('.commit-context [data-commit-ctl]');
+    return ctl ? ctl.dataset.commitCtl : '';
+  }
+
+  function restoreCommitCardFocus(card, ctlName) {
+    if (!ctlName || !card) return;
+    let el = card.querySelector('[data-commit-ctl="' + ctlName + '"]');
+    if (el && el.disabled) el = card.querySelector('.commit-context-step:not(:disabled)');
+    if (!el) el = card.querySelector('[data-commit-ctl="sha"]');
+    if (el) el.focus();
+  }
+
+  function focusSingleCommit(sha) {
+    const focusedCtl = focusedCommitCtl();
+    const prev = diffCommit;
+    virtualCommitSelected = false;
+    commitFrom = sha;
+    commitThrough = '';
+    recomputeDiffCommit();
+    renderCommitPicker();
+    if (diffCommit === prev) return;
+    // The reload rebuilds the list and moves the review conversation, which
+    // drops focus; put it back on the same control once it settles.
+    reloadForScope().then(function() {
+      restoreCommitCardFocus(document.querySelector('#reviewConversation > .commit-context'), focusedCtl);
+    });
+  }
+
+  function buildCommitContextCard() {
+    if (!session || session.mode !== 'git' || !commitRangeChromeVisible()) return null;
+    const span = pinnedCommitSpan();
+    if (!span) return null;
+    const real = realCommits();
+    const card = document.createElement('section');
+    card.className = 'commit-context';
+    card.setAttribute('aria-label', 'Commit details');
+
+    if (span.newest === span.oldest) {
+      const c = commitList[span.newest];
+      const pos = real.findIndex(function(r) { return r.sha === c.sha; });
+      const number = real.length - pos; // 1 = oldest
+
+      const meta = document.createElement('div');
+      meta.className = 'commit-context-meta';
+
+      const nav = document.createElement('div');
+      nav.className = 'commit-context-nav';
+      const prevBtn = document.createElement('button');
+      prevBtn.type = 'button';
+      prevBtn.className = 'commit-context-step';
+      prevBtn.dataset.commitCtl = 'prev';
+      prevBtn.textContent = '\u2039';
+      prevBtn.title = 'Previous commit (,)';
+      prevBtn.setAttribute('aria-label', 'Previous commit');
+      prevBtn.disabled = pos >= real.length - 1;
+      prevBtn.addEventListener('click', function() { stepPinnedCommit(-1); });
+      const counter = document.createElement('span');
+      counter.className = 'commit-context-counter';
+      counter.textContent = 'Commit ' + number + ' of ' + real.length;
+      const nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'commit-context-step';
+      nextBtn.dataset.commitCtl = 'next';
+      nextBtn.textContent = '\u203a';
+      nextBtn.title = 'Next commit (.)';
+      nextBtn.setAttribute('aria-label', 'Next commit');
+      nextBtn.disabled = pos <= 0;
+      nextBtn.addEventListener('click', function() { stepPinnedCommit(1); });
+      nav.append(prevBtn, counter, nextBtn);
+      meta.appendChild(nav);
+
+      const sha = document.createElement('button');
+      sha.type = 'button';
+      sha.className = 'commit-context-sha';
+      sha.dataset.commitCtl = 'sha';
+      sha.textContent = c.short_sha;
+      sha.title = 'Copy full SHA';
+      sha.setAttribute('aria-label', 'Copy commit SHA ' + c.sha);
+      sha.addEventListener('click', function() {
+        navigator.clipboard.writeText(c.sha).then(function() {
+          sha.textContent = 'Copied';
+          setTimeout(function() { sha.textContent = c.short_sha; }, 1200);
+        }).catch(function() { sha.textContent = c.short_sha; });
+      });
+      meta.appendChild(sha);
+
+      const who = document.createElement('span');
+      who.className = 'commit-context-author';
+      who.textContent = (c.author || '') + (c.date ? ' \u00b7 ' + relativeTime(c.date) : '');
+      if (c.date) who.title = new Date(c.date).toLocaleString();
+      meta.appendChild(who);
+      card.appendChild(meta);
+
+      const title = document.createElement('h2');
+      title.className = 'commit-context-title';
+      title.textContent = c.message;
+      card.appendChild(title);
+
+      // jj and Sapling do not send bodies, so an empty one says nothing.
+      if (c.body) {
+        const body = document.createElement('div');
+        body.className = 'commit-context-body comment-body';
+        body.innerHTML = commentMd.render(c.body);
+        card.appendChild(body);
+      }
+      return card;
+    }
+
+    const count = span.oldest - span.newest + 1;
+    const meta = document.createElement('div');
+    meta.className = 'commit-context-meta';
+    const counter = document.createElement('span');
+    counter.className = 'commit-context-counter';
+    counter.textContent = count + ' commits \u00b7 ' + commitList[span.oldest].short_sha + ' \u2192 ' + commitList[span.newest].short_sha;
+    meta.appendChild(counter);
+    card.appendChild(meta);
+
+    const list = document.createElement('ol');
+    list.className = 'commit-context-list';
+    for (let i = span.oldest; i >= span.newest; i--) {
+      const c = commitList[i];
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'commit-context-list-item';
+      btn.dataset.commitCtl = 'list';
+      btn.title = commitTooltip(c);
+      const shaEl = document.createElement('span');
+      shaEl.className = 'commit-context-list-sha';
+      shaEl.textContent = c.short_sha;
+      const msg = document.createElement('span');
+      msg.className = 'commit-context-list-msg';
+      msg.textContent = c.message;
+      btn.append(shaEl, msg);
+      btn.addEventListener('click', function() { focusSingleCommit(c.sha); });
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+    card.appendChild(list);
+    return card;
+  }
+
+  // Swap only the card so an open review-comment form is left alone.
+  function refreshCommitContextCard() {
+    const section = document.getElementById('reviewConversation');
+    if (!section || section.hidden) return;
+    const old = section.querySelector(':scope > .commit-context');
+    const focusedCtl = focusedCommitCtl();
+    const next = buildCommitContextCard();
+    if (old && next) old.replaceWith(next);
+    else if (old) old.remove();
+    else if (next) section.insertBefore(next, section.firstChild);
+    restoreCommitCardFocus(next, focusedCtl);
   }
 
   document.getElementById('commitDropdownBtn').addEventListener('click', function() {
@@ -8525,19 +9401,31 @@
   // ===== Scope Toggle (All / Branch / Staged / Unstaged) =====
   document.getElementById('scopeToggle').addEventListener('click', async function(e) {
     const btn = e.target.closest('.toggle-btn');
-    if (!btn || btn.disabled || btn.classList.contains('active')) return;
+    if (!btn || btn.disabled) return;
     const scope = btn.dataset.scope;
+    if (btn.classList.contains('active') && !diffCommit) return;
     diffScope = scope;
     navCommentId = null;
     setSetting('diffScope', scope);
-    if (scope !== 'all' && scope !== 'branch') {
-      clearCommitPins();
-    }
-    document.querySelectorAll('#scopeToggle .toggle-btn').forEach(function(b) {
-      b.classList.toggle('active', b.dataset.scope === scope);
-    });
+    clearCommitPins();
     updateCompareAndCommitChrome();
     await reloadForScope();
+  });
+
+  // Unpinning from the chip (or Esc inside the toggle) returns to the scope
+  // the pin set aside, through the same path as clicking that scope.
+  function unpinToRememberedScope() {
+    const btn = document.querySelector('#scopeToggle .toggle-btn.remembered');
+    if (!btn || btn.disabled) return false;
+    btn.click();
+    btn.focus();
+    return true;
+  }
+  document.getElementById('scopePinClear').addEventListener('click', unpinToRememberedScope);
+  document.getElementById('scopeToggle').addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape' || !diffCommit || !unpinToRememberedScope()) return;
+    e.preventDefault();
+    e.stopPropagation();
   });
 
   let reloadInFlight = null;
@@ -8551,19 +9439,26 @@
   // Story/Diff also changes the effective fetch/file-data scopes without
   // changing diffScope itself, so include those derived scopes in the key.
   let reloadInFlightKey = null;
-  async function reloadForScope() {
+  let reloadRequestVersion = 0;
+  function scopeReloadKey() {
     const diffFetchMode = ignoreWhitespace && !storyNeedsRawDiff() ? 'filtered' : 'raw';
-    const key = currentSessionFetchScope() + '\0' + currentFileDataScope() + '\0' + diffCommit + '\0' + diffFetchMode;
+    return currentSessionFetchScope() + '\0' + currentFileDataScope() + '\0' + diffCommit + '\0' + diffFetchMode;
+  }
+  async function reloadForScope() {
+    const key = scopeReloadKey();
     if (reloadInFlight && reloadInFlightKey === key) return reloadInFlight;
     if (reloadInFlight) {
       // Different inputs — chain after the in-flight reload finishes so we
       // don't tear down filesContainer mid-render. The previous reload's
       // finally clears reloadInFlight; we then re-enter reloadForScope().
+      reloadRequestVersion++;
+      showFilesMessage('Loading...');
       const prev = reloadInFlight;
       const chained = prev.then(function() { return reloadForScope(); }, function() { return reloadForScope(); });
       return chained;
     }
     reloadInFlightKey = key;
+    const requestVersion = ++reloadRequestVersion;
     reloadInFlight = (async function() {
       try {
         activeReplyForms.clear();
@@ -8582,6 +9477,7 @@
           sessionRes = await hydrateStoryIfMissing(sessionRes);
         }
         sessionRes = await hydrateFullSessionForStoryIfNeeded(sessionRes);
+        if (requestVersion !== reloadRequestVersion) return;
         session = sessionRes;
         reviewComments = sessionRes.review_comments || [];
 
@@ -8602,7 +9498,11 @@
           return;
         }
 
-        files = await loadAllFileData(session.files, currentFileDataScope());
+        const viewedLoad = loadServerViewed();
+        const loadedFiles = await loadAllFileData(session.files, currentFileDataScope());
+        await viewedLoad;
+        if (requestVersion !== reloadRequestVersion) return;
+        files = loadedFiles;
         hiddenUnresolved = session.hidden_unresolved || 0;
         files.sort(fileSortComparator);
         restoreViewedState();
@@ -8766,10 +9666,14 @@
   let navHighlightTimer;
 
   function collectNavigableComments() {
-    // Document order matching render: file-scope cards above the body, then
-    // line comments by end_line / start_line. Used so [/] can reach comments
-    // whose .file-body is still deferred.
+    // Document order matching render: the review conversation above every
+    // file, then per file the file-scope cards above the body and line
+    // comments by end_line / start_line. Used so [/] can reach comments whose
+    // .file-body is still deferred.
     const list = [];
+    for (let ri = 0; ri < reviewComments.length; ri++) {
+      list.push({ id: reviewComments[ri].id, filePath: null, resolved: !!reviewComments[ri].resolved });
+    }
     for (let fi = 0; fi < files.length; fi++) {
       const file = files[fi];
       const comments = file.comments || [];
@@ -8804,17 +9708,38 @@
 
   function highlightNavComment(commentId, filePath) {
     if (!pierreView || !pierreViewActive()) return;
-    pierreJumpToComment(commentId, filePath, function(card) {
-      if (navHighlightTimer) {
-        clearTimeout(navHighlightTimer);
-        document.querySelectorAll('.comment-nav-highlight').forEach(function(el) { el.classList.remove('comment-nav-highlight'); });
-      }
-      card.classList.add('comment-nav-highlight');
-      navHighlightTimer = setTimeout(function() {
-        card.classList.remove('comment-nav-highlight');
-        navHighlightTimer = null;
-      }, 1000);
-    });
+    if (filePath === null) jumpToReviewNavComment(commentId, markNavComment);
+    else pierreJumpToComment(commentId, filePath, markNavComment);
+  }
+
+  // The review conversation is the Pierre list header, always mounted above
+  // the first file, so its card needs no load or mount wait.
+  function jumpToReviewNavComment(commentId, done) {
+    // Supersede a file jump still in flight so it does not steal the highlight.
+    const seq = ++pierreJumpSeq;
+    if (isReviewConversationCollapsed()) {
+      setReviewConversationCollapsed(false);
+      renderReviewConversation();
+    }
+    const section = document.getElementById('reviewConversation');
+    const card = section && section.querySelector('.comment-card[data-comment-id="' + CSS.escape(commentId) + '"]');
+    if (!card) return;
+    ignoreTreeObserverUntil = Date.now() + 400;
+    updateTreeActive(REVIEW_CONVERSATION_PATH);
+    scrollPierreElementIntoView(card, function() { return seq === pierreJumpSeq; });
+    done(card);
+  }
+
+  function markNavComment(card) {
+    if (navHighlightTimer) {
+      clearTimeout(navHighlightTimer);
+      document.querySelectorAll('.comment-nav-highlight').forEach(function(el) { el.classList.remove('comment-nav-highlight'); });
+    }
+    card.classList.add('comment-nav-highlight');
+    navHighlightTimer = setTimeout(function() {
+      card.classList.remove('comment-nav-highlight');
+      navHighlightTimer = null;
+    }, 1000);
   }
 
   function navigateToComment(direction) {
@@ -9227,6 +10152,49 @@
         document.getElementById('finishBtn').click();
         break;
       }
+      case 'toggle_viewed': case 'toggle_collapse': {
+        // Holding the key would flip the file on every repeat.
+        if (e.repeat) return;
+        const markViewed = shortcutAction === 'toggle_viewed';
+        if (storyActive()) {
+          toggleStoryFile(e, markViewed);
+          break;
+        }
+        if (!pierreView || !pierreViewActive()) return;
+        if (isSingleFileMode()) return;
+        // Whichever pointed at a file last wins: the keyboard focus (while
+        // its file is on screen) or the file under the mouse. The other is
+        // the fallback, e.g. once the mouse has left the list.
+        const keyboardFile = pierreFocus && getFileByPath(pierreFocus.path) &&
+          pierreView.isOnScreen(pierreFocus.path) ? pierreFocus.path : null;
+        const mouseFile = mouseInList ? pierreView.hoveredPath() : null;
+        const filePath = mouseMovedSinceFocus ? (mouseFile || keyboardFile) : (keyboardFile || mouseFile);
+        if (!filePath) return;
+        e.preventDefault();
+        // Collapsing the file would strand a visual range inside it.
+        const leftVisual = !!pierreVisualAnchor && pierreVisualAnchor.path === filePath;
+        if (leftVisual) {
+          pierreVisualAnchor = null;
+          document.body.classList.remove('visual-mode');
+          hidePierreSelection();
+          clearPierreDocVisual();
+        }
+        const file = getFileByPath(filePath);
+        if (markViewed) {
+          toggleViewed(filePath);
+        } else if (file) {
+          pierreView.setCollapsed(file, !file.collapsed);
+        }
+        // Full path: base names like README.md repeat across folders.
+        if (file) {
+          if (markViewed) announce((file.viewed ? 'Marked ' : 'Unmarked ') + file.path + ' viewed');
+          else announce((file.collapsed ? 'Collapsed ' : 'Expanded ') + file.path);
+        }
+        // The file stayed open (un-viewed, or expanded): keep the focused
+        // line highlighted, as Esc does when it leaves visual mode.
+        if (leftVisual && file && !file.collapsed) showPierreFocus();
+        break;
+      }
       case 'general_comment': {
         e.preventDefault();
         openReviewCommentForm();
@@ -9284,12 +10252,18 @@
         navigateToChange(-1);
         break;
       }
+      case 'next_commit': case 'previous_commit': {
+        if (session.mode !== 'git' || storyActive() || !commitRangeChromeVisible()) break;
+        if (stepPinnedCommit(shortcutAction === 'next_commit' ? 1 : -1)) e.preventDefault();
+        break;
+      }
       case 'scope_all': case 'scope_branch': case 'scope_staged': case 'scope_unstaged': {
         if (session.mode !== 'git') break;
         const scopeMap = { scope_all: 'all', scope_branch: 'branch', scope_staged: 'staged', scope_unstaged: 'unstaged' };
         const scope = scopeMap[shortcutAction];
         const btn = document.querySelector('#scopeToggle .toggle-btn[data-scope="' + scope + '"]');
-        if (btn && !btn.disabled && !btn.classList.contains('active')) {
+        // The active scope still releases a pinned commit, as a click does.
+        if (btn && !btn.disabled && (!btn.classList.contains('active') || diffCommit)) {
           e.preventDefault();
           btn.click();
         }
@@ -9303,6 +10277,9 @@
       }
       case 'Escape': {
         e.preventDefault();
+        // The find bar is the top layer, unless the diagram overlay or the
+        // stack chip popover (their own Esc handlers run after this one) is.
+        if (!document.querySelector('.diagram-overlay.active') && !isStackChipOpen() && critFind.closeFromEscape(e)) break;
         if (reviewCommentFormActive) {
           if (confirmDiscardReviewCommentForm()) cancelReviewCommentForm();
         }
@@ -9462,6 +10439,12 @@
   const compareRailEl = document.getElementById('compareRail');
   const baseBranchArrowEl = document.getElementById('baseBranchArrow');
   const wtScopeToggleEl = document.getElementById('scopeToggle');
+  const scopePinEl = document.getElementById('scopePin');
+  const scopePinLabelEl = document.getElementById('scopePinLabel');
+  const scopePinKindEl = document.getElementById('scopePinKind');
+  const scopePinRefEl = document.getElementById('scopePinRef');
+  const scopePinNoteEl = document.getElementById('scopePinNote');
+  const scopePinClearEl = document.getElementById('scopePinClear');
 
   // Cached /api/picker.stack array. We only consume `stack` now — `other_prs`
   // and `branches` are intentionally unused. Refreshed on focus-changed SSE.
@@ -10138,19 +11121,52 @@
   }
 
   // ----- Story progress -----
-  // Story mode uses the same file.viewed state and localStorage key as the
-  // regular diff. A file marked viewed in a chapter is viewed everywhere.
-  function isStoryFileViewed(filePath) {
+  function isStoryFileViewed(filePath, oldStarts, pageId) {
     const file = getFileByPath(filePath);
-    return !!(file && file.viewed);
+    if (!file || file.lazy) return !!(file && file.viewed);
+    const built = cloneFileForHunks(filePath, oldStarts, pageId);
+    return !!(built && areHunksViewed(file, built.clone.diffHunks));
   }
 
-  // Progress for a page: {done, total} over its file groups.
+  function setStoryFileViewed(filePath, oldStarts, pageId, viewed) {
+    const file = getFileByPath(filePath);
+    if (!file || file.lazy) return;
+    const built = cloneFileForHunks(filePath, oldStarts, pageId);
+    if (!built) return;
+    const keys = new Set(file.viewedHunks || (file.viewed ? viewedHunkKeys(file.diffHunks) : []));
+    viewedHunkKeys(built.clone.diffHunks).forEach(function(key) {
+      if (viewed) keys.add(key);
+      else keys.delete(key);
+    });
+    file.viewedHunks = Array.from(keys);
+    const wasViewed = !!file.viewed;
+    reconcileStoryViewed(file);
+    // Ticking part of a file changes nothing at file level, so it must not
+    // save an untick.
+    if (!!file.viewed !== wasViewed) persistViewedFiles([file], false);
+  }
+
+  // A group whose hunks are no longer in the diff (stale story) has nothing
+  // to mark. Lazy files count: their hunks arrive on load.
+  function storyGroupMarkable(filePath, oldStarts, pageId) {
+    const file = getFileByPath(filePath);
+    if (!file) return false;
+    if (file.lazy) return true;
+    const built = cloneFileForHunks(filePath, oldStarts, pageId);
+    return !!(built && built.shown);
+  }
+
+  // Progress for a page: {done, total} over its file groups that have hunks.
   function storyPageProgress(page) {
-    const groupFiles = Array.from(page.refsByFile.keys());
+    const pid = storyPageId(page);
     let done = 0;
-    groupFiles.forEach(function (fp) { if (isStoryFileViewed(fp)) done++; });
-    return { done: done, total: groupFiles.length };
+    let total = 0;
+    page.refsByFile.forEach(function (starts, fp) {
+      if (!storyGroupMarkable(fp, starts, pid)) return;
+      total++;
+      if (isStoryFileViewed(fp, starts, pid)) done++;
+    });
+    return { done: done, total: total };
   }
 
   // Keep the chapter mark button in sync when per-file Viewed state changes.
@@ -10208,7 +11224,7 @@
     clone.previousLineBlocks = file.previousLineBlocks;
     clone.tocItems = file.tocItems;
     clone.collapsed = file.collapsed;
-    clone.viewed = file.viewed;
+    clone.viewed = areHunksViewed(file, clone.diffHunks);
     clone.additions = file.additions;
     clone.deletions = file.deletions;
     clone.lazy = file.lazy;
@@ -10244,6 +11260,10 @@
       file.tocItems = loaded.tocItems;
       file.fileHash = loaded.fileHash;
       file.lazy = false;
+      recheckViewedMark(file);
+      reconcileStoryViewed(file);
+      updateViewedCount();
+      updateTreeViewedState();
       file._lazyLoading = false;
       delete file._storyLazyPromise;
       // Drop clones built against the empty lazy placeholder.
@@ -10302,6 +11322,7 @@
       // Force diff view for the group body regardless of markdown viewMode.
       viewMode: 'diff',
     });
+    clone.viewed = areHunksViewed(file, copiedHunks);
     storyExpandedFileCache.set(key, { fileHash: file.fileHash, clone: clone, total: expandedHunks.length });
     return { clone: clone, total: expandedHunks.length, shown: copiedHunks.length };
   }
@@ -10347,16 +11368,16 @@
         sub = 'Why this change exists';
       } else if (page.kind === 'support') {
         indexLabel = 'S';
-        const prog = storyPageProgress(page);
+        const nf = page.refsByFile.size;
         name = escapeHtml(supportPageLabel(page));
-        sub = prog.total + ' file' + (prog.total === 1 ? '' : 's');
+        sub = nf + ' file' + (nf === 1 ? '' : 's');
         statusHtml = railStatusHtml(page);
       } else {
         indexLabel = String(page.idx + 1);
         name = escapeHtml(page.title);
-        const prog = storyPageProgress(page);
+        const nf = page.refsByFile.size;
         const nh = countHunksForPage(page);
-        sub = prog.total + ' file' + (prog.total === 1 ? '' : 's') + ' · ' + nh + ' hunk' + (nh === 1 ? '' : 's');
+        sub = nf + ' file' + (nf === 1 ? '' : 's') + ' · ' + nh + ' hunk' + (nh === 1 ? '' : 's');
         statusHtml = railStatusHtml(page);
       }
       row.innerHTML =
@@ -10471,7 +11492,6 @@
       item.className = 'crit-story-toc__item' + (page.kind === 'support' ? ' support' : '');
       const pid = storyPageId(page);
       item.dataset.storyTarget = pid;
-      const prog = storyPageProgress(page);
       const nh = countHunksForPage(page);
       const indexLabel = page.kind === 'support' ? 'S' : String(page.idx + 1);
       const title = page.kind === 'support' ? supportPageLabel(page) : page.title;
@@ -10486,7 +11506,7 @@
         '</span>' +
         '<span class="crit-story-toc__meta">' +
           railStatusHtml(page) +
-          '<span>' + prog.total + 'f · ' + nh + 'h</span>' +
+          '<span>' + page.refsByFile.size + 'f · ' + nh + 'h</span>' +
           '<span class="crit-story-toc__go">→</span>' +
         '</span>';
       item.addEventListener('click', function () { showStory(pid); });
@@ -10659,7 +11679,7 @@
     section.className = 'file-section crit-story-file-group';
     section.id = 'story-file-section-' + pid + '-' + filePath;
     section.dataset.storyFile = filePath;
-    if (file && file.viewed) section.classList.add('viewed');
+    if (isStoryFileViewed(filePath, oldStarts, pid)) section.classList.add('viewed');
     if (!file || !file.collapsed) section.open = true;
 
     const header = document.createElement('summary');
@@ -10671,7 +11691,7 @@
       }
       if (file && section.open) {
         e.preventDefault();
-        if (section.getBoundingClientRect().top < 0) section.scrollIntoView({ behavior: 'instant' });
+        revealStorySectionTop(section);
         section.open = false;
         file.collapsed = true;
       }
@@ -10693,7 +11713,7 @@
     const fileName = dirParts.pop();
     const dirPath = dirParts.length > 0 ? dirParts.join('/') + '/' : '';
     header.innerHTML =
-      '<div class="file-header-chevron"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></div>' +
+      '<div class="file-header-chevron" title="' + escapeHtml(shortcutTitle('Collapse or expand', 'toggle_collapse')) + '"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg></div>' +
       ICON_FILE +
       '<span class="file-header-name"><span class="dir">' + escapeHtml(dirPath) + '</span><span class="filename">' + escapeHtml(fileName || filePath) + '</span>' +
         '<button type="button" class="file-header-copy-path" aria-label="Copy file path">' + ICON_COPY_PATH + '</button>' +
@@ -10754,13 +11774,22 @@
 
     const viewedLabel = document.createElement('label');
     viewedLabel.className = 'file-header-viewed';
-    viewedLabel.title = 'Viewed';
-    viewedLabel.innerHTML = '<input type="checkbox"' + (file && file.viewed ? ' checked' : '') + '><span>Viewed</span>';
+    viewedLabel.title = shortcutTitle('Viewed', 'toggle_viewed');
+    viewedLabel.innerHTML = '<input type="checkbox"' + (isStoryFileViewed(filePath, oldStarts, pid) ? ' checked' : '') + '><span>Viewed</span>';
     viewedLabel.addEventListener('click', function(e) { e.stopPropagation(); });
+    viewedLabel.querySelector('input').disabled = !!(file && file.lazy) || !storyGroupMarkable(filePath, oldStarts, pid);
     viewedLabel.querySelector('input').addEventListener('change', function () {
-      toggleViewed(filePath);
-      if (file && file.viewed && section.open) section.open = false;
-      section.classList.toggle('viewed', !!(file && file.viewed));
+      setStoryFileViewed(filePath, oldStarts, pid, this.checked);
+      const viewed = isStoryFileViewed(filePath, oldStarts, pid);
+      this.checked = viewed;
+      saveViewedState();
+      updateViewedCount();
+      updateTreeViewedState();
+      if (viewed && section.open) {
+        revealStorySectionTop(section);
+        section.open = false;
+      }
+      section.classList.toggle('viewed', viewed);
       renderStoryRail();
       updateStoryMarkButton(page);
     });
@@ -10804,7 +11833,7 @@
         replacement.open = section.open;
         cleanUpStoryDiffs(section);
         section.replaceWith(replacement);
-        renderMermaidBlocks();
+        renderPluggableBlocks();
         rebuildNavList();
         applyHideResolved();
         renderStoryRail();
@@ -10842,7 +11871,7 @@
     const replacement = renderStoryFileGroup(page, filePath, page.refsByFile.get(filePath), storySupportReasonForFile(page, filePath));
     cleanUpStoryDiffs(oldSection);
     oldSection.replaceWith(replacement);
-    renderMermaidBlocks();
+    renderPluggableBlocks();
     rebuildNavList();
     applyHideResolved();
     renderStoryRail();
@@ -10850,12 +11879,15 @@
     return true;
   }
 
-  function markPageViewed(page, viewed) {
-    page.refsByFile.forEach(function (_starts, filePath) {
+  async function markPageViewed(page, viewed) {
+    // A file that fails to load stays lazy, and setStoryFileViewed skips it.
+    await Promise.allSettled(Array.from(page.refsByFile.keys()).map(function(filePath) {
+      return ensureStoryLazyFile(getFileByPath(filePath));
+    }));
+    page.refsByFile.forEach(function (starts, filePath) {
+      setStoryFileViewed(filePath, starts, storyPageId(page), viewed);
       const file = getFileByPath(filePath);
-      if (!file || file.viewed === viewed) return;
-      file.viewed = viewed;
-      if (viewed) file.collapsed = true;
+      if (viewed && file && !file.lazy) file.collapsed = true;
     });
     saveViewedState();
     updateViewedCount();
@@ -10880,7 +11912,7 @@
       renderStoryPage(storyPageById(storyView));
     }
     renderStoryRail();
-    renderMermaidBlocks();
+    renderPluggableBlocks();
     rebuildNavList();
     applyHideResolved();
     // Keep active rail row visible. Instant: a smooth scroll here outlives the
@@ -11108,6 +12140,38 @@
     return false;
   }
 
+  // A story file group read from its middle (header stuck under the pane's
+  // top edge) is brought back into view before it collapses, so the next
+  // file starts at the top.
+  function revealStorySectionTop(section) {
+    const pane = document.getElementById('storyPane');
+    const top = pane ? pane.getBoundingClientRect().top : 0;
+    if (section.getBoundingClientRect().top < top) section.scrollIntoView({ behavior: 'instant' });
+  }
+
+  // toggle_viewed / toggle_collapse in a story chapter (no line focus
+  // there): the file group under the mouse, else the one taking up most of
+  // the pane. Clicking its Viewed checkbox or header runs the same handlers
+  // as a real click (rail, chapter mark, scroll back to a collapsed header).
+  function toggleStoryFile(e, markViewed) {
+    const pane = document.getElementById('storyPane');
+    if (!pane) return;
+    let group = pointerHovers ? pane.querySelector('.crit-story-file-group:hover') : null;
+    if (!group) {
+      const view = pane.getBoundingClientRect();
+      let best = 0;
+      pane.querySelectorAll('.crit-story-file-group').forEach(function(g) {
+        const r = g.getBoundingClientRect();
+        const shown = Math.min(r.bottom, view.bottom) - Math.max(r.top, view.top);
+        if (shown > best) { best = shown; group = g; }
+      });
+    }
+    const target = group && group.querySelector(markViewed ? '.file-header-viewed input' : '.crit-story-file-header');
+    if (!target) return;
+    e.preventDefault();
+    target.click();
+  }
+
   function storyActive() { return !!storyState && document.body.classList.contains('crit-story-active'); }
 
   // Handle a keydown when story view is active. Returns true if consumed.
@@ -11255,12 +12319,7 @@
               const start = parseInt(el.dataset.startLine);
               const end = parseInt(el.dataset.endLine);
               if (start >= anchor.startLine && end <= anchor.endLine) {
-                el.classList.remove('comment-card-highlight');
-                void el.offsetWidth;
-                el.classList.add('comment-card-highlight');
-                el.addEventListener('animationend', function () {
-                  el.classList.remove('comment-card-highlight');
-                }, { once: true });
+                restartFlash(el, 'comment-card-highlight');
               }
             });
             return Promise.resolve();

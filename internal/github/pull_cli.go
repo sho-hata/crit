@@ -18,12 +18,17 @@ type pullFlags struct {
 	outputDir        string
 	configuredOutput string
 	sessionID        string
+	viewed           bool
 }
 
 func parsePullFlags(args []string) (pullFlags, error) {
 	var f pullFlags
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--viewed" {
+			f.viewed = true
+			continue
+		}
 		if arg == "--output" || arg == "-o" {
 			if i+1 >= len(args) {
 				fmt.Fprintf(os.Stderr, "Error: %s requires a value\n", arg)
@@ -43,11 +48,11 @@ func parsePullFlags(args []string) (pullFlags, error) {
 			continue
 		}
 		if f.spec != "" {
-			fmt.Fprintf(os.Stderr, "Usage: crit pull [--session <id>] [--output <dir>] [number|url]\n")
+			fmt.Fprintf(os.Stderr, "Usage: crit pull [--session <id>] [--viewed] [--output <dir>] [number|url]\n")
 			return f, clicmd.ExitError{Code: 1, Err: errors.New("exit")}
 		}
 		if _, err := ParsePRSpec(arg); err != nil {
-			fmt.Fprintf(os.Stderr, "Usage: crit pull [--session <id>] [--output <dir>] [number|url]\n")
+			fmt.Fprintf(os.Stderr, "Usage: crit pull [--session <id>] [--viewed] [--output <dir>] [number|url]\n")
 			return f, clicmd.ExitError{Code: 1, Err: errors.New("exit")}
 		}
 		f.spec = arg
@@ -118,53 +123,76 @@ func RunPull(args []string) error { //nolint:gocyclo
 		threadResolved = nil
 	}
 
+	var remoteViewed prViewedState
+	if f.viewed {
+		if remoteViewed, err = fetchPRViewedState(id); err != nil {
+			return err
+		}
+	}
+
 	critPath, err := review.ResolveCommandReviewPathWithSession(f.sessionID, f.outputDir, f.configuredOutput)
 	if err != nil {
 		return err
 	}
+	cj := readCritJSONForPull(critPath)
+	if shouldRedirectReviewForPR(f.spec != "", f.sessionID != "" || f.outputDir != "" || f.configuredOutput != "") {
+		if altPath, _, ok := review.RedirectReviewPathForPR(id.Number, cj.Branch, critPath); ok {
+			critPath = altPath
+		}
+	}
+
+	// Probe before taking the review lock: it makes an HTTP call to the daemon.
+	daemonFocus := session.ProbeDaemonFocus()
+	var added, viewedAdded int
+	err = session.WithReviewWriteLock(critPath, func() error {
+		cj := readCritJSONForPull(critPath)
+		if cj.Files == nil {
+			cj.Files = make(map[string]session.CritJSONFile)
+			cj.Branch = vcs.CurrentBranch()
+			cfg := config.LoadConfig("")
+			base := cfg.BaseBranch
+			if base == "" {
+				base = vcs.DefaultBaseRef()
+			}
+			cj.BaseRef, _ = vcs.MergeBase(base)
+			cj.ReviewRound = 1
+		}
+		if err := checkGitHubSyncAllowed(cj, "crit pull"); err != nil {
+			return err
+		}
+		added = MergeGHCommentsScoped(&cj, ghComments, session.PullScopeFor(daemonFocus, &cj), threadResolved)
+		if f.viewed {
+			viewedAdded = mergeRemoteViewed(&cj, id, remoteViewed)
+		}
+		if added == 0 && viewedAdded == 0 {
+			return nil
+		}
+		return review.SaveCritJSON(critPath, cj)
+	})
+	if err != nil {
+		return err
+	}
+	if f.viewed {
+		fmt.Printf("Pulled %d viewed files from PR #%d\n", viewedAdded, id.Number)
+	}
+	if added == 0 {
+		fmt.Printf("No new inline comments found on PR #%d\n", id.Number)
+		return nil
+	}
+
+	fmt.Printf("Pulled %d comments from PR #%d into %s\n", added, id.Number, critPath)
+	fmt.Println("Run 'crit' to view them in the browser.")
+	return nil
+}
+
+// readCritJSONForPull reads the review file, or returns an empty one when it
+// is missing or invalid (warning about the latter).
+func readCritJSONForPull(critPath string) session.CritJSON {
 	var cj session.CritJSON
 	if data, readErr := session.ReadFileShared(session.ReviewPathsFor(critPath).Review); readErr == nil {
 		if jsonErr := json.Unmarshal(data, &cj); jsonErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: existing review file is invalid, starting fresh: %v\n", jsonErr)
 		}
 	}
-
-	if shouldRedirectReviewForPR(f.spec != "", f.sessionID != "" || f.outputDir != "" || f.configuredOutput != "") {
-		if altPath, altCJ, ok := review.RedirectReviewPathForPR(id.Number, cj.Branch, critPath); ok {
-			critPath = altPath
-			cj = altCJ
-		}
-	}
-
-	if cj.Files == nil {
-		cj.Files = make(map[string]session.CritJSONFile)
-		cj.Branch = vcs.CurrentBranch()
-		cfg := config.LoadConfig("")
-		base := cfg.BaseBranch
-		if base == "" {
-			base = vcs.DefaultBaseRef()
-		}
-		cj.BaseRef, _ = vcs.MergeBase(base)
-		cj.ReviewRound = 1
-	}
-
-	if err := checkGitHubSyncAllowed(cj, "crit pull"); err != nil {
-		return err
-	}
-
-	scope := session.ResolvePullScope(&cj)
-	added := MergeGHCommentsScoped(&cj, ghComments, scope, threadResolved)
-
-	if added == 0 {
-		fmt.Printf("No new inline comments found on PR #%d\n", id.Number)
-		return nil
-	}
-
-	if err := review.SaveCritJSON(critPath, cj); err != nil {
-		return err
-	}
-
-	fmt.Printf("Pulled %d comments from PR #%d into %s\n", added, id.Number, critPath)
-	fmt.Println("Run 'crit' to view them in the browser.")
-	return nil
+	return cj
 }

@@ -19,10 +19,13 @@
 // Dependencies (window.crit.* namespaces read):
 //   - crit.shared (escapeHTML)
 //   - crit.codeHighlight (Shiki via Pierre's worker pool — peek highlighting)
+//   - crit.commentHtml (sanitize, when loaded) and window.markdownit, for
+//     hover documentation (renderHoverMarkdown)
 // UI adapters are injected via init(opts) so pure logic stays testable:
-//   - opts.renderMarkdown(text) -> safe HTML for hover markdown
 //   - opts.jumpToLocation(loc)  -> Promise<boolean>; true when the app
 //     revealed the location inside the review UI
+//   - opts.canJump(loc)         -> whether jumpToLocation is worth asking for
+//     this location (default: loc.in_session; the file viewer says in_repo)
 //   - opts.mountLineWidget(path, line, el) -> Promise<boolean>; attaches el
 //     under that line (a Pierre annotation); false when the line is not shown
 //   - opts.unmountLineWidget(el) -> detaches it again
@@ -98,6 +101,11 @@
     if (codeEl.dataset.deletions !== undefined) return null;
     if (codeEl.dataset.unified !== undefined && lineEl.dataset.lineType === 'change-deletion') return null;
     return { lineEl: lineEl, path: host.dataset.critPath, line: parseInt(lineEl.dataset.line, 10) || 0 };
+  }
+
+  function viewURL(path, line) {
+    const url = '/view?path=' + encodeURIComponent(path);
+    return line > 0 ? url + '&line=' + line : url;
   }
 
   function findHunkForLine(hunks, line) {
@@ -210,6 +218,22 @@
 
   function esc(s) {
     return window.crit.shared.escapeHTML(s);
+  }
+
+  // Hover documentation comes from a language server, which under range
+  // focus analyzes code the reviewer has not vetted, so it is rendered with
+  // raw HTML escaped and images off: an <img src> pointing off the machine
+  // would make the reviewer's browser carry out whatever the server could
+  // read, past the sandbox that keeps the server itself offline.
+  const hoverMd = typeof window !== 'undefined' && typeof window.markdownit === 'function'
+    ? window.markdownit({ html: false, linkify: true }).disable('image')
+    : null;
+
+  function renderHoverMarkdown(text) {
+    if (!hoverMd) return '<pre>' + esc(text || '') + '</pre>';
+    const html = hoverMd.render(text || '');
+    const commentHtml = typeof window !== 'undefined' && window.crit && window.crit.commentHtml;
+    return commentHtml ? commentHtml.sanitize(html) : html;
   }
 
   // Every rendering of a code file is Pierre's: split and unified diffs and
@@ -432,7 +456,7 @@
           hideTooltip();
           return;
         }
-        showTooltip(st.renderMarkdown(data.contents), x, y, data.local_env ? st.localEnvText : '');
+        showTooltip(renderHoverMarkdown(data.contents), x, y, data.local_env ? st.localEnvText : '');
       })
       .catch(function (err) {
         clearTimeout(loadingTimer);
@@ -523,7 +547,7 @@
   // The peek fallback works because the server attaches a peek whenever the
   // file is readable.
   function resolveJump(loc) {
-    Promise.resolve(loc.in_session ? st.jumpToLocation(loc) : false)
+    Promise.resolve(st.canJump(loc) ? st.jumpToLocation(loc) : false)
       .then(function (handled) {
         if (!handled) showPeek([loc], 0);
       });
@@ -626,7 +650,7 @@
       const open = document.createElement('a');
       open.className = 'lsp-peek-open';
       open.textContent = st.openFullText;
-      open.href = '/files/' + loc.path.split('/').map(encodeURIComponent).join('/');
+      open.href = viewURL(loc.path, loc.line);
       open.target = '_blank';
       open.rel = 'noopener';
       actions.appendChild(open);
@@ -692,7 +716,7 @@
     const url = '/api/lsp/definition?path=' + encodeURIComponent(from.path) +
       '&line=' + lineNo + '&char=' + char;
     fetchLocations(url, function (locs) {
-      if (locs.length === 1 && locs[0].in_session) {
+      if (locs.length === 1 && st.canJump(locs[0])) {
         Promise.resolve(st.jumpToLocation(locs[0])).then(function (handled) {
           if (handled) {
             hidePeek();
@@ -840,7 +864,7 @@
       const open = document.createElement('a');
       open.className = 'lsp-peek-open';
       open.textContent = st.openFullText;
-      open.href = '/files/' + loc.path.split('/').map(encodeURIComponent).join('/');
+      open.href = viewURL(loc.path, loc.line);
       open.target = '_blank';
       open.rel = 'noopener';
       actions.appendChild(open);
@@ -887,7 +911,7 @@
   // Targets outside the review are already shown in the preview pane.
   function openRef(idx) {
     const loc = st.refsLocs && st.refsLocs[idx];
-    if (!loc || !loc.in_session) return;
+    if (!loc || !st.canJump(loc)) return;
     Promise.resolve(st.jumpToLocation(loc)).then(function (handled) {
       if (!handled) return;
       hideRefs();
@@ -1021,8 +1045,8 @@
   function init(opts) {
     if (st) return;
     st = {
-      renderMarkdown: opts.renderMarkdown,
       jumpToLocation: opts.jumpToLocation,
+      canJump: opts.canJump || function (loc) { return !!loc.in_session; },
       mountLineWidget: opts.mountLineWidget || null,
       unmountLineWidget: opts.unmountLineWidget || null,
       languageForPath: opts.languageForPath || null,
@@ -1071,8 +1095,24 @@
     document.addEventListener('scroll', onScroll, true);
   }
 
+  // lsp_extensions follows the focus: the server offers no language for a
+  // review it cannot run one on. An empty list switches every lookup off.
+  // What is pending or showing was asked under the previous focus: an
+  // armed hover would still send its request, and a definition in flight
+  // would jump to a location in files the page no longer lists.
+  function setExtensions(extensions) {
+    if (!st) return;
+    st.extRe = makeExtensionMatcher(extensions);
+    clearTimeout(st.hoverTimer);
+    hideTooltip();
+    hidePeek();
+    hideRefs();
+    st.defSeq++;
+  }
+
   const api = {
     init: init,
+    setExtensions: setExtensions,
     serverErrorText: serverErrorText,
     textOffsetIn: textOffsetIn,
     lineHitFromPath: lineHitFromPath,
@@ -1083,8 +1123,10 @@
     wordAt: wordAt,
     symbolRange: symbolRange,
     makeExtensionMatcher: makeExtensionMatcher,
+    viewURL: viewURL,
     composeTooltip: composeTooltip,
     peekNoteHTML: peekNoteHTML,
+    renderHoverMarkdown: renderHoverMarkdown,
   };
   if (typeof window !== 'undefined') {
     window.crit = window.crit || {};

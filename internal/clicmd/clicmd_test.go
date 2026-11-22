@@ -72,8 +72,7 @@ func TestRequireFlagValue(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when value missing")
 	}
-	var exitErr ExitError
-	if !errors.As(err, &exitErr) {
+	if _, ok := errors.AsType[ExitError](err); !ok {
 		t.Fatalf("expected ExitError, got %T", err)
 	}
 }

@@ -167,7 +167,7 @@ func TestRender_ShowsLabelsDetailsAndNotes(t *testing.T) {
 
 func TestRender_ScrollsLongListsAroundCursor(t *testing.T) {
 	labels := make([]string, 0, maxVisible+5)
-	for i := 0; i < maxVisible+5; i++ {
+	for i := range maxVisible + 5 {
 		labels = append(labels, "item-"+string(rune('a'+i)))
 	}
 
@@ -216,7 +216,7 @@ func TestRender_TruncatesToTerminalWidth(t *testing.T) {
 		t.Fatalf("err = %v, want ErrCancelled", err)
 	}
 
-	for _, line := range strings.Split(out.String(), "\r\n") {
+	for line := range strings.SplitSeq(out.String(), "\r\n") {
 		if visible := utf8.RuneCountInString(stripANSI(line)); visible > narrow.columns {
 			t.Errorf("line is %d columns wide, want <= %d:\n%q", visible, narrow.columns, line)
 		}

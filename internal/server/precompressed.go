@@ -67,7 +67,7 @@ func servePrecompressed(assets fs.FS) http.Handler {
 }
 
 func acceptsGzip(r *http.Request) bool {
-	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+	for part := range strings.SplitSeq(r.Header.Get("Accept-Encoding"), ",") {
 		enc, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		if !strings.EqualFold(strings.TrimSpace(enc), "gzip") {
 			continue

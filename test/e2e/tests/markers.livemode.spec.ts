@@ -40,6 +40,30 @@ test.describe('live-mode markers — rendering on current pathname', () => {
     await expect(getIframe(page).locator('.crit-live-marker')).toHaveCount(2);
     await expect(getIframe(page).locator('#crit-marker-root')).toBeAttached();
   });
+
+  test('a pin on an SVG element resolves to that element', async ({ page }) => {
+    // The <rect> has no id, so the pin anchors to #svg-drawing: selector
+    // "#svg-drawing > rect:nth-of-type(1)", stored tag chain ("SVG", "RECT").
+    // The chain is uppercase, while SVG elements in an HTML page report
+    // lowercase tag names. The pin must still resolve (a marker element exists
+    // either way, so check the agent's verdict).
+    await waitForAgentReady(page);
+    await setIframeRoute(page, '/svg');
+    await expect(getIframe(page).locator('#svg-title')).toBeVisible();
+    await openPinComposerNoNav(page, '#svg-drawing rect');
+    await page.locator('.crit-live-composer-body').fill('Pin on an SVG rect');
+    await page.locator('.crit-live-composer-save').click();
+    await expect(page.locator('.crit-live-composer')).toHaveCount(0);
+
+    await expect(getIframe(page).locator('.crit-live-marker')).toHaveCount(1);
+    const statuses = () => page.evaluate(() => {
+      const log = (window as unknown as { __critLiveMessages?: { type: string; status?: string }[] })
+        .__critLiveMessages || [];
+      return log.filter((m) => m.type === 'pin-resolution-result').map((m) => m.status);
+    });
+    await expect.poll(statuses).toContain('resolved');
+    expect(await statuses()).not.toContain('drifted');
+  });
 });
 
 test.describe('live-mode markers — MutationObserver reposition', () => {
@@ -119,13 +143,20 @@ test.describe('live-mode markers — MutationObserver reposition', () => {
     await page.locator('.crit-live-composer-save').click();
     await expect(page.locator('.crit-live-composer')).toHaveCount(0);
 
-    // Reset chrome message log AFTER initial set-pins resolution chatter has
-    // settled, then thrash attributes. The MutationObserver subscribes to
-    // childList + subtree only (attributes:false in crit-agent.js), so no
-    // pin-resolution-result should be posted in response.
+    // The MutationObserver subscribes to childList + subtree only
+    // (attributes:false in crit-agent.js), so thrashing attributes must post no
+    // pin-resolution-result. Saving the pin posts some of its own, and the last
+    // can land well after the marker shows, so clear the log once it goes quiet.
     await expect(getIframe(page).locator('.crit-live-marker')).toHaveCount(1);
-    // Wait briefly for any pending resolution to drain into the message log,
-    // then clear the log.
+    const logLength = () => page.evaluate(() =>
+      ((window as unknown as { __critLiveMessages?: unknown[] }).__critLiveMessages || []).length);
+    let lastLength = -1;
+    await expect.poll(async () => {
+      const length = await logLength();
+      const quiet = length === lastLength;
+      lastLength = length;
+      return quiet;
+    }, { timeout: 10_000, intervals: [500] }).toBe(true);
     await page.evaluate(() => {
       (window as unknown as { __critLiveMessages?: unknown[] }).__critLiveMessages = [];
     });
@@ -136,21 +167,12 @@ test.describe('live-mode markers — MutationObserver reposition', () => {
         t.classList.toggle('thrash-' + (i % 3));
       }
     });
-    // Drive a positive event AFTER the thrash to confirm the message-pump
-    // has drained: dispatch a no-op postMessage round-trip and wait for it
-    // to land. If a pin-resolution-result was going to fire from the
-    // thrash, it would already be in the log by the time this canary
-    // arrives. expect.poll on a stable count is safer than waitForTimeout.
-    await expect.poll(
-      () => page.evaluate(() => {
-        const log = (window as unknown as { __critLiveMessages?: { type: string }[] })
-          .__critLiveMessages || [];
-        return log.filter((m) => m.type === 'pin-resolution-result').length;
-      }),
-      // Three consecutive zero reads across the polling window prove the
-      // batcher genuinely produced no resolves — not "we read it too early".
-      { timeout: 1500, intervals: [200, 300, 500, 500] },
-    ).toBe(0);
+    // The batcher drains on the next frame. Let two pass in the iframe, then
+    // give any message it posted time to reach the chrome.
+    await getIframe(page).locator('body').evaluate(() => new Promise<void>((done) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => done()));
+    }));
+    await page.waitForTimeout(300);
     const resolveCount = await page.evaluate(() => {
       const log = (window as unknown as { __critLiveMessages?: { type: string }[] })
         .__critLiveMessages || [];

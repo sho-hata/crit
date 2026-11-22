@@ -1,0 +1,62 @@
+/* style-view.css — /view file viewer (crit-view.js). <html class="crit-mode-view">
+   hides the code-review controls. Class prefix: .crit-view-*. */
+
+.crit-mode-view .file-tree-panel,
+.crit-mode-view #fileTreeResizer,
+.crit-mode-view #commentsPanelResizer,
+.crit-mode-view .comments-panel,
+.crit-mode-view .pr-panel,
+.crit-mode-view .toc,
+.crit-mode-view #reviewConversation,
+.crit-mode-view #storyRoot,
+.crit-mode-view #mobileFilePickerBar,
+.crit-mode-view .compare-rail,
+.crit-mode-view #fileTreeToggle,
+.crit-mode-view #updateBtn,
+.crit-mode-view #headerNotify,
+.crit-mode-view .header-right { display: none !important; }
+
+.crit-mode-view .main-content {
+  --crit-review-pad-top: 0px;
+  --crit-review-pad-bottom: 80px;
+}
+
+.crit-mode-view #filesContainer {
+  padding: 0;
+}
+
+.crit-view-path {
+  font-family: var(--crit-font-mono);
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sticks to #filesContainer, the scroll pane, not the window. */
+.crit-view-file-header {
+  /* stylelint-disable-next-line declaration-block-no-duplicate-properties */
+  position: -webkit-sticky;
+  position: sticky;
+  top: 0;
+  z-index: 80;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 24px;
+  background: var(--crit-editor-bg-elevated);
+  border-bottom: 1px solid var(--crit-border);
+  font-family: var(--crit-font-mono);
+  font-size: 0.85rem;
+}
+
+.crit-view-file-lines {
+  color: var(--crit-editor-fg-muted);
+  font-size: 0.8rem;
+}
+
+.crit-view-message {
+  padding: 40px;
+  text-align: center;
+  color: var(--crit-editor-fg-muted);
+}
