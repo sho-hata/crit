@@ -108,6 +108,8 @@ type Language struct {
 	// Env adds server environment, used to steer a tool's writes into
 	// ws.Scratch (GOCACHE). It may not set PATH, HOME or the temp dirs.
 	Env func(ws Workspace) []string
+	// Args appends server argv that names a directory under ws.Scratch.
+	Args func(ws Workspace) []string
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
 	// per scratch in this process, in the background after a server spawns
@@ -212,6 +214,19 @@ var languages = []*Language{
 		Env:            nodeEnv,
 		LocalEnv:       true,
 		ExtraRoots:     phpExtraRoots,
+	},
+	{
+		Name: "dart",
+		// --no-plugins: the analysis server otherwise runs the analyzer
+		// plugins a repo names in analysis_options.yaml — fetched with
+		// `dart pub`, then executed in-process as isolates.
+		Command: []string{"dart", "language-server", "--client-id=crit", "--no-plugins"},
+		IDByExt: map[string]string{"dart": "dart"},
+		// pubspec.yaml marks the package root (its SDK constraint picks the
+		// language version).
+		SparsePatterns: []string{"*.dart", "pubspec.yaml", "analysis_options.yaml"},
+		Args:           dartArgs,
+		ExtraRoots:     dartExtraRoots,
 	},
 }
 
@@ -382,16 +397,7 @@ func npmGlobalRoots(root string, run Run) []PeekRoot {
 // this is the binary that will run and not a copy in the repository's
 // node_modules/.bin.
 func serverNodeModules(name, tree string) string {
-	var bin string
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if !filepath.IsAbs(dir) || (tree != "" && sandbox.Beneath(dir, tree)) {
-			continue
-		}
-		if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
-			bin = p
-			break
-		}
-	}
+	bin := serverBinary(name, tree)
 	if bin == "" {
 		return ""
 	}
@@ -408,6 +414,18 @@ func serverNodeModules(name, tree string) string {
 	}
 	if dir := filepath.Join(filepath.Dir(real), "node_modules"); isDir(filepath.Join(dir, name)) {
 		return dir
+	}
+	return ""
+}
+
+func serverBinary(name, tree string) string {
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if !filepath.IsAbs(dir) || (tree != "" && sandbox.Beneath(dir, tree)) {
+			continue
+		}
+		if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+			return p
+		}
 	}
 	return ""
 }
