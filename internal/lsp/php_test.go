@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -105,5 +106,30 @@ func TestPHPExtraRootsVendor(t *testing.T) {
 	}
 	if got == nil || got.Path != vendor || !got.LocalEnv {
 		t.Errorf("$VENDOR root = %+v, want %s marked LocalEnv", got, vendor)
+	}
+}
+
+func TestPHPInitOptionsKeepTheIndexInTheScratch(t *testing.T) {
+	t.Parallel()
+	lang := LanguageForPath("index.php")
+	if lang == nil || lang.InitOptions == nil {
+		t.Fatal("the php language registers no InitOptions")
+	}
+	ws := Workspace{Root: t.TempDir(), Scratch: t.TempDir()}
+	opts := lang.InitOptions(ws, filepath.Join(ws.Root, "index.php"))
+	tmp := filepath.Join(ws.Scratch, "tmp")
+	for _, key := range []string{"storagePath", "globalStoragePath"} {
+		dir, _ := opts[key].(string)
+		rel, err := filepath.Rel(ws.Scratch, dir)
+		if dir == "" || err != nil || !filepath.IsLocal(rel) {
+			t.Errorf("%s = %q, want a directory under the scratch %s", key, dir, ws.Scratch)
+			continue
+		}
+		if dir == tmp || strings.HasPrefix(dir, tmp+string(filepath.Separator)) {
+			t.Errorf("%s = %q lies under tmp/, which every start empties", key, dir)
+		}
+	}
+	if a, b := opts["storagePath"], opts["globalStoragePath"]; a == b {
+		t.Errorf("storagePath and globalStoragePath are both %v", a)
 	}
 }

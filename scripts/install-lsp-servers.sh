@@ -22,6 +22,7 @@ TYPESCRIPT_VERSION=6.0.3
 PYRIGHT_VERSION=1.1.414
 TERRAFORM_LS_VERSION=0.39.0
 INTELEPHENSE_VERSION=1.18.5
+DART_VERSION=3.13.5
 JDTLS_VERSION=1.61.0
 JDTLS_TIMESTAMP=202609031315
 JDTLS_SHA256=338e7e73d61836651ba2453919a0d34fa763eb4e7c03342092309bffb8934c64
@@ -56,6 +57,17 @@ curl -fsSL -o "$tmp/SHA256SUMS" "$base/terraform-ls_${TERRAFORM_LS_VERSION}_SHA2
 (cd "$tmp" && grep " ${zip}\$" SHA256SUMS | shasum -a 256 -c -)
 unzip -o -q "$tmp/$zip" terraform-ls -d "$BIN"
 
+case "$os" in darwin) dart_os=macos ;; *) dart_os=$os ;; esac
+case "$arch" in amd64) dart_arch=x64 ;; *) dart_arch=$arch ;; esac
+dartzip="dartsdk-${dart_os}-${dart_arch}-release.zip"
+dartbase="https://storage.googleapis.com/dart-archive/channels/stable/release/${DART_VERSION}/sdk"
+curl -fsSL -o "$tmp/$dartzip" "$dartbase/$dartzip"
+curl -fsSL -o "$tmp/$dartzip.sha256sum" "$dartbase/$dartzip.sha256sum"
+(cd "$tmp" && shasum -a 256 -c "$dartzip.sha256sum")
+rm -rf "$BIN/dart-sdk"
+unzip -o -q "$tmp/$dartzip" -d "$BIN"
+ln -sf "$BIN/dart-sdk/bin/dart" "$BIN/dart"
+
 # The jdt.ls tarball unpacks flat, so it gets a dir of its own; bin/jdtls is
 # the Python launcher crit runs, and it finds the install from its own real
 # path.
@@ -80,6 +92,7 @@ typescript-language-server --version
 command -v pyright-langserver
 terraform-ls version
 command -v intelephense
+dart --version
 command -v jdtls
 java -version
 

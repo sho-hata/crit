@@ -113,13 +113,7 @@ func checkStaleReviewFolder(revDir string, de os.DirEntry, key string, cutoff ti
 		}, true
 	}
 
-	// No review.json: a snapshots sidecar or the LSP scratch of a review
-	// that was only hovered still ages by the folder's mtime. Anything
-	// else (a partial mkdir) is left alone.
-	paths := ReviewPathsFor(folder)
-	_, snapErr := os.Stat(paths.Snapshots)
-	_, scratchErr := os.Stat(paths.LSPScratch())
-	if snapErr != nil && scratchErr != nil {
+	if !ReviewPathsFor(folder).HasLeftovers() {
 		return staleReview{}, false
 	}
 	info, err := de.Info()

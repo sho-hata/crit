@@ -33,6 +33,8 @@ func TestLanguageForPath(t *testing.T) {
 		{"infra/prod.tfvars", "terraform", "terraform-vars"},
 		{"src/Http/Controller.php", "php", "php"},
 		{"templates/page.phtml", "php", "php"},
+		{"lib/src/widget.dart", "dart", "dart"},
+		{"UPPER.DART", "dart", "dart"},
 		{"src/main/java/com/example/App.java", "java", "java"},
 		{"UPPER.JAVA", "java", "java"},
 		// .hcl is shared with Packer, Nomad, Terragrunt, … and the Terraform

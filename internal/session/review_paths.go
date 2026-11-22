@@ -1,6 +1,9 @@
 package session
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
 
 // ReviewPaths derives the v4 folder layout from a review identity path.
 type ReviewPaths struct {
@@ -8,7 +11,6 @@ type ReviewPaths struct {
 	Review      string
 	Snapshots   string
 	Attachments string
-	LSPWorktree string
 }
 
 // ReviewPathsFor returns the v4 folder-form paths for a review identity.
@@ -18,7 +20,6 @@ func ReviewPathsFor(identity string) ReviewPaths {
 		Review:      filepath.Join(identity, "review.json"),
 		Snapshots:   filepath.Join(identity, "snapshots.json"),
 		Attachments: filepath.Join(identity, "attachments"),
-		LSPWorktree: filepath.Join(identity, "lsp-worktree"),
 	}
 }
 
@@ -26,6 +27,15 @@ func ReviewPathsFor(identity string) ReviewPaths {
 // Derived on demand: ReviewPathsFor runs on every save and load, which
 // never need it.
 func (p ReviewPaths) LSPScratch() string { return filepath.Join(p.Folder, "lsp-scratch") }
+
+func (p ReviewPaths) HasLeftovers() bool {
+	for _, path := range []string{p.Snapshots, p.LSPScratch()} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
 
 // reviewLockPath is the review write lock file for a review identity. It is
 // not a ReviewPaths field: ReviewPathsFor runs on every review save and load,
