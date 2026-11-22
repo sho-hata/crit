@@ -183,12 +183,7 @@ func TestClientInitializeAndHover(t *testing.T) {
 		t.Errorf("Hover = %q, want %q", got, "func Foo()")
 	}
 	waitFor(t, "initialized notification", func() bool {
-		for _, m := range fs.notificationMethods() {
-			if m == "initialized" {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(fs.notificationMethods(), "initialized")
 	})
 }
 

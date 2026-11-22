@@ -24,7 +24,6 @@ type serverFlagSet struct {
 	scopeSpec   string
 	remoteFiles bool
 	liveOrigin  string
-	liveCookie  string
 	previewFile string
 }
 
@@ -50,7 +49,6 @@ func parseServerFlags(args []string) serverFlagSet {
 	scopeSpec := fs.String("scope", "", "")
 	remoteFiles := fs.Bool("remote", false, "")
 	liveOrigin := fs.String("live-origin", "", "")
-	liveCookie := fs.String("live-cookie", "", "")
 	previewFile := fs.String("preview-file", "", "")
 	// Keep in sync with the fs.Bool/fs.BoolVar registrations above.
 	args = clicmd.ReorderFlagsFirst(args, map[string]bool{
@@ -82,7 +80,6 @@ func parseServerFlags(args []string) serverFlagSet {
 		scopeSpec:   *scopeSpec,
 		remoteFiles: *remoteFiles,
 		liveOrigin:  *liveOrigin,
-		liveCookie:  *liveCookie,
 		previewFile: *previewFile,
 	}
 }

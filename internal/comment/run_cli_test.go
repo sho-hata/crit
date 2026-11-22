@@ -32,8 +32,7 @@ func TestRunComment_MissingArgs(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error")
 	}
-	var exitErr clicmd.ExitError
-	if !errors.As(err, &exitErr) {
+	if _, ok := errors.AsType[clicmd.ExitError](err); !ok {
 		t.Fatalf("expected ExitError, got %T: %v", err, err)
 	}
 }
@@ -259,8 +258,7 @@ func TestRunComment_ReplyMissingBody(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error")
 	}
-	var exitErr clicmd.ExitError
-	if !errors.As(err, &exitErr) {
+	if _, ok := errors.AsType[clicmd.ExitError](err); !ok {
 		t.Fatalf("expected ExitError, got %T", err)
 	}
 }

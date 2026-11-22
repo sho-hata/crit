@@ -105,7 +105,7 @@ func resolveStatusReviewPath(cwd, branch string, matchedSession *daemon.SessionE
 }
 
 func printStatusJSON(vcsName, branch, revPath string, revExists bool, selected *daemon.SessionEntry, sessions []daemon.SessionEntry, sessionKeys []string, ambiguous bool) {
-	result := map[string]interface{}{
+	result := map[string]any{
 		"vcs":    vcsName,
 		"branch": branch,
 	}
@@ -117,7 +117,7 @@ func printStatusJSON(vcsName, branch, revPath string, revExists bool, selected *
 		result["review_file"] = ReviewPathsFor(revPath).Review
 		result["review_file_exists"] = revExists
 	}
-	daemonInfo := map[string]interface{}{"running": false}
+	daemonInfo := map[string]any{"running": false}
 	if selected != nil {
 		daemonInfo["running"] = true
 		daemonInfo["pid"] = selected.PID
@@ -134,13 +134,13 @@ func printStatusJSON(vcsName, branch, revPath string, revExists bool, selected *
 	fmt.Println(string(data))
 }
 
-func statusSessionsJSON(sessions []daemon.SessionEntry, keys []string) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0, len(sessions))
+func statusSessionsJSON(sessions []daemon.SessionEntry, keys []string) []map[string]any {
+	result := make([]map[string]any, 0, len(sessions))
 	for i, entry := range sessions {
 		if i >= len(keys) {
 			break
 		}
-		result = append(result, map[string]interface{}{
+		result = append(result, map[string]any{
 			"id":          keys[i],
 			"args":        entry.Args,
 			"branch":      entry.Branch,
@@ -152,7 +152,7 @@ func statusSessionsJSON(sessions []daemon.SessionEntry, keys []string) []map[str
 	return result
 }
 
-func addReviewStats(result map[string]interface{}, revPath string) {
+func addReviewStats(result map[string]any, revPath string) {
 	data, err := os.ReadFile(ReviewPathsFor(revPath).Review)
 	if err != nil {
 		return

@@ -52,7 +52,7 @@ func parseSaplingDiffStat(output string) map[string]NumstatEntry {
 		return result
 	}
 
-	for _, line := range strings.Split(trimmed, "\n") {
+	for line := range strings.SplitSeq(trimmed, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if isSummaryLine(line) {
 			continue

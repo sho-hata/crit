@@ -751,6 +751,88 @@ func TestRequestShutdown(t *testing.T) {
 	}
 }
 
+func TestStopForSignal(t *testing.T) {
+	stopping := func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"status": "stopping"})
+	}
+	tests := []struct {
+		name         string
+		handler      http.HandlerFunc
+		wantSignaled bool
+	}{
+		{name: "daemon stops over HTTP", handler: stopping, wantSignaled: false},
+		{
+			name: "another daemon on the port",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "pid does not match this daemon", http.StatusConflict)
+			},
+			wantSignaled: false,
+		},
+		{name: "older daemon without the endpoint", handler: http.NotFound, wantSignaled: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(tt.handler)
+			defer srv.Close()
+			port, _ := strconv.Atoi(srv.URL[len("http://127.0.0.1:"):])
+
+			var signaledPID int
+			origTerminate := terminateProc
+			terminateProc = func(proc *os.Process) error {
+				signaledPID = proc.Pid
+				return nil
+			}
+			t.Cleanup(func() { terminateProc = origTerminate })
+
+			StopForSignal(SessionEntry{PID: os.Getpid(), Port: port})
+
+			if gotSignaled := signaledPID == os.Getpid(); gotSignaled != tt.wantSignaled {
+				t.Errorf("daemon signaled = %v, want %v", gotSignaled, tt.wantSignaled)
+			}
+		})
+	}
+}
+
+func TestStopOnSignal_StopsDaemonThenExits(t *testing.T) {
+	shutdownRequested := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/shutdown" {
+			shutdownRequested <- struct{}{}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"status": "stopping"})
+	}))
+	defer srv.Close()
+	port, _ := strconv.Atoi(srv.URL[len("http://127.0.0.1:"):])
+
+	var sigCh chan<- os.Signal
+	var registered []os.Signal
+	exitCode := make(chan int, 1)
+	origNotify, origExit := notifySignals, exitClient
+	notifySignals = func(c chan<- os.Signal, sigs ...os.Signal) { sigCh, registered = c, sigs }
+	exitClient = func(code int) { exitCode <- code }
+	t.Cleanup(func() { notifySignals, exitClient = origNotify, origExit })
+
+	StopOnSignal(SessionEntry{PID: os.Getpid(), Port: port}, os.Interrupt)
+	if len(registered) != 1 || registered[0] != os.Interrupt {
+		t.Fatalf("registered signals = %v, want [%v]", registered, os.Interrupt)
+	}
+	sigCh <- os.Interrupt
+
+	select {
+	case <-shutdownRequested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon was not asked to shut down")
+	}
+	select {
+	case code := <-exitCode:
+		if code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("client did not exit")
+	}
+}
+
 func TestFindSessionForCWDBranch_MatchesByBranch(t *testing.T) {
 	home := t.TempDir()
 	testutil.SetHome(t, home)
@@ -1304,7 +1386,7 @@ func TestPrepareDaemonCmd_KeepsNewLogAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, nil, "")
+	_, readEnd, writeEnd, logFile, err := prepareDaemonCmd(key, nil, "", "")
 	if err != nil {
 		t.Fatalf("prepareDaemonCmd: %v", err)
 	}
@@ -1330,7 +1412,7 @@ func TestSetupDaemonCmd_WorkingDirectory(t *testing.T) {
 
 	t.Run("explicit directory", func(t *testing.T) {
 		want := t.TempDir()
-		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("explicitdirxx", nil, want)
+		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("explicitdirxx", nil, want, "")
 		if err != nil {
 			t.Fatalf("setupDaemonCmd: %v", err)
 		}
@@ -1341,7 +1423,7 @@ func TestSetupDaemonCmd_WorkingDirectory(t *testing.T) {
 	})
 
 	t.Run("empty directory inherits ours", func(t *testing.T) {
-		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("inheriteddirx", nil, "")
+		cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("inheriteddirx", nil, "", "")
 		if err != nil {
 			t.Fatalf("setupDaemonCmd: %v", err)
 		}
@@ -1354,6 +1436,58 @@ func TestSetupDaemonCmd_WorkingDirectory(t *testing.T) {
 			t.Errorf("cmd.Dir = %q, want the current directory %q", cmd.Dir, wd)
 		}
 	})
+}
+
+func TestSetupDaemonCmd_LiveCookieEnv(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+	if err := os.MkdirAll(filepath.Join(home, ".crit", "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// An inherited value must never reach a daemon on its own.
+	t.Setenv(LiveCookieEnv, "inherited=1")
+
+	tests := []struct {
+		name       string
+		liveCookie string
+		wantEnv    []string
+	}{
+		{name: "cookie passed through env", liveCookie: "sess=secret", wantEnv: []string{LiveCookieEnv + "=sess=secret"}},
+		{name: "no cookie drops inherited value", liveCookie: "", wantEnv: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, readEnd, writeEnd, logFile, err := setupDaemonCmd("livecookiexx", []string{"--live-origin", "http://localhost:3000"}, "", tt.liveCookie)
+			if err != nil {
+				t.Fatalf("setupDaemonCmd: %v", err)
+			}
+			defer closeAll(readEnd, writeEnd, logFile)
+			for _, a := range cmd.Args {
+				if strings.Contains(a, "sess=secret") || strings.Contains(a, "inherited=1") {
+					t.Fatalf("cookie leaked into argv: %v", cmd.Args)
+				}
+			}
+			var got []string
+			for _, kv := range cmd.Env {
+				if strings.HasPrefix(kv, LiveCookieEnv+"=") {
+					got = append(got, kv)
+				}
+			}
+			if strings.Join(got, "\n") != strings.Join(tt.wantEnv, "\n") {
+				t.Fatalf("%s entries = %q, want %q", LiveCookieEnv, got, tt.wantEnv)
+			}
+		})
+	}
+}
+
+func TestTakeLiveCookieEnv(t *testing.T) {
+	t.Setenv(LiveCookieEnv, "sess=secret")
+	if got := TakeLiveCookieEnv(); got != "sess=secret" {
+		t.Fatalf("TakeLiveCookieEnv = %q, want sess=secret", got)
+	}
+	if _, ok := os.LookupEnv(LiveCookieEnv); ok {
+		t.Fatalf("%s still set after TakeLiveCookieEnv", LiveCookieEnv)
+	}
 }
 
 func closeAll(files ...*os.File) {

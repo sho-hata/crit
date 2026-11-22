@@ -47,6 +47,11 @@
   --crit-seg-track:      color-mix(in srgb, var(--crit-brand) 8%, rgba(255, 255, 255, 0.03));
   --crit-seg-active:     var(--crit-brand-subtle);
   --crit-seg-active-fg:  var(--crit-editor-fg);
+  --crit-pin-chip-bg:     color-mix(in srgb, var(--crit-editor-fg) 5%, transparent);
+  --crit-pin-chip-border: color-mix(in srgb, var(--crit-editor-fg) 12%, transparent);
+  --crit-pin-chip-hover:  color-mix(in srgb, var(--crit-editor-fg) 9%, transparent);
+  --crit-scope-idle-fg:   color-mix(in srgb, var(--crit-editor-fg-muted) 72%, var(--crit-bg-card));
+  --crit-scope-ghost:     color-mix(in srgb, var(--crit-editor-fg-muted) 35%, transparent);
   --crit-rail-fg:        #7d8590;
   --crit-rail-arrow:     #6e7681;
 
@@ -168,6 +173,9 @@
   --crit-change-flash-bg:      rgba(255, 158, 100, 0.15);
   --crit-resolve-hover-bg:     rgba(86, 211, 100, 0.1);
   --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.12);
+  --crit-find-bg:                rgba(250, 200, 60, 0.30);
+  --crit-find-current-bg:        #f0a020;
+  --crit-find-current-fg:        #1a1b26;
   --crit-quote-highlight-border: rgba(250, 200, 60, 0.4);
 
   /* ---- Comment reference chip ---- */
@@ -280,6 +288,11 @@
     --crit-seg-track:      color-mix(in srgb, var(--crit-brand) 6%, rgba(0, 0, 0, 0.03));
     --crit-seg-active:     color-mix(in srgb, var(--crit-brand) 12%, #ffffff);
     --crit-seg-active-fg:  var(--crit-brand);
+    --crit-pin-chip-bg:     var(--crit-editor-bg);
+    --crit-pin-chip-border: var(--crit-border-strong);
+    --crit-pin-chip-hover:  var(--crit-editor-bg-elevated);
+    --crit-scope-idle-fg:   color-mix(in srgb, var(--crit-editor-fg-muted) 82%, var(--crit-bg-card));
+    --crit-scope-ghost:     color-mix(in srgb, var(--crit-editor-fg-muted) 40%, transparent);
     --crit-rail-fg:        #59636e;
     --crit-rail-arrow:     #8b949e;
 
@@ -367,6 +380,9 @@
     --crit-change-flash-bg:      rgba(188, 76, 0, 0.12);
     --crit-resolve-hover-bg:     rgba(22, 111, 48, 0.08);
     --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.18);
+    --crit-find-bg:                rgba(250, 190, 40, 0.40);
+    --crit-find-current-bg:        #f59e0b;
+    --crit-find-current-fg:        #1f2328;
     --crit-quote-highlight-border: rgba(200, 160, 30, 0.45);
 
     /* ---- Comment reference chip ---- */
@@ -481,6 +497,11 @@
   --crit-seg-track:      color-mix(in srgb, var(--crit-brand) 8%, rgba(255, 255, 255, 0.03));
   --crit-seg-active:     var(--crit-brand-subtle);
   --crit-seg-active-fg:  var(--crit-editor-fg);
+  --crit-pin-chip-bg:     color-mix(in srgb, var(--crit-editor-fg) 5%, transparent);
+  --crit-pin-chip-border: color-mix(in srgb, var(--crit-editor-fg) 12%, transparent);
+  --crit-pin-chip-hover:  color-mix(in srgb, var(--crit-editor-fg) 9%, transparent);
+  --crit-scope-idle-fg:   color-mix(in srgb, var(--crit-editor-fg-muted) 72%, var(--crit-bg-card));
+  --crit-scope-ghost:     color-mix(in srgb, var(--crit-editor-fg-muted) 35%, transparent);
   --crit-rail-fg:        #7d8590;
   --crit-rail-arrow:     #6e7681;
 
@@ -568,6 +589,9 @@
   --crit-change-flash-bg:      rgba(255, 158, 100, 0.15);
   --crit-resolve-hover-bg:     rgba(86, 211, 100, 0.1);
   --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.12);
+  --crit-find-bg:                rgba(250, 200, 60, 0.30);
+  --crit-find-current-bg:        #f0a020;
+  --crit-find-current-fg:        #1a1b26;
   --crit-quote-highlight-border: rgba(250, 200, 60, 0.4);
 
   /* ---- Comment reference chip ---- */
@@ -681,6 +705,11 @@
   --crit-seg-track:      color-mix(in srgb, var(--crit-brand) 6%, rgba(0, 0, 0, 0.03));
   --crit-seg-active:     color-mix(in srgb, var(--crit-brand) 12%, #ffffff);
   --crit-seg-active-fg:  var(--crit-brand);
+  --crit-pin-chip-bg:     var(--crit-editor-bg);
+  --crit-pin-chip-border: var(--crit-border-strong);
+  --crit-pin-chip-hover:  var(--crit-editor-bg-elevated);
+  --crit-scope-idle-fg:   color-mix(in srgb, var(--crit-editor-fg-muted) 82%, var(--crit-bg-card));
+  --crit-scope-ghost:     color-mix(in srgb, var(--crit-editor-fg-muted) 40%, transparent);
   --crit-rail-fg:        #59636e;
   --crit-rail-arrow:     #8b949e;
 
@@ -767,6 +796,9 @@
   --crit-change-flash-bg:      rgba(188, 76, 0, 0.12);
   --crit-resolve-hover-bg:     rgba(22, 111, 48, 0.08);
   --crit-quote-highlight-bg:     rgba(250, 200, 60, 0.18);
+  --crit-find-bg:                rgba(250, 190, 40, 0.40);
+  --crit-find-current-bg:        #f59e0b;
+  --crit-find-current-fg:        #1f2328;
   --crit-quote-highlight-border: rgba(200, 160, 30, 0.45);
 
   /* ---- Comment reference chip ---- */

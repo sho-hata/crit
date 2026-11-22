@@ -36,7 +36,7 @@ test('chapter mark click reads live progress instead of closing over render-time
 
 test('per-file Viewed toggle refreshes the chapter mark button in place', () => {
   const body = sliceFunction(appSrc, 'renderStoryFileGroup', 'storySupportReasonForFile');
-  assert.match(body, /toggleViewed\s*\(\s*filePath\s*\)/);
+  assert.match(body, /setStoryFileViewed\s*\(\s*filePath\s*,/);
   assert.match(body, /renderStoryRail\s*\(\s*\)/);
   assert.match(body, /updateStoryMarkButton\s*\(\s*page\s*\)/);
 });

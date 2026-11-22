@@ -4,11 +4,41 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
-
 	"time"
+
+	"github.com/sho-hata/crit/internal/session"
+	"github.com/sho-hata/crit/internal/testutil"
 )
+
+// isolateAgentPATH points PATH at an empty temp dir and returns it, so agent
+// detection does not find (and run `--version` on) whatever AI CLIs the
+// developer has installed. Those probes take seconds each and make results
+// machine-dependent. Tests that need a binary on PATH write a stub into the
+// returned dir.
+func isolateAgentPATH(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	return dir
+}
+
+// writeStubBinary creates an executable named name in dir that prints out
+// when run. On Windows only its presence matters to exec.LookPath.
+func writeStubBinary(t *testing.T, dir, name, out string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	content := "#!/bin/sh\necho '" + out + "'\n"
+	if runtime.GOOS == "windows" {
+		path += ".bat"
+		content = "@echo " + out + "\r\n"
+	}
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestComputeFileHash(t *testing.T) {
 	t.Parallel()
@@ -29,8 +59,7 @@ func TestComputeFileHash(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_StaleFile(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	dir := t.TempDir()
 
 	// Write a file at the claude-code skill destination with different content
@@ -60,8 +89,7 @@ func TestCheckInstalledIntegrations_StaleFile(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_UpToDate(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	dir := t.TempDir()
 
 	// Read the actual embedded content and write it to the destination
@@ -87,8 +115,7 @@ func TestCheckInstalledIntegrations_UpToDate(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_MissingFile(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	dir := t.TempDir()
 	stale := checkInstalledIntegrations(dir, dir)
 	if len(stale) != 0 {
@@ -97,8 +124,7 @@ func TestCheckInstalledIntegrations_MissingFile(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_HomeDirStale(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -121,8 +147,7 @@ func TestCheckInstalledIntegrations_HomeDirStale(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_MarketplaceStale(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -156,8 +181,7 @@ func TestCheckInstalledIntegrations_MarketplaceStale(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CacheStale(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -231,8 +255,7 @@ func TestLatestCacheDir(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CacheSkipsOldVersions(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
 
@@ -286,8 +309,7 @@ func TestPrintStaleWarnings_WithStale(t *testing.T) {
 }
 
 func TestDetectInstalledIntegrations(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -342,8 +364,7 @@ func TestDetectInstalledIntegrations(t *testing.T) {
 }
 
 func TestDetectInstalledIntegrations_DedupsPerAgent(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -378,8 +399,7 @@ func TestDetectInstalledIntegrations_DedupsPerAgent(t *testing.T) {
 }
 
 func TestDetectInstalledIntegrations_CodexPluginRequiresPluginFile(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -412,8 +432,7 @@ func TestDetectInstalledIntegrations_CodexPluginRequiresPluginFile(t *testing.T)
 }
 
 func TestDetectInstalledIntegrations_CodexPluginGlobalUsesGlobalDest(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -446,8 +465,7 @@ func TestDetectInstalledIntegrations_CodexPluginGlobalUsesGlobalDest(t *testing.
 }
 
 func TestCheckInstalledIntegrations_CodexPluginCacheStale(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -473,8 +491,7 @@ func TestCheckInstalledIntegrations_CodexPluginCacheStale(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CodexPluginCacheUsesMarketplaceName(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -560,8 +577,7 @@ func TestCodexPluginMarketplaceNamesAcceptsShorthandSource(t *testing.T) {
 }
 
 func TestCheckInstalledIntegrations_CodexPluginMissingMarketplaceConfigAndCache(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	homeDir := filepath.Join(tmpDir, "home")
@@ -652,52 +668,55 @@ func TestCodexPluginConfigReadyRaw(t *testing.T) {
 func TestRunCheck_NoStale(t *testing.T) {
 	// runCheck uses os.Getwd() and os.UserHomeDir(), so we just verify it doesn't panic
 	// when called in a temp dir with no installed integrations
-	origDir, _ := os.Getwd()
-	dir := t.TempDir()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	isolateAgentPATH(t)
+	t.Chdir(t.TempDir())
 
-	// Should not panic
-	runCheck()
+	out := captureStderr(t, runCheck)
+	for _, want := range []string{
+		"All installed integrations are up to date.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("runCheck output missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func TestDetectPresentAgents_BinaryOnPath(t *testing.T) {
-	t.Parallel()
-
+	bin := isolateAgentPATH(t)
 	homeDir := t.TempDir()
+	writeStubBinary(t, bin, "claude", "1.0.0 (Claude Code)")
+	if runtime.GOOS != "windows" {
+		// Ambiguous names need a matching --version (stub scripts need sh).
+		writeStubBinary(t, bin, "gemini", "gemini protocol client 0.1")
+		writeStubBinary(t, bin, "grok", "grok 1.0 by xAI")
+	}
 
-	// detectPresentAgents should find agents whose binaries are on PATH.
-	// We can't control PATH easily, but we can verify the function returns
-	// results without panicking on a clean temp home dir.
-	agents := detectPresentAgents(homeDir)
-	// Just verify it runs — the result depends on what's installed on this machine
-	_ = agents
+	got := detectPresentAgents(homeDir)
+	want := []string{"claude-code"}
+	if runtime.GOOS != "windows" {
+		want = append(want, "grok")
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("detectPresentAgents = %v, want %v", got, want)
+	}
 }
 
 func TestDetectPresentAgents_ConfigDir(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	homeDir := t.TempDir()
 
 	// Create a .claude directory to simulate claude-code presence
 	os.MkdirAll(filepath.Join(homeDir, ".claude"), 0o755)
 
 	agents := detectPresentAgents(homeDir)
-	found := false
-	for _, a := range agents {
-		if a == "claude-code" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(agents, "claude-code")
 	if !found {
 		t.Error("expected claude-code to be detected via .claude dir")
 	}
 }
 
 func TestDetectPresentAgents_NoDuplicates(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	homeDir := t.TempDir()
 
 	// Create multiple probe dirs for same agent — should only appear once
@@ -757,8 +776,7 @@ func TestConfirmBinaryVersion(t *testing.T) {
 }
 
 func TestCheckMissingIntegrations(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -767,21 +785,14 @@ func TestCheckMissingIntegrations(t *testing.T) {
 
 	// No integration installed — should report claude-code as missing
 	missing := checkMissingIntegrations(projectDir, homeDir)
-	found := false
-	for _, m := range missing {
-		if m == "claude-code" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(missing, "claude-code")
 	if !found {
 		t.Error("expected claude-code in missing list when .claude dir exists but no integration installed")
 	}
 }
 
 func TestCheckMissingIntegrations_Installed(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -804,50 +815,59 @@ func TestCheckMissingIntegrations_Installed(t *testing.T) {
 }
 
 func TestCheckMissingIntegrations_NoAgentsPresent(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
-	// Empty home — no agents detected, so nothing missing
-	missing := checkMissingIntegrations(projectDir, homeDir)
-	// May still detect agents on PATH, but should not panic
-	_ = missing
+	// Empty home and PATH: no agents detected, so nothing missing.
+	if missing := checkMissingIntegrations(projectDir, homeDir); len(missing) != 0 {
+		t.Errorf("checkMissingIntegrations = %v, want none", missing)
+	}
 }
 
-func TestHintMissingIntegrationsFor_SkipsWhenInstalled(t *testing.T) {
-	t.Parallel()
+// TestHintMissingIntegrations_RealDetection runs session.HintMissingIntegrations
+// through the hooks wire.go installs, against real files, which the session
+// package's own tests stub out.
+func TestHintMissingIntegrations_RealDetection(t *testing.T) {
+	tests := []struct {
+		name      string
+		installed bool
+		want      []string
+	}{
+		{name: "prints when none installed", want: []string{"gemini detected", "crit install gemini"}},
+		{name: "silent when an integration is installed", installed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CRIT_NO_INTEGRATION_CHECK", "")
+			isolateAgentPATH(t)
+			homeDir := t.TempDir()
+			projectDir := t.TempDir()
+			testutil.SetHome(t, homeDir)
+			t.Chdir(projectDir)
 
-	homeDir := t.TempDir()
-	projectDir := t.TempDir()
+			// A Gemini config file makes gemini a detected-but-missing agent.
+			testutil.WriteFile(t, filepath.Join(homeDir, ".gemini", "settings.json"), `{}`)
+			if tt.installed {
+				src := integrationMap["claude-code"][0]
+				content, err := integrationsFS.ReadFile(src.source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				testutil.WriteFile(t, filepath.Join(projectDir, src.dest), string(content))
+			}
 
-	// Install an integration so installedAgents returns non-empty
-	sourceFiles := integrationMap["claude-code"]
-	sourceContent, _ := integrationsFS.ReadFile(sourceFiles[0].source)
-	dest := filepath.Join(projectDir, sourceFiles[0].dest)
-	os.MkdirAll(filepath.Dir(dest), 0o755)
-	os.WriteFile(dest, sourceContent, 0o644)
-
-	// Create a Gemini config file to simulate a detected-but-missing agent
-	os.MkdirAll(filepath.Join(homeDir, ".gemini"), 0o755)
-	os.WriteFile(filepath.Join(homeDir, ".gemini", "settings.json"), []byte(`{}`), 0o644)
-
-	// Should not panic and should not print (installed agent exists)
-	hintMissingIntegrationsFor(projectDir, homeDir)
-}
-
-func TestHintMissingIntegrationsFor_PrintsWhenNoneInstalled(t *testing.T) {
-	t.Parallel()
-
-	homeDir := t.TempDir()
-	projectDir := t.TempDir()
-
-	// Create a Gemini config file to simulate detection
-	os.MkdirAll(filepath.Join(homeDir, ".gemini"), 0o755)
-	os.WriteFile(filepath.Join(homeDir, ".gemini", "settings.json"), []byte(`{}`), 0o644)
-
-	// Should print hint (no installed agents, gemini detected)
-	hintMissingIntegrationsFor(projectDir, homeDir)
+			out := captureStderr(t, session.HintMissingIntegrations)
+			if len(tt.want) == 0 && out != "" {
+				t.Errorf("expected no hint, got:\n%s", out)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("hint missing %q, got:\n%s", w, out)
+				}
+			}
+		})
+	}
 }
 
 func TestDetectPresentAgents_IgnoresEmptyAmbiguousConfigDirs(t *testing.T) {
@@ -878,27 +898,14 @@ func TestDetectPresentAgents_JunkFileInAmbiguousConfigDirCountsAsPresent(t *test
 		t.Fatal(err)
 	}
 
-	found := false
-	for _, agent := range detectPresentAgents(homeDir) {
-		if agent == "gemini" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(detectPresentAgents(homeDir), "gemini")
 	if !found {
 		t.Fatal("ambiguous config dir with only .DS_Store currently counts as present")
 	}
 }
 
-func TestHintMissingIntegrations_EnvDisable(t *testing.T) {
-	t.Setenv("CRIT_NO_INTEGRATION_CHECK", "1")
-	// Should return immediately without doing any work
-	hintMissingIntegrations()
-}
-
 func TestInstalledAgents(t *testing.T) {
-	t.Parallel()
-
+	isolateAgentPATH(t)
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 

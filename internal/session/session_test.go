@@ -730,15 +730,13 @@ func TestSession_ConcurrentAccess(t *testing.T) {
 
 	s := newTestSession(t)
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 20 {
+		wg.Go(func() {
 			c, _ := s.AddComment("plan.md", 1, 1, "", "concurrent", "", "", "")
 			s.UpdateComment("plan.md", c.ID, "updated")
 			s.GetComments("plan.md")
 			s.DeleteComment("plan.md", c.ID)
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -3568,7 +3566,7 @@ func TestNewSessionFromGitLazyThreshold(t *testing.T) {
 	}()
 
 	gitT(t, dir, "checkout", "-b", "feature-many-files")
-	for i := 0; i < 120; i++ {
+	for i := range 120 {
 		name := fmt.Sprintf("file%03d.go", i)
 		writeFile(t, filepath.Join(dir, name), fmt.Sprintf("package main\n// file %d\n", i))
 	}
@@ -3591,7 +3589,7 @@ func TestNewSessionFromGitLazyThreshold(t *testing.T) {
 
 	if len(s.Files) != 120 {
 		want := make(map[string]bool, 120)
-		for i := 0; i < 120; i++ {
+		for i := range 120 {
 			want[fmt.Sprintf("file%03d.go", i)] = true
 		}
 		var unexpected []string
@@ -3632,7 +3630,7 @@ func TestNewSessionFromGitUnderThreshold(t *testing.T) {
 	defer func() { vcs.SetDefaultBranchOverride("") }()
 
 	gitT(t, dir, "checkout", "-b", "feature-few-files")
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		writeFile(t, filepath.Join(dir, fmt.Sprintf("small%d.go", i)), "package main\n")
 	}
 	gitT(t, dir, "add", ".")
@@ -5607,8 +5605,9 @@ func TestSyncCommentsFromDisk_ClearsPendingWrite(t *testing.T) {
 	if !s.SyncCommentsFromDisk() {
 		t.Fatal("SyncCommentsFromDisk returned false")
 	}
-	if len(s.Files[0].Comments) != 1 {
-		t.Fatalf("want 1 comment in memory, got %d", len(s.Files[0].Comments))
+	// The pending local comment is saved before the reload, so both survive.
+	if len(s.Files[0].Comments) != 2 {
+		t.Fatalf("want 2 comments in memory (local + remote), got %d", len(s.Files[0].Comments))
 	}
 	if s.PendingWriteForTest() {
 		t.Fatal("expected pendingWrite cleared after sync")

@@ -2,6 +2,7 @@ package diff
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -166,10 +167,10 @@ func lcsBackwardRow(old, new []string) []int {
 	n := len(new)
 	prev := make([]int, n+1)
 	curr := make([]int, n+1)
-	for i := len(old) - 1; i >= 0; i-- {
+	for _, o := range slices.Backward(old) {
 		for j := n - 1; j >= 0; j-- {
 			switch {
-			case old[i] == new[j]:
+			case o == new[j]:
 				curr[n-j] = prev[n-j-1] + 1
 			case prev[n-j] >= curr[n-j-1]:
 				curr[n-j] = prev[n-j]
@@ -200,8 +201,7 @@ func MapOldLineToNew(entries []DiffEntry) map[int]int {
 	// Second pass (reverse): for removed lines, find the next new line after them.
 	// Walking backwards, we track the next new line we'll encounter going forward.
 	nextNewLine := 0
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
+	for _, e := range slices.Backward(entries) {
 		if e.NewLine > 0 {
 			nextNewLine = e.NewLine
 		}
@@ -262,10 +262,7 @@ func entryToDiffLine(e DiffEntry) (DiffLine, int, int) {
 }
 
 func buildHunkFromGroup(entries []DiffEntry, gStart, gEnd, contextLines int) DiffHunk {
-	start := gStart - contextLines
-	if start < 0 {
-		start = 0
-	}
+	start := max(gStart-contextLines, 0)
 	end := gEnd + contextLines
 	if end >= len(entries) {
 		end = len(entries) - 1

@@ -10,9 +10,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
@@ -36,7 +36,7 @@ jobs:
           sl --version
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
@@ -64,15 +64,27 @@ jobs:
           fi
 
       - name: Install and run golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@v9.3.0
         with:
           version: latest
+
+  actions-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Verify actions.lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh extension install github/gh-actions-lock --pin v0.2.0
+          gh actions-lock --verify
 
   lint-frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
       - name: Install dependencies
@@ -89,8 +101,8 @@ jobs:
   test-frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
       - name: Install dependencies
@@ -103,13 +115,13 @@ jobs:
   asset-budget:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
 
@@ -119,16 +131,16 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
@@ -176,18 +188,18 @@ jobs:
   lsp-real:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
@@ -210,20 +222,20 @@ jobs:
   lsp-bench:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
@@ -264,9 +276,9 @@ jobs:
   nix:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/nix-installer-action@v23
 
       - name: Check Nix package build
         run: ./scripts/check-nix-build.sh
@@ -274,9 +286,9 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
@@ -300,7 +312,7 @@ jobs:
           sl --version
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
@@ -312,7 +324,7 @@ jobs:
           go test -coverprofile=coverage.out -covermode=atomic $PKGS
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           files: coverage.out
           flags: unit
@@ -321,28 +333,49 @@ jobs:
   live-cdp:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
-      - uses: browser-actions/setup-chrome@v2
+      - uses: browser-actions/setup-chrome@v2.2.0
 
       - name: Run live CDP integration tests
         run: go test -tags integration -run TestLiveCDPIntegration -v -count=1 ./internal/live/...
 
+  # The seatbelt profile is parsed by macOS at spawn time, so an OS release
+  # that rejects it would break every language server there. No other job
+  # runs on macOS; this one keeps the canary honest.
+  sandbox-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run the sandbox tests under seatbelt
+        # go test's own timeout fires first: a hung test then fails with its
+        # goroutine dump, where a cancelled step leaves no log at all.
+        timeout-minutes: 5
+        run: go test ./internal/sandbox/... ./internal/lsp/ -count=1 -v -timeout 4m
+        env:
+          CRIT_REQUIRE_SANDBOX: 1
+
   unit-windows:
     runs-on: windows-2025-vs2026
-    # 14m wall (vs 1.8m Linux): systemic Windows process/Defender tax spread
-    # across all packages, not a few slow tests. Split the package list into
-    # thirds — whole packages per shard, never split, so no shared-state risk.
+    # Windows pays a per-process tax (git, go build, crit.exe spawns) on every
+    # package. Whole packages per shard, never split, so no shared-state risk.
+    # Shards are balanced by measured Windows time (CI medians, 2026-10):
+    # internal/session alone was ~133s of ~392s, so it gets a shard to itself.
     strategy:
       fail-fast: false
       matrix:
         shard-index: [0, 1, 2]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Exclude CI paths from Defender scans
         # Best-effort speedup: Defender real-time scanning taxes every file
@@ -356,7 +389,7 @@ jobs:
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, "$env:LOCALAPPDATA\go-build"
           Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
@@ -366,7 +399,7 @@ jobs:
       # Best-effort speedup only — a flaky restore must not skip tests.
       - name: Cache Go build cache
         continue-on-error: true
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/AppData/Local/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
@@ -379,14 +412,24 @@ jobs:
         # even when these shards exercise them.
         run: |
           SHARD=${{ matrix.shard-index }}
-          PKGS=$(go list ./... | grep -v /node_modules/ | sort | awk "NR%3==$SHARD")
+          ALL=$(go list ./... | grep -v /node_modules/ | sort)
+          # Explicit groups, not NR%3: a new package must not reshuffle every
+          # shard. Shard 2 is the complement, so nothing is ever left out.
+          M=github.com/sho-hata/crit
+          G0="^$M/internal/session\$"
+          G1="^$M/internal/(server|comment|live|review|focus|preview)\$"
+          case "$SHARD" in
+            0) PKGS=$(echo "$ALL" | grep -E "$G0") ;;
+            1) PKGS=$(echo "$ALL" | grep -E "$G1") ;;
+            2) PKGS=$(echo "$ALL" | grep -vE "$G0|$G1") ;;
+          esac
           echo "$(echo "$PKGS" | wc -l) packages in shard $SHARD"
           go test -coverprofile="coverage-windows-${SHARD}.out" -covermode=atomic $PKGS
         env:
           MSYS_NO_PATHCONV: 1
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           files: coverage-windows-${{ matrix.shard-index }}.out
           flags: unit-windows
@@ -405,6 +448,9 @@ jobs:
   e2e:
     name: e2e (${{ matrix.name }})
     runs-on: ubuntu-latest
+    # Normal run ~12-14 min. A hung fixture or test must not burn the 6h
+    # default (run.sh also fails fast when a fixture dies or never readies).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -414,20 +460,20 @@ jobs:
           - { group: git, shard: 3/3, name: git-3 }
           - { group: rest, shard: "", name: rest }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
           restore-keys: go-build-${{ runner.os }}-
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -439,7 +485,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('test/e2e/package-lock.json') }}
@@ -480,7 +526,7 @@ jobs:
 
       - name: Upload E2E coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           files: e2e-coverage.out
           flags: e2e
@@ -488,7 +534,7 @@ jobs:
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: e2e-test-results-${{ matrix.name }}
           path: test/e2e/test-results/
@@ -497,6 +543,8 @@ jobs:
   e2e-windows:
     name: e2e-windows (${{ matrix.name }})
     runs-on: windows-2025-vs2026
+    # Slowest shard runs ~15-17 min; see the e2e job's timeout note.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -510,7 +558,7 @@ jobs:
       # paths when invoking native binaries (crit.exe, taskkill, powershell).
       MSYS_NO_PATHCONV: 1
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       - name: Exclude CI paths from Defender scans
         # Best-effort speedup: Defender real-time scanning taxes every file
@@ -524,18 +572,18 @@ jobs:
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, "$env:LOCALAPPDATA\go-build", "$env:LOCALAPPDATA\ms-playwright"
           Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
       - name: Cache Go build cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/AppData/Local/go-build
           key: go-build-${{ runner.os }}-${{ hashFiles('**/*.go', 'go.sum') }}
           restore-keys: go-build-${{ runner.os }}-
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -547,7 +595,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v6
+        uses: actions/cache@v6.1.0
         with:
           path: ~/AppData/Local/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('test/e2e/package-lock.json') }}
@@ -585,7 +633,7 @@ jobs:
 
       - name: Upload E2E coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v7.1.1
         with:
           files: e2e-coverage.out
           flags: e2e
@@ -593,7 +641,7 @@ jobs:
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: e2e-test-results-windows-${{ matrix.name }}
           path: test/e2e/test-results/

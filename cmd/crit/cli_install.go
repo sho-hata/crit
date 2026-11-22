@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -619,10 +620,8 @@ func isUnmodifiedOpencodePlugin(source string, data []byte) (bool, error) {
 		return true, nil
 	}
 	hash := computeFileHash(data)
-	for _, h := range previousOpencodePluginHashes[source] {
-		if hash == h {
-			return true, nil
-		}
+	if slices.Contains(previousOpencodePluginHashes[source], hash) {
+		return true, nil
 	}
 	return false, nil
 }
@@ -1419,7 +1418,7 @@ func ensureTrailingNewline(s string) string {
 // creating the file if it doesn't exist. Idempotent: skips if the
 // exit_plan_mode hook is already present (unless --force).
 func installGeminiSettings(path string, force bool) {
-	existing := map[string]interface{}{}
+	existing := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &existing); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %s contains invalid JSON — use --force to overwrite\n", path)
@@ -1427,14 +1426,14 @@ func installGeminiSettings(path string, force bool) {
 		}
 	}
 
-	hooks, _ := existing["hooks"].(map[string]interface{})
+	hooks, _ := existing["hooks"].(map[string]any)
 	if hooks == nil {
-		hooks = map[string]interface{}{}
+		hooks = map[string]any{}
 	}
-	before, _ := hooks["BeforeTool"].([]interface{})
+	before, _ := hooks["BeforeTool"].([]any)
 
 	for _, entry := range before {
-		m, ok := entry.(map[string]interface{})
+		m, ok := entry.(map[string]any)
 		if !ok || m["matcher"] != "exit_plan_mode" {
 			continue
 		}
@@ -1443,9 +1442,9 @@ func installGeminiSettings(path string, force bool) {
 			return
 		}
 		// force: strip the existing entry and re-add below
-		var next []interface{}
+		var next []any
 		for _, e := range before {
-			if mm, ok2 := e.(map[string]interface{}); ok2 && mm["matcher"] == "exit_plan_mode" {
+			if mm, ok2 := e.(map[string]any); ok2 && mm["matcher"] == "exit_plan_mode" {
 				continue
 			}
 			next = append(next, e)
@@ -1454,10 +1453,10 @@ func installGeminiSettings(path string, force bool) {
 		break
 	}
 
-	before = append(before, map[string]interface{}{
+	before = append(before, map[string]any{
 		"matcher": "exit_plan_mode",
-		"hooks": []interface{}{
-			map[string]interface{}{
+		"hooks": []any{
+			map[string]any{
 				"type":    "command",
 				"command": "crit plan-hook",
 				"timeout": 345600000,

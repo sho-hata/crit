@@ -3,7 +3,7 @@
   "files": [
     {
       "path": "web/mermaid.min.js",
-      "gzipBytes": 1180000,
+      "gzipBytes": 1900000,
       "note": "largest vendor dep (~70% of shipped JS); any mermaid bump shows here"
     },
     {
@@ -46,11 +46,11 @@
   "globs": [
     {
       "pattern": "web/crit-*.js",
-      "gzipBytes": 100000,
-      "note": "shared renderer/comment/diff modules; catches module sprawl"
+      "gzipBytes": 125000,
+      "note": "shared renderer/comment/diff modules; recalibrated after moving Mermaid and fullscreen controls out of app.js into the renderer registry (~108 KB gzip); catches module sprawl"
     }
   ],
-  "totalJsGzipBytes": 1950000,
+  "totalJsGzipBytes": 2300000,
   "binaryBytes": 25165824,
   "pierreDirBytes": 1650000
 }

@@ -1,65 +1,60 @@
 import { test, expect, type Page } from '@playwright/test';
-import { clearAllComments, fileHeader, loadPage, realCommitItems } from './helpers';
+import { addComment, clearAllComments, fileHeader, loadPage, realCommitItems, switchScope } from './helpers';
 
 async function openCommitPicker(page: Page) {
   await page.click('#commitDropdownBtn');
   await expect(page.locator('#commitDropdown')).toHaveClass(/open/);
 }
 
+// Click a picker row (optionally with Alt) and wait for the session refetch.
+async function pick(page: Page, row: ReturnType<Page['locator']>, alt = false) {
+  const response = page.waitForResponse(r => r.url().includes('/api/session') && r.status() === 200);
+  await row.click(alt ? { modifiers: ['Alt'] } : undefined);
+  await response;
+}
+
+const allItem = (page: Page) => page.locator('.commit-picker-item[data-commit=""]');
+const label = (page: Page) => page.locator('#commitDropdownLabel');
+
 test.describe('Commit Selection', () => {
-  test.beforeEach(async ({ request, page }) => {
+  test.beforeEach(async ({ request }) => {
     await clearAllComments(request);
+  });
+
+  test('picker shows "All commits", lists commits, and closes on Escape or outside click', async ({ page }) => {
     await loadPage(page);
-  });
-
-  test('commit picker visible in sidebar on All scope', async ({ page }) => {
     await expect(page.locator('#commitDropdown')).toBeVisible();
-  });
+    await expect(label(page)).toHaveText('All commits');
 
-  test('dropdown label shows "All commits" by default', async ({ page }) => {
-    await expect(page.locator('#commitDropdownLabel')).toHaveText('All commits');
-  });
-
-  test('dropdown opens on click and shows commits', async ({ page }) => {
     await openCommitPicker(page);
-
-    const allItem = page.locator('.commit-picker-item[data-commit=""]');
-    await expect(allItem).toBeVisible();
-    await expect(allItem).toHaveClass(/active/);
-
+    await expect(allItem(page)).toBeVisible();
+    await expect(allItem(page)).toHaveClass(/active/);
     const firstCommit = realCommitItems(page).first();
     await expect(firstCommit).toBeVisible();
     await expect(firstCommit.locator('.commit-picker-item-sha')).toBeVisible();
     await expect(firstCommit.locator('.commit-picker-item-msg')).toBeVisible();
     await expect(firstCommit.locator('.commit-picker-item-msg')).toContainText('add auth');
-  });
 
-  test('dropdown closes on Escape', async ({ page }) => {
-    await openCommitPicker(page);
     await page.keyboard.press('Escape');
     await expect(page.locator('#commitDropdown')).not.toHaveClass(/open/);
-  });
 
-  test('dropdown closes on outside click', async ({ page }) => {
     await openCommitPicker(page);
     await page.click('.main-content');
     await expect(page.locator('#commitDropdown')).not.toHaveClass(/open/);
   });
 
-  test('clicking a commit sets from pin and filters files', async ({ page }) => {
+  test('from and through pins filter the review and "All commits" clears them', async ({ page }) => {
+    await loadPage(page);
     await openCommitPicker(page);
+    const commits = realCommitItems(page);
+    await expect(commits).toHaveCount(2);
 
-    const commitItem = realCommitItems(page).first();
-    const responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await commitItem.click();
-    await responsePromise;
-
+    // Clicking a commit sets the from pin and filters files; the dropdown stays open.
+    await pick(page, commits.first());
     await expect(page.locator('#commitDropdown')).toHaveClass(/open/);
-    await expect(page.locator('#commitDropdownLabel')).toContainText('only');
-    await expect(commitItem).toHaveClass(/is-from/);
-
+    await expect(label(page)).toContainText('only');
+    await expect(commits.first()).toHaveClass(/is-from/);
+    await expect(allItem(page)).not.toHaveClass(/active/);
     // Auth commit touches eight files (skill.md and the fork's Terraform files
     // included, branch fixture);
     // handler.js (other commit) and the uncommitted files drop out.
@@ -69,201 +64,235 @@ test.describe('Commit Selection', () => {
     // The diff pane re-renders with the filtered list
     await expect(fileHeader(page, 'deleted.txt')).toBeVisible();
     await expect(fileHeader(page, 'config.yaml')).toHaveCount(0);
-  });
 
-  test('selecting "All commits" restores full view', async ({ page }) => {
-    await openCommitPicker(page);
-    const commitItem = realCommitItems(page).first();
-    const firstResponsePromise = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commitItem.click();
-    await firstResponsePromise;
-    await expect(page.locator('#commitDropdownLabel')).not.toHaveText('All commits');
+    // "All commits" restores the full view.
+    await pick(page, allItem(page));
+    await expect(label(page)).toHaveText('All commits');
 
-    const allItem = page.locator('.commit-picker-item[data-commit=""]');
-    const responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await allItem.click();
-    await responsePromise;
-
-    await expect(page.locator('#commitDropdownLabel')).toHaveText('All commits');
-  });
-
-  test('commit picker hidden when switching to Staged scope', async ({ page }) => {
-    await expect(page.locator('#commitDropdown')).toBeVisible();
-
-    const responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await page.click('#scopeToggle .toggle-btn[data-scope="staged"]');
-    await responsePromise;
-
-    await expect(page.locator('#commitDropdown')).toBeHidden();
-  });
-
-  test('commit picker reappears when switching back to All scope', async ({ page }) => {
-    let responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await page.click('#scopeToggle .toggle-btn[data-scope="staged"]');
-    await responsePromise;
-    await expect(page.locator('#commitDropdown')).toBeHidden();
-
-    responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await page.click('#scopeToggle .toggle-btn[data-scope="all"]');
-    await responsePromise;
-
-    await expect(page.locator('#commitDropdown')).toBeVisible();
-  });
-
-  test('commit picker visible on Branch scope', async ({ page }) => {
-    let responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await page.click('#scopeToggle .toggle-btn[data-scope="staged"]');
-    await responsePromise;
-    await expect(page.locator('#commitDropdown')).toBeHidden();
-
-    responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await page.click('#scopeToggle .toggle-btn[data-scope="branch"]');
-    await responsePromise;
-
-    await expect(page.locator('#commitDropdown')).toBeVisible();
-  });
-
-  test('selected commit resets on page reload', async ({ page }) => {
-    await openCommitPicker(page);
-    const commitItem = realCommitItems(page).first();
-    const responsePromise = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commitItem.click();
-    await responsePromise;
-
-    await page.reload();
-    await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
-
-    await expect(page.locator('#commitDropdownLabel')).toHaveText('All commits');
-  });
-
-  test('commit picker hidden when only one commit exists', async ({ page, request }) => {
-    await expect(page.locator('#commitDropdown')).toBeVisible();
-
-    const commitsRes = await request.get('/api/commits');
-    const commits = await commitsRes.json();
-
-    await page.route('**/api/commits', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(Array.isArray(commits) ? commits.slice(0, 1) : commits),
-      });
-    });
-
-    const commitsResponse = page.waitForResponse(r => r.url().includes('/api/commits'));
-    await page.reload();
-    await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
-    await commitsResponse;
-    await expect(page.locator('#commitDropdown')).toBeHidden();
-  });
-
-  test('from pin marks selected commit, "All" loses active class', async ({ page }) => {
-    await openCommitPicker(page);
-    const commitItem = realCommitItems(page).first();
-    const responsePromise = page.waitForResponse(r =>
-      r.url().includes('/api/session') && r.status() === 200
-    );
-    await commitItem.click();
-    await responsePromise;
-
-    await expect(page.locator('.commit-picker-item[data-commit=""]')).not.toHaveClass(/active/);
-    await expect(commitItem).toHaveClass(/is-from/);
-  });
-
-  test('alt+click sets through pin and sends a range param', async ({ page }) => {
-    await openCommitPicker(page);
-
-    const commits = realCommitItems(page);
-    await expect(commits).toHaveCount(2);
-
-    // List is newest-first; pick older commit as from, newer as through.
-    const firstResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(1).click();
-    await firstResponse;
-
+    // List is newest-first: older commit as from, Alt+click the newer as
+    // through — a range request, and the dropdown stays open across both.
+    await pick(page, commits.nth(1));
     const rangeRequest = page.waitForRequest(
       r => r.url().includes('/api/session') && /[?&]commit=[^&]*\.\.[^&]*/.test(r.url())
     );
-    await commits.nth(0).click({ modifiers: ['Alt'] });
+    await pick(page, commits.nth(0), true);
     await rangeRequest;
-
-    await expect(page.locator('#commitDropdownLabel')).toContainText('\u2192');
+    await expect(page.locator('#commitDropdown')).toHaveClass(/open/);
+    await expect(label(page)).toContainText('→');
     await expect(commits.nth(1)).toHaveClass(/is-from/);
     await expect(commits.nth(0)).toHaveClass(/is-through/);
-  });
 
-  test('alt+click through again clears the through pin', async ({ page }) => {
-    await openCommitPicker(page);
-
-    const commits = realCommitItems(page);
-    await expect(commits).toHaveCount(2);
-
-    const firstResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(1).click();
-    await firstResponse;
-
-    const rangeResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(0).click({ modifiers: ['Alt'] });
-    await rangeResponse;
-    await expect(page.locator('#commitDropdownLabel')).toContainText('\u2192');
-
-    const clearThroughResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(0).click({ modifiers: ['Alt'] });
-    await clearThroughResponse;
-
-    await expect(page.locator('#commitDropdownLabel')).toContainText('only');
+    // Alt+click the through pin again clears it.
+    await pick(page, commits.nth(0), true);
+    await expect(label(page)).toContainText('only');
     await expect(page.locator('#commitDropdownList .commit-picker-item.is-through')).toHaveCount(0);
-  });
 
-  test('"All commits" row clears from/through pins', async ({ page }) => {
-    await openCommitPicker(page);
-
-    const commits = realCommitItems(page);
-    await expect(commits).toHaveCount(2);
-
-    const firstResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(1).click();
-    await firstResponse;
-
-    const rangeResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(0).click({ modifiers: ['Alt'] });
-    await rangeResponse;
-
-    const clearResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await page.locator('.commit-picker-item[data-commit=""]').click();
-    await clearResponse;
-
-    await expect(page.locator('#commitDropdownLabel')).toHaveText('All commits');
+    // "All commits" clears both pins.
+    await pick(page, commits.nth(0), true);
+    await expect(label(page)).toContainText('→');
+    await pick(page, allItem(page));
+    await expect(label(page)).toHaveText('All commits');
     await expect(page.locator('#commitDropdownList .commit-picker-item.is-from')).toHaveCount(0);
     await expect(page.locator('#commitDropdownList .commit-picker-item.is-through')).toHaveCount(0);
   });
 
-  test('dropdown stays open across multiple selections', async ({ page }) => {
+  test('picker is hidden on Staged scope and shown on All and Branch scopes', async ({ page }) => {
+    await loadPage(page);
+    await expect(page.locator('#commitDropdown')).toBeVisible();
+
+    await switchScope(page, 'staged');
+    await expect(page.locator('#commitDropdown')).toBeHidden();
+    await switchScope(page, 'all');
+    await expect(page.locator('#commitDropdown')).toBeVisible();
+
+    await switchScope(page, 'staged');
+    await expect(page.locator('#commitDropdown')).toBeHidden();
+    await switchScope(page, 'branch');
+    await expect(page.locator('#commitDropdown')).toBeVisible();
+  });
+
+  test('selected commit resets on page reload', async ({ page }) => {
+    await loadPage(page);
     await openCommitPicker(page);
+    await pick(page, realCommitItems(page).first());
+    await expect(label(page)).toContainText('only');
 
+    await page.reload();
+    await expect(page.locator('.loading')).toBeHidden({ timeout: 10_000 });
+    await expect(label(page)).toHaveText('All commits');
+  });
+
+  test('changing the commit selection hides the previous diff while a reload is queued', async ({ page }) => {
+    await loadPage(page);
+    await openCommitPicker(page);
     const commits = realCommitItems(page);
-    await expect(commits).toHaveCount(2);
+    const firstSha = await commits.first().getAttribute('data-commit');
+    const secondSha = await commits.nth(1).getAttribute('data-commit');
+    let releaseFirst: () => void = () => {};
+    let releaseSecond: () => void = () => {};
+    const holdFirst = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const holdSecond = new Promise<void>(resolve => { releaseSecond = resolve; });
+    await page.route('**/api/session?*', async route => {
+      const commit = new URL(route.request().url()).searchParams.get('commit');
+      if (commit === firstSha) await holdFirst;
+      if (commit === secondSha) await holdSecond;
+      await route.continue();
+    });
 
-    const firstResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(1).click();
-    await firstResponse;
+    try {
+      await commits.first().click();
+      await commits.nth(1).click();
+      await expect(page.locator('#filesContainer .loading')).toHaveText('Loading...');
+      await expect(page.locator('#filesContainer .pierre-file-header')).toHaveCount(0);
+      // Catch even a brief stale render that the next reload clears before
+      // Playwright's next assertion runs.
+      await page.evaluate(() => {
+        const container = document.getElementById('filesContainer')!;
+        container.dataset.staleHeaderMounts = '0';
+        new MutationObserver(records => {
+          for (const record of records) {
+            for (const node of record.addedNodes) {
+              if (node instanceof Element &&
+                  (node.matches('.pierre-file-header') || node.querySelector('.pierre-file-header'))) {
+                container.dataset.staleHeaderMounts = String(Number(container.dataset.staleHeaderMounts) + 1);
+              }
+            }
+          }
+        }).observe(container, { childList: true, subtree: true });
+      });
+      const secondRequest = page.waitForRequest(r => new URL(r.url()).searchParams.get('commit') === secondSha);
+      releaseFirst();
+      await secondRequest;
+      await expect(page.locator('#filesContainer .loading')).toHaveText('Loading...');
+      await expect(page.locator('#filesContainer .pierre-file-header')).toHaveCount(0);
+      await expect(page.locator('#filesContainer')).toHaveAttribute('data-stale-header-mounts', '0');
+    } finally {
+      releaseFirst();
+      releaseSecond();
+    }
+    await expect(page.locator('.tree-file[data-tree-path="handler.js"]')).toHaveCount(1);
+    await expect(fileHeader(page, 'handler.js')).toBeVisible();
+    await expect(fileHeader(page, 'deleted.txt')).toHaveCount(0);
+  });
 
-    const secondResponse = page.waitForResponse(r => r.url().includes('/api/session'));
-    await commits.nth(0).click({ modifiers: ['Alt'] });
-    await secondResponse;
+  test('commit picker hidden when only one commit exists', async ({ page, request }) => {
+    const commits = await (await request.get('/api/commits')).json();
+    expect(Array.isArray(commits) && commits.length).toBeGreaterThan(1);
+    await page.route('**/api/commits', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(commits.slice(0, 1)),
+      });
+    });
 
-    await expect(page.locator('#commitDropdown')).toHaveClass(/open/);
+    const commitsResponse = page.waitForResponse(r => r.url().includes('/api/commits'));
+    await loadPage(page);
+    await commitsResponse;
+    await expect(page.locator('#commitDropdown')).toBeHidden();
+  });
+
+  // A pinned commit overrides the scope server-side. The scope toggle shows
+  // that, and clicking the already-active scope (or its shortcut) releases
+  // the pin instead of doing nothing.
+  test('clicking the active scope releases a pinned commit', async ({ page }) => {
+    // File diffs ask for scope=all so they match the live file list.
+    const fileDiff = page.waitForRequest(r => r.url().includes('/api/file/diff?') && new URL(r.url()).searchParams.get('scope') === 'all');
+    await loadPage(page);
+    await fileDiff;
+    const toggle = page.locator('#scopeToggle');
+    const allBtn = toggle.locator('.toggle-btn[data-scope="all"]');
+    await expect(allBtn).toHaveClass(/active/);
+    await expect(toggle).not.toHaveClass(/commit-pinned/);
+
+    await openCommitPicker(page);
+    await pick(page, realCommitItems(page).first());
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveClass(/commit-pinned/);
+    await expect(page.locator('#scopePin')).toBeVisible();
+    await expect(page.locator('#scopePinKind')).toHaveText('Commit');
+    // No scope is in effect: the set-aside one keeps an outline, not the active fill.
+    await expect(allBtn).not.toHaveClass(/active/);
+    await expect(allBtn).toHaveClass(/remembered/);
+    await expect(allBtn).toHaveAttribute('aria-pressed', 'false');
+    await expect(allBtn).toHaveAttribute('title', /unpins the commit/);
+    await expect(page.locator('.tree-file[data-tree-path="handler.js"]')).toHaveCount(0);
+
+    const response = page.waitForResponse(r => r.url().includes('/api/session') && r.status() === 200);
+    await allBtn.click();
+    await response;
+    await expect(toggle).not.toHaveClass(/commit-pinned/);
+    await expect(page.locator('#scopePin')).toBeHidden();
+    await expect(allBtn).not.toHaveAttribute('title', /unpins the commit/);
+    await expect(allBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(label(page)).toHaveText('All commits');
+    await expect(allBtn).toHaveClass(/active/);
+    await expect(page.locator('.tree-file[data-tree-path="handler.js"]')).toHaveCount(1);
+    await expect(page.locator('.tree-file[data-tree-path="config.yaml"]')).toHaveCount(1);
+  });
+
+  test('the shortcut for the active scope releases a pinned commit', async ({ page }) => {
+    await loadPage(page);
+    await openCommitPicker(page);
+    await pick(page, realCommitItems(page).first());
+    await page.keyboard.press('Escape');
+    const toggle = page.locator('#scopeToggle');
+    await expect(toggle).toHaveClass(/commit-pinned/);
+
+    const response = page.waitForResponse(r => r.url().includes('/api/session') && r.status() === 200);
+    await page.keyboard.press('Shift+1');
+    await response;
+    await expect(toggle).not.toHaveClass(/commit-pinned/);
+    await expect(label(page)).toHaveText('All commits');
+    await expect(page.locator('.tree-file[data-tree-path="handler.js"]')).toHaveCount(1);
+  });
+
+  test('the pin chip and Escape in the scope toggle release a pinned commit', async ({ page }) => {
+    await loadPage(page);
+    const toggle = page.locator('#scopeToggle');
+    const allBtn = toggle.locator('.toggle-btn[data-scope="all"]');
+
+    await openCommitPicker(page);
+    await pick(page, realCommitItems(page).first());
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveClass(/commit-pinned/);
+
+    let response = page.waitForResponse(r => r.url().includes('/api/session') && r.status() === 200);
+    await page.locator('#scopePinClear').click();
+    await response;
+    await expect(toggle).not.toHaveClass(/commit-pinned/);
+    await expect(allBtn).toHaveClass(/active/);
+    await expect(allBtn).toBeFocused();
+    await expect(label(page)).toHaveText('All commits');
+
+    await openCommitPicker(page);
+    await pick(page, realCommitItems(page).first());
+    await page.keyboard.press('Escape');
+    await expect(toggle).toHaveClass(/commit-pinned/);
+    await toggle.locator('.toggle-btn[data-scope="branch"]').focus();
+    response = page.waitForResponse(r => r.url().includes('/api/session') && r.status() === 200);
+    await page.keyboard.press('Escape');
+    await response;
+    await expect(toggle).not.toHaveClass(/commit-pinned/);
+    await expect(allBtn).toHaveClass(/active/);
+  });
+
+  // Regression: switching commit scope hid out-of-scope unresolved comments
+  // from the finish button label — it showed "Approve" while hidden_unresolved > 0.
+  test('finish button says Finish Review while an unresolved comment is outside the selected commit', async ({ page, request }) => {
+    // config.yaml is untracked — visible on "All commits" but not when a single commit is selected.
+    await addComment(request, 'config.yaml', 1, 'Fix config');
+
+    await loadPage(page);
+    await expect(page.locator('#finishBtn')).toHaveText('Finish Review');
+
+    await openCommitPicker(page);
+    await pick(page, realCommitItems(page).first());
+    // Wait for the filtered view (the comment's file is gone) before checking
+    // the label, so a stale "Finish Review" cannot pass.
+    await expect(label(page)).toContainText('only');
+    await expect(page.locator('.tree-file[data-tree-path="config.yaml"]')).toHaveCount(0);
+    await expect(fileHeader(page, 'deleted.txt')).toBeVisible();
+    await expect(page.locator('#finishBtn')).toHaveText('Finish Review');
   });
 });

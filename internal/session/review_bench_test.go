@@ -21,7 +21,7 @@ func makeBenchCritJSON(nFiles, nComments int) CritJSON {
 	}
 	body := "This is a review comment body with enough text to be realistic. " +
 		"It spans a couple of sentences so marshal cost resembles production. "
-	for f := 0; f < nFiles; f++ {
+	for f := range nFiles {
 		path := fmt.Sprintf("pkg/file%03d.go", f)
 		comments := make([]Comment, nComments)
 		for i := range comments {
@@ -91,7 +91,7 @@ func BenchmarkReviewSaveLoad(b *testing.B) {
 // a large AI-generated plan: n lines with every ~15th line changed.
 func makeBenchPlanContent(n int) (prev, curr string) {
 	prevLines := make([]string, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		switch i % 15 {
 		case 3:
 			prevLines = append(prevLines, fmt.Sprintf("## Section %d original title", i))

@@ -415,19 +415,8 @@ func TestParseServerFlags_NoLiveOrigin(t *testing.T) {
 	}
 }
 
-func TestParseServerFlags_LiveCookie(t *testing.T) {
-	t.Parallel()
-
-	f := parseServerFlags([]string{"--live-origin", "http://localhost:3000", "--live-cookie", "session=abc"})
-	if f.liveCookie != "session=abc" {
-		t.Fatalf("liveCookie = %q, want session=abc", f.liveCookie)
-	}
-}
-
 func TestCreateLiveSession_EmptyOriginIsFatal(t *testing.T) {
-	t.Parallel()
-
-	_, err := createLiveSession(&serverConfig{liveOrigin: ""})
+	_, err := createLiveSession(t, &serverConfig{liveOrigin: ""})
 	if err == nil {
 		t.Fatal("createLiveSession with empty origin must error")
 	}
@@ -480,12 +469,9 @@ func TestBuildLiveDaemonArgs(t *testing.T) {
 	f := liveCLIFlags{port: 9000, host: "127.0.0.1", publicURL: "https://mymac.ts.net", quiet: true}
 	cfg := Config{Port: 3000, Quiet: false, PublicURL: "https://ignored.example.com"}
 
-	withCookie := buildLiveDaemonArgs("http://localhost:3000/dashboard", "sess=abc", f, cfg, true)
+	withCookie := buildLiveDaemonArgs("http://localhost:3000/dashboard", f, cfg, true)
 	if !containsArgPair(withCookie, "--live-origin", "http://localhost:3000/dashboard") {
 		t.Fatalf("missing live-origin: %v", withCookie)
-	}
-	if !containsArgPair(withCookie, "--live-cookie", "sess=abc") {
-		t.Fatalf("missing live-cookie: %v", withCookie)
 	}
 	if !containsArgPair(withCookie, "--public-url", "https://mymac.ts.net") {
 		t.Fatalf("missing public-url: %v", withCookie)
@@ -500,14 +486,7 @@ func TestBuildLiveDaemonArgs(t *testing.T) {
 		t.Fatalf("missing quiet: %v", withCookie)
 	}
 
-	withoutCookie := buildLiveDaemonArgs("http://localhost:3000", "", f, cfg, false)
-	for i, a := range withoutCookie {
-		if a == "--live-cookie" {
-			t.Fatalf("unexpected --live-cookie at %d in %v", i, withoutCookie)
-		}
-	}
-
-	fromCfg := buildLiveDaemonArgs("http://localhost:3000", "", liveCLIFlags{}, Config{PublicURL: "https://cfg.ts.net"}, false)
+	fromCfg := buildLiveDaemonArgs("http://localhost:3000", liveCLIFlags{}, Config{PublicURL: "https://cfg.ts.net"}, false)
 	if !containsArgPair(fromCfg, "--public-url", "https://cfg.ts.net") {
 		t.Fatalf("missing config public-url: %v", fromCfg)
 	}
@@ -556,8 +535,10 @@ func TestRunLive_ColdStartBrowserOwnership(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var daemonArgs []string
-			startLiveDaemon = func(_ string, args []string) (daemon.SessionEntry, error) {
+			var daemonCookie string
+			startLiveDaemon = func(_ string, args []string, liveCookie string) (daemon.SessionEntry, error) {
 				daemonArgs = append([]string(nil), args...)
+				daemonCookie = liveCookie
 				return daemon.SessionEntry{PID: os.Getpid(), Port: 43123}, nil
 			}
 			clientRan := false
@@ -566,24 +547,37 @@ func TestRunLive_ColdStartBrowserOwnership(t *testing.T) {
 				return false
 			}
 			signalHandlerInstalled := false
-			installLiveDaemonSignalHandler = func(int) {
+			var gotSignals []os.Signal
+			installLiveDaemonSignalHandler = func(_ daemon.SessionEntry, sigs ...os.Signal) {
 				signalHandlerInstalled = true
+				gotSignals = sigs
 			}
 			browserOpenCalls := 0
 			launchLiveBrowser = func(string, string) {
 				browserOpenCalls++
 			}
 
-			RunLive(tt.args)
+			RunLive(append([]string{"--cookie", "sess=secret"}, tt.args...))
 
 			if !signalHandlerInstalled {
 				t.Fatal("daemon signal handler was not installed")
+			}
+			if !reflect.DeepEqual(gotSignals, daemon.TerminationSignals()) {
+				t.Fatalf("signals = %v, want %v", gotSignals, daemon.TerminationSignals())
 			}
 			if !clientRan {
 				t.Fatal("review client did not run")
 			}
 			if got := containsArgPair(daemonArgs, "--no-open", ""); got != tt.wantDaemonNoOpen {
 				t.Fatalf("daemon --no-open = %v, want %v; args: %v", got, tt.wantDaemonNoOpen, daemonArgs)
+			}
+			if daemonCookie != "sess=secret" {
+				t.Fatalf("daemon cookie = %q, want sess=secret", daemonCookie)
+			}
+			for _, a := range daemonArgs {
+				if strings.Contains(a, "sess=secret") || a == "--live-cookie" {
+					t.Fatalf("cookie leaked into daemon argv: %v", daemonArgs)
+				}
 			}
 			if browserOpenCalls != 0 {
 				t.Fatalf("cold-start client launched the browser %d times; the daemon owns the initial browser open", browserOpenCalls)
@@ -699,7 +693,7 @@ func TestConnectToLiveDaemon_RespectsNoOpen(t *testing.T) {
 }
 
 func containsArgPair(args []string, key, want string) bool {
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		if args[i] != key {
 			continue
 		}
@@ -1043,7 +1037,7 @@ func TestCreateLiveSession_FreshStartsOnRoundOne(t *testing.T) {
 		liveOrigin: "http://localhost:4000",
 		reviewPath: identity,
 	}
-	s, err := createLiveSession(sc)
+	s, err := createLiveSession(t, sc)
 	if err != nil {
 		t.Fatalf("createLiveSession: %v", err)
 	}
@@ -1082,7 +1076,7 @@ func TestCreateLiveSession_HonorsRoundWhenCommentsPresent(t *testing.T) {
 		liveOrigin: "http://localhost:4000",
 		reviewPath: identity,
 	}
-	s, err := createLiveSession(sc)
+	s, err := createLiveSession(t, sc)
 	if err != nil {
 		t.Fatalf("createLiveSession: %v", err)
 	}
@@ -1269,7 +1263,7 @@ func TestCreateLiveSession_FreshAwaitsFirstReview(t *testing.T) {
 		liveOrigin: "http://localhost:4000",
 		reviewPath: identity,
 	}
-	s, err := createLiveSession(sc)
+	s, err := createLiveSession(t, sc)
 	if err != nil {
 		t.Fatalf("createLiveSession: %v", err)
 	}
@@ -1296,7 +1290,7 @@ func TestLiveSession_FirstPinAfterBootShipsRound1(t *testing.T) {
 		liveOrigin: "http://localhost:4000",
 		reviewPath: identity,
 	}
-	sess, err := createLiveSession(sc)
+	sess, err := createLiveSession(t, sc)
 	if err != nil {
 		t.Fatalf("createLiveSession: %v", err)
 	}

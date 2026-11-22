@@ -331,9 +331,9 @@ func looksLikeLineSpec(s string) bool {
 	if s == "" {
 		return false
 	}
-	if dashIdx := strings.Index(s, "-"); dashIdx >= 0 {
-		_, _, err1 := parseLineSpec(s[:dashIdx])
-		_, _, err2 := parseLineSpec(s[dashIdx+1:])
+	if before, after, ok := strings.Cut(s, "-"); ok {
+		_, _, err1 := parseLineSpec(before)
+		_, _, err2 := parseLineSpec(after)
 		return err1 == nil && err2 == nil
 	}
 	_, _, err := parseLineSpec(s)

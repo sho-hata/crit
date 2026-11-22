@@ -82,7 +82,7 @@ func TestRealJavaNeverImportsTheBuild(t *testing.T) {
 	app, marker := writeJavaProject(t, dir)
 	before := listTree(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	t.Cleanup(m.Shutdown) // a failed Hover must not leak the server
 
 	got, err := m.Hover(app, javaGreetUseLine, javaGreetUseChar)
@@ -115,11 +115,7 @@ func TestRealJavaNeverImportsTheBuild(t *testing.T) {
 	if ran, err := os.ReadFile(marker); err == nil {
 		t.Errorf("settings.gradle was evaluated: %q", ran)
 	}
-	// Its Eclipse workspace lives under ~/.crit, not in the repo.
-	data := jdtlsDataDir(dir)
-	if strings.HasPrefix(data, dir+string(filepath.Separator)) {
-		t.Errorf("workspace data dir %s is inside the repo", data)
-	}
+	data := filepath.Join(testSandbox(t, m).Workspace("java").Scratch, "data")
 	if !isDir(filepath.Join(data, ".metadata")) {
 		t.Errorf("workspace data dir %s was not used by the server", data)
 	}

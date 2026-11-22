@@ -26,6 +26,8 @@
       { id: 'previous_comment', binding: '[', action: 'Previous comment', modes: CODE_REVIEW_ONLY },
       { id: 'next_change', binding: 'n', action: 'Next change', mode: 'file mode', modes: CODE_REVIEW_ONLY },
       { id: 'previous_change', binding: 'Shift+N', action: 'Previous change', mode: 'file mode', modes: CODE_REVIEW_ONLY },
+      { id: 'next_commit', binding: '.', action: 'Next commit (one commit at a time)', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
+      { id: 'previous_commit', binding: ',', action: 'Previous commit (one commit at a time)', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
     ]},
     { label: 'Comments', shortcuts: [
       { id: 'comment', binding: 'c', action: 'Comment on focused block (or text selection, with quote)', modes: CODE_REVIEW_ONLY },
@@ -36,6 +38,8 @@
     ]},
     { label: 'Review', shortcuts: [
       { id: 'finish_review', binding: 'Shift+F', action: 'Finish review', modes: BOTH },
+      { id: 'toggle_viewed', binding: 'a', action: 'Toggle viewed on focused file (or file under the mouse)', modes: CODE_REVIEW_ONLY },
+      { id: 'toggle_collapse', binding: 'o', action: 'Collapse or expand focused file (or file under the mouse)', modes: CODE_REVIEW_ONLY },
       { id: 'scope_all', binding: 'Shift+1', action: 'Switch to all changes', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
       { id: 'scope_branch', binding: 'Shift+2', action: 'Switch to branch changes', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
       { id: 'scope_staged', binding: 'Shift+3', action: 'Switch to staged changes', mode: 'vcs mode', modes: CODE_REVIEW_ONLY },
@@ -57,6 +61,8 @@
       { id: 'toggle_comments', binding: 'Shift+C', action: 'Toggle comments panel', modes: CODE_REVIEW_ONLY },
       { id: 'toggle_toc', binding: 't', action: 'Toggle table of contents', mode: 'file mode', modes: CODE_REVIEW_ONLY },
       { id: 'toggle_resolved', binding: 'h', action: 'Toggle hide resolved', modes: CODE_REVIEW_ONLY },
+      { binding: 'Cmd/Ctrl+F', action: 'Find in diff (press again for the browser\'s find)', modes: CODE_REVIEW_ONLY, fixed: true },
+      { binding: 'Cmd/Ctrl+G', action: 'Next match (Shift for previous)', modes: CODE_REVIEW_ONLY, fixed: true },
       { binding: 'Esc', action: 'Cancel / clear focus', modes: BOTH, fixed: true },
       { binding: '?', action: 'Toggle this panel', modes: BOTH, fixed: true },
     ]},

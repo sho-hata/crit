@@ -3,13 +3,28 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sho-hata/crit/internal/sandbox"
 )
+
+func testSandbox(t *testing.T, m *Manager) *sandbox.Sandbox {
+	t.Helper()
+	sb, err := m.sandbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sb
+}
 
 // managerHarness tracks the fake servers a Manager spawned via its start hook.
 type managerHarness struct {
@@ -22,8 +37,8 @@ type managerHarness struct {
 func newManagerHarness(t *testing.T, handler func(method string, params json.RawMessage) any) (*Manager, *managerHarness) {
 	t.Helper()
 	h := &managerHarness{handler: handler}
-	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, _ *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, _ *Language, _, _ map[string]any) (*Client, error) {
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
 		h.mu.Lock()
@@ -184,8 +199,8 @@ func TestManagerColdStartDoesNotBlockOtherLanguage(t *testing.T) {
 	release := func() { releaseOnce.Do(func() { close(goRelease) }) }
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(t.TempDir(), "", context.Background())
-	m.start = func(_ context.Context, _ string, lang *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, lang *Language, _, _ map[string]any) (*Client, error) {
 		if lang.Name == "go" {
 			close(goStarted)
 			<-goRelease // park the Go cold start
@@ -226,7 +241,7 @@ func TestManagerColdStartDoesNotBlockOtherLanguage(t *testing.T) {
 // startCapture builds a start hook that records the initializationOptions the
 // Manager resolved for each spawn.
 func startCapture(h *managerHarness, got *map[string]any) startFunc {
-	return func(_ context.Context, _ string, _ *Language, initOpts, _ map[string]any) (*Client, error) {
+	return func(_ context.Context, _ *Language, initOpts, _ map[string]any) (*Client, error) {
 		*got = initOpts
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
@@ -253,7 +268,7 @@ func TestManagerResolvesInitOptionsFromDepRootWhenWorktreeLacksDeps(t *testing.T
 	writeGoFile(t, filepath.Dir(file), "App.tsx", "export const App = () => null;\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCapture(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -281,7 +296,7 @@ func TestManagerPrefersWorkspaceInstallOverDepRoot(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.ts", "export const x = 1;\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCapture(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -304,7 +319,7 @@ func TestManagerSendsNoInitOptionsWithoutAnyInstall(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.ts", "export const x = 1;\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCapture(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -320,7 +335,7 @@ func TestManagerSendsNoInitOptionsWithoutAnyInstall(t *testing.T) {
 // startCaptureSettings builds a start hook that records the
 // workspace/configuration settings the Manager resolved for each spawn.
 func startCaptureSettings(h *managerHarness, got *map[string]any) startFunc {
-	return func(_ context.Context, _ string, _ *Language, _, settings map[string]any) (*Client, error) {
+	return func(_ context.Context, _ *Language, _, settings map[string]any) (*Client, error) {
 		*got = settings
 		h.spawns.Add(1)
 		fs := startFake(h.handler)
@@ -355,7 +370,7 @@ func TestManagerResolvesSettingsFromDepRootWhenWorktreeLacksVenv(t *testing.T) {
 	writeGoFile(t, filepath.Dir(file), "app.py", "import mylib\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCaptureSettings(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -379,7 +394,7 @@ func TestManagerPrefersWorkspaceVenvOverDepRoot(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.py", "import mylib\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	var got map[string]any
 	m.start = startCaptureSettings(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -402,7 +417,7 @@ func TestManagerSendsNoSettingsWithoutAnyVenv(t *testing.T) {
 	file := writeGoFile(t, worktree, "app.py", "import mylib\n")
 
 	h := &managerHarness{handler: hoverOK}
-	m := NewManager(worktree, depRoot, context.Background())
+	m := NewManager(worktree, depRoot, t.TempDir(), context.Background())
 	got := map[string]any{"sentinel": true}
 	m.start = startCaptureSettings(h, &got)
 	t.Cleanup(m.Shutdown)
@@ -429,7 +444,7 @@ func TestManagerSendsNoSettingsToLanguagesWithoutThem(t *testing.T) {
 			file := writeGoFile(t, root, name, "\n")
 
 			h := &managerHarness{handler: hoverOK}
-			m := NewManager(root, "", context.Background())
+			m := NewManager(root, "", t.TempDir(), context.Background())
 			got := map[string]any{"sentinel": true}
 			m.start = startCaptureSettings(h, &got)
 			t.Cleanup(m.Shutdown)
@@ -456,7 +471,7 @@ func TestManagerDepBase(t *testing.T) {
 		{"range focus reads dependencies from the working tree", "/tmp/worktree", "/repo", "/repo"},
 	}
 	for _, tc := range cases {
-		m := NewManager(tc.root, tc.depRoot, context.Background())
+		m := NewManager(tc.root, tc.depRoot, t.TempDir(), context.Background())
 		if got := m.depBase(); got != tc.want {
 			t.Errorf("%s: depBase() = %q, want %q", tc.name, got, tc.want)
 		}
@@ -473,8 +488,8 @@ func TestManagerDoesNotWaitOnProgressForPython(t *testing.T) {
 	root := t.TempDir()
 	file := writeGoFile(t, root, "app.py", "x = 1\n")
 
-	m := NewManager(root, "", context.Background())
-	m.start = func(_ context.Context, _ string, _ *Language, _, _ map[string]any) (*Client, error) {
+	m := NewManager(root, "", t.TempDir(), context.Background())
+	m.start = func(_ context.Context, _ *Language, _, _ map[string]any) (*Client, error) {
 		fs := startFake(hoverOK)
 		fs.send(map[string]any{
 			"jsonrpc": "2.0", "method": "$/progress",
@@ -535,6 +550,294 @@ func TestManagerNoResultIsAnEmptyResult(t *testing.T) {
 			refs, err := m.References(file, 0, 0)
 			if (err != nil) != tc.wantErr || len(refs) != 0 {
 				t.Errorf("References = %v, %v; want none, error %v", refs, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// docEvents lists the documents a fake server was told about, as
+// "didOpen a.py" and the like, with paths relative to root.
+func docEvents(t *testing.T, fs *fakeServer, root string) []string {
+	t.Helper()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	var out []string
+	for _, n := range fs.notifications {
+		method, ok := strings.CutPrefix(n.Method, "textDocument/")
+		if !ok {
+			continue
+		}
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+		}
+		if err := json.Unmarshal(n.Params, &p); err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(root, URIToPath(p.TextDocument.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, method+" "+filepath.ToSlash(rel))
+	}
+	return out
+}
+
+// The review's other files open next to a request for a language that wants
+// them (Language.OpenSessionFile), and stay in sync with the disk: an edit
+// sends didChange, a deletion didClose, an untouched file nothing.
+func TestManagerOpensSessionFiles(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		files  []string // first one is requested
+		config string   // written at root when set
+		want   []string // after the first request
+	}{
+		{"python opens every review file", []string{"a.py", "b.py", "pkg/c.py", "main.go"}, "",
+			[]string{"didOpen a.py", "didOpen b.py", "didOpen pkg/c.py"}},
+		{"typescript without a project opens them", []string{"a.ts", "b.ts"}, "",
+			[]string{"didOpen a.ts", "didOpen b.ts"}},
+		{"typescript under a tsconfig.json leaves them to the project", []string{"a.ts", "b.ts"}, "tsconfig.json",
+			[]string{"didOpen a.ts"}},
+		{"go indexes the module itself", []string{"a.go", "b.go"}, "",
+			[]string{"didOpen a.go"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m, h := newManagerHarness(t, hoverOK)
+			for _, f := range append([]string{tc.config}, tc.files...) {
+				if f == "" {
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(filepath.Join(m.root, f)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				writeGoFile(t, m.root, f, "\n")
+			}
+			m.SetSessionFiles(func() []string { return tc.files })
+
+			if _, err := m.Hover(filepath.Join(m.root, tc.files[0]), 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+			if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, tc.want) {
+				t.Errorf("after the first request: %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("edits and deletions reach the server", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		for _, f := range []string{"a.py", "b.py", "c.py"} {
+			writeGoFile(t, m.root, f, "x = 1\n")
+		}
+		m.SetSessionFiles(func() []string { return []string{"a.py", "b.py", "c.py"} })
+		a := filepath.Join(m.root, "a.py")
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover: %v", err)
+		}
+		writeGoFile(t, m.root, "b.py", "x = 22\n")
+		if err := os.Remove(filepath.Join(m.root, "c.py")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover(2): %v", err)
+		}
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover(3): %v", err)
+		}
+		want := []string{"didOpen a.py", "didOpen b.py", "didOpen c.py", "didChange b.py", "didClose c.py"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a path the review stops listing is closed", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		for _, f := range []string{"a.py", "old.py", "new.py"} {
+			writeGoFile(t, m.root, f, "x = 1\n")
+		}
+		var mu sync.Mutex
+		listed := []string{"a.py", "old.py"}
+		m.SetSessionFiles(func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return slices.Clone(listed)
+		})
+		a := filepath.Join(m.root, "a.py")
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover: %v", err)
+		}
+		// A rename: the old path leaves the list, whatever is on disk.
+		mu.Lock()
+		listed = []string{"a.py", "new.py"}
+		mu.Unlock()
+		if _, err := m.Hover(a, 0, 0); err != nil {
+			t.Fatalf("Hover(2): %v", err)
+		}
+		want := []string{"didOpen a.py", "didOpen old.py", "didOpen new.py", "didClose old.py"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("a tsconfig.json added or removed between requests is honored", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		writeGoFile(t, m.root, "a.ts", "\n")
+		writeGoFile(t, m.root, "b.ts", "\n")
+		writeGoFile(t, m.root, "tsconfig.json", "{}")
+		m.SetSessionFiles(func() []string { return []string{"a.ts", "b.ts"} })
+		a := filepath.Join(m.root, "a.ts")
+		hover := func() {
+			t.Helper()
+			if _, err := m.Hover(a, 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+		}
+		hover()
+		if err := os.Remove(filepath.Join(m.root, "tsconfig.json")); err != nil {
+			t.Fatal(err)
+		}
+		hover()
+		writeGoFile(t, m.root, "tsconfig.json", "{}")
+		hover()
+		want := []string{"didOpen a.ts", "didOpen b.ts", "didClose b.ts"}
+		if got := docEvents(t, h.server(0), m.root); !slices.Equal(got, want) {
+			t.Errorf("events = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("at most maxSessionDocuments besides the request", func(t *testing.T) {
+		t.Parallel()
+		m, h := newManagerHarness(t, hoverOK)
+		var files []string
+		for i := range maxSessionDocuments + 5 {
+			name := fmt.Sprintf("m%d.py", i)
+			writeGoFile(t, m.root, name, "\n")
+			files = append(files, name)
+		}
+		m.SetSessionFiles(func() []string { return files })
+		if _, err := m.Hover(filepath.Join(m.root, files[0]), 0, 0); err != nil {
+			t.Fatalf("Hover: %v", err)
+		}
+		if got, want := len(docEvents(t, h.server(0), m.root)), maxSessionDocuments+1; got != want {
+			t.Errorf("didOpen count = %d, want %d", got, want)
+		}
+	})
+}
+
+// A ContentModified reply means the server dropped an answer it judged stale.
+// The manager re-syncs the document and asks again, a bounded number of times;
+// past that the error surfaces.
+func TestManagerRetriesContentModified(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		failures int
+		wantErr  bool
+	}{
+		{"once", 1, false},
+		{"up to the retry budget", len(contentModifiedBackoff), false},
+		{"beyond the retry budget", len(contentModifiedBackoff) + 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var file string
+			var hovers atomic.Int32
+			m, h := newManagerHarness(t, func(method string, params json.RawMessage) any {
+				if method != "textDocument/hover" {
+					return nil
+				}
+				if int(hovers.Add(1)) > tc.failures {
+					return hoverOK(method, params)
+				}
+				// The edit that made the server bail: the retry must send it.
+				_ = os.WriteFile(file, []byte("package main\n\nfunc F() {}\n"), 0o644)
+				return &ResponseError{Code: contentModifiedCode, Message: "content modified"}
+			})
+			file = writeGoFile(t, m.root, "main.go", "package main\n")
+
+			hover, err := m.Hover(file, 0, 0)
+			if tc.wantErr {
+				var respErr *ResponseError
+				if !errors.As(err, &respErr) || respErr.Code != contentModifiedCode {
+					t.Fatalf("Hover = %q, %v; want the ContentModified error", hover, err)
+				}
+			} else if err != nil || hover != "doc" {
+				t.Fatalf("Hover = %q, %v; want \"doc\"", hover, err)
+			}
+			if got, want := int(hovers.Load()), min(tc.failures, len(contentModifiedBackoff))+1; got != want {
+				t.Errorf("hover requests = %d, want %d", got, want)
+			}
+			changes := 0
+			for _, method := range h.server(0).notificationMethods() {
+				if method == "textDocument/didChange" {
+					changes++
+				}
+			}
+			if changes != 1 {
+				t.Errorf("didChange = %d, want 1 (the retry re-syncs the edited file)", changes)
+			}
+		})
+	}
+}
+
+// A TypeScript server under a tsconfig.json always reports loading the
+// project, so the first request waits for that report even when it starts
+// later than progressGrace; without a config it reports nothing, and the
+// request goes out once progressGrace has passed.
+func TestManagerWaitsForLateStartupProgress(t *testing.T) {
+	t.Parallel()
+
+	const lateBy = progressGrace + 500*time.Millisecond
+	cases := []struct {
+		name       string
+		config     bool
+		wantWaited bool
+	}{
+		{"under a tsconfig.json", true, true},
+		{"inferred project", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var progressDone, hoverAt atomic.Int64
+			m, h := newManagerHarness(t, func(method string, params json.RawMessage) any {
+				if method == "textDocument/hover" {
+					hoverAt.Store(time.Now().UnixNano())
+				}
+				return hoverOK(method, params)
+			})
+			start := m.start
+			m.start = func(ctx context.Context, lang *Language, initOpts, settings map[string]any) (*Client, error) {
+				c, err := start(ctx, lang, initOpts, settings)
+				fs := h.server(0)
+				time.AfterFunc(lateBy, func() {
+					fs.sendProgress("load", "begin")
+					fs.sendProgress("load", "end")
+					progressDone.Store(time.Now().UnixNano())
+				})
+				return c, err
+			}
+			if tc.config {
+				writeGoFile(t, m.root, "tsconfig.json", "{}")
+			}
+			file := writeGoFile(t, m.root, "a.ts", "\n")
+
+			if _, err := m.Hover(file, 0, 0); err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+			waited := progressDone.Load() != 0 && hoverAt.Load() >= progressDone.Load()
+			if waited != tc.wantWaited {
+				t.Errorf("hover sent after the late progress = %v, want %v", waited, tc.wantWaited)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,8 +30,10 @@ type fakeWatchVCS struct {
 	changedFlsCalls int32
 }
 
-func (f *fakeWatchVCS) CurrentBranch() string { return f.currentBranch }
-func (f *fakeWatchVCS) DefaultBranch() string { return f.defaultBranch }
+func (f *fakeWatchVCS) CurrentBranch() string                { return f.currentBranch }
+func (f *fakeWatchVCS) DefaultBranch() string                { return f.defaultBranch }
+func (f *fakeWatchVCS) DefaultBaseRef() string               { return "origin/" + f.defaultBranch }
+func (f *fakeWatchVCS) MergeBase(ref string) (string, error) { return ref, nil }
 
 func (f *fakeWatchVCS) ChangedFilesOnDefaultInDir(_ string) ([]vcs.FileChange, error) {
 	atomic.AddInt32(&f.changedFlsCalls, 1)
@@ -62,9 +65,7 @@ func (f *fakeWatchVCS) DiffNumstat(_, _ string) (map[string]vcs.NumstatEntry, er
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make(map[string]vcs.NumstatEntry, len(f.numstats))
-	for k, v := range f.numstats {
-		out[k] = v
-	}
+	maps.Copy(out, f.numstats)
 	return out, nil
 }
 
@@ -245,7 +246,7 @@ func TestRefreshFileList_LazyThresholdMarksOverflow(t *testing.T) {
 	}
 	// Build > lazyFileThreshold changes.
 	total := lazyFileThreshold + 5
-	for i := 0; i < total; i++ {
+	for i := range total {
 		path := fmt.Sprintf("dir/f%d.go", i)
 		v.branchChanges = append(v.branchChanges, vcs.FileChange{Path: path, Status: "modified"})
 		v.numstats[path] = vcs.NumstatEntry{Additions: i, Deletions: 0}
@@ -295,7 +296,7 @@ func TestWatch_RefreshDiffsAndFileList_RaceFree(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		wg.Add(2)
 		go func() { defer wg.Done(); s.RefreshDiffs() }()
 		go func() { defer wg.Done(); s.RefreshFileList() }()

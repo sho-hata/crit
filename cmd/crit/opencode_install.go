@@ -61,7 +61,7 @@ func installOpencodePluginDependency(path, version string, force bool) error {
 	if version == "" {
 		return errors.New("could not determine the OpenCode v2 version for @opencode/plugin")
 	}
-	root := map[string]interface{}{}
+	root := map[string]any{}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		if err := json.Unmarshal(data, &root); err != nil {
@@ -70,12 +70,12 @@ func installOpencodePluginDependency(path, version string, force bool) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	dependencies, ok := root["dependencies"].(map[string]interface{})
+	dependencies, ok := root["dependencies"].(map[string]any)
 	if !ok {
 		if _, exists := root["dependencies"]; exists {
 			return fmt.Errorf("%s has a dependencies field that is not an object", path)
 		}
-		dependencies = map[string]interface{}{}
+		dependencies = map[string]any{}
 	}
 	if current, ok := dependencies["@opencode/plugin"].(string); ok {
 		if current == version {
@@ -194,7 +194,7 @@ func checkOpencodePluginDependencyForVersion(projectDir, homeDir string, major i
 // exact line the user needs to add and leave the file alone. Same policy for
 // JSONC files with comments, which encoding/json can't round-trip safely.
 func installOpencodePluginEntry(path, entry string, force bool) error {
-	root := map[string]interface{}{}
+	root := map[string]any{}
 	data, readErr := os.ReadFile(path)
 	switch {
 	case readErr == nil:
@@ -213,7 +213,7 @@ func installOpencodePluginEntry(path, entry string, force bool) error {
 		// If `plugin` exists but isn't an array (string shorthand, null, object),
 		// we don't know how to safely append — bail rather than clobber.
 		if raw, ok := root["plugin"]; ok && raw != nil {
-			if _, ok := raw.([]interface{}); !ok {
+			if _, ok := raw.([]any); !ok {
 				printManualPluginInstruction(path, "\"plugin\" key is not an array", entry)
 				return nil
 			}
@@ -224,7 +224,7 @@ func installOpencodePluginEntry(path, entry string, force bool) error {
 		return readErr
 	}
 
-	plugins, _ := root["plugin"].([]interface{})
+	plugins, _ := root["plugin"].([]any)
 	if pluginEntryPresent(plugins, entry) {
 		if !force {
 			fmt.Printf("  Skipped:   %s (plugin already registered)\n", path)
@@ -261,12 +261,12 @@ func removeOpencodePluginEntry(path, entry string) {
 		fmt.Printf("  Note:      remove the V1 plugin registration %q from %s; V2 discovers the Crit plugin automatically\n", entry, path)
 		return
 	}
-	root := map[string]interface{}{}
+	root := map[string]any{}
 	if err := json.Unmarshal(stripTrailingCommas(data), &root); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not remove the V1 plugin registration from %s: %v\n", path, err)
 		return
 	}
-	plugins, ok := root["plugin"].([]interface{})
+	plugins, ok := root["plugin"].([]any)
 	if !ok {
 		return
 	}
@@ -274,9 +274,9 @@ func removeOpencodePluginEntry(path, entry string) {
 		fmt.Printf("  Note:      remove the V1 plugin registration %q from %s; V2 discovers the Crit plugin automatically\n", entry, path)
 		return
 	}
-	filtered := make([]interface{}, 0, len(plugins))
+	filtered := make([]any, 0, len(plugins))
 	for _, plugin := range plugins {
-		if !pluginEntryPresent([]interface{}{plugin}, entry) {
+		if !pluginEntryPresent([]any{plugin}, entry) {
 			filtered = append(filtered, plugin)
 		}
 	}
@@ -302,7 +302,7 @@ func removeOpencodePluginEntry(path, entry string) {
 // than the `plugin` key. Re-marshaling a map[string]interface{} reorders keys
 // and strips formatting, so we treat any extra content as a signal to leave
 // the file alone and ask the user to register the plugin manually.
-func hasUnrelatedKeys(root map[string]interface{}) bool {
+func hasUnrelatedKeys(root map[string]any) bool {
 	for k := range root {
 		if k != "plugin" {
 			return true
@@ -322,14 +322,14 @@ func printManualPluginInstruction(path, reason, entry string) {
 
 // pluginEntryPresent reports whether `entry` (or its `[name, options]` tuple
 // form) already exists in the opencode plugin array.
-func pluginEntryPresent(plugins []interface{}, entry string) bool {
+func pluginEntryPresent(plugins []any, entry string) bool {
 	for _, p := range plugins {
 		switch v := p.(type) {
 		case string:
 			if v == entry {
 				return true
 			}
-		case []interface{}:
+		case []any:
 			if len(v) > 0 {
 				if name, ok := v[0].(string); ok && name == entry {
 					return true

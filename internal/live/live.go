@@ -9,10 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/sho-hata/crit/internal/browser"
@@ -64,9 +62,9 @@ func detectFrameworks(body []byte) []string {
 var smokeClient = &http.Client{Timeout: 10 * time.Second}
 
 var (
-	startLiveDaemon                = daemon.StartDaemon
+	startLiveDaemon                = daemon.StartLiveDaemon
 	runLiveClient                  = daemon.RunReviewClient
-	installLiveDaemonSignalHandler = installDaemonSignalHandler
+	installLiveDaemonSignalHandler = daemon.StopOnSignal
 	openLiveBrowser                = browser.OpenBrowserWithCommand
 	launchLiveBrowser              = func(url, openCmd string) {
 		go openLiveBrowser(url, openCmd)
@@ -236,11 +234,11 @@ func parseLiveCLIFlags(args []string) liveCLIFlags {
 	}
 }
 
-func buildLiveDaemonArgs(origin, liveCookies string, f liveCLIFlags, cfg config.Config, noOpenResolved bool) []string {
+// buildLiveDaemonArgs builds the _serve argv for a live daemon. Cookies are
+// deliberately absent: they travel through the daemon's environment
+// (daemon.StartLiveDaemon) because argv is visible to every local user.
+func buildLiveDaemonArgs(origin string, f liveCLIFlags, cfg config.Config, noOpenResolved bool) []string {
 	daemonArgs := []string{"--live-origin", origin}
-	if liveCookies != "" {
-		daemonArgs = append(daemonArgs, "--live-cookie", liveCookies)
-	}
 	return daemon.AppendCommonDaemonFlags(daemonArgs, daemon.CommonDaemonFlags{
 		Port:                        config.ResolvePort(f.port, cfg.Port),
 		Host:                        config.ResolveHost(f.host, cfg.Host),
@@ -264,6 +262,11 @@ func RunLive(args []string) {
 	key := daemon.LiveSessionKey(cwd, f.origin)
 	noOpenResolved := f.noOpen || cfg.NoOpen
 	quiet := f.quiet || cfg.Quiet
+	if err := checkLiveCookiesExposure(config.ResolveHost(f.host, cfg.Host), config.ResolvePublicURL(f.publicURL, cfg), f, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	if connectToLiveDaemon(key, noOpenResolved, cfg.OpenCmd, quiet) {
 		return
 	}
@@ -280,7 +283,7 @@ func RunLive(args []string) {
 		return
 	}
 
-	entry, err := startLiveDaemon(key, buildLiveDaemonArgs(f.origin, liveCookies, f, cfg, noOpenResolved))
+	entry, err := startLiveDaemon(key, buildLiveDaemonArgs(f.origin, f, cfg, noOpenResolved), liveCookies)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not start live daemon: %v\n", err)
 		os.Exit(1)
@@ -292,7 +295,7 @@ func RunLive(args []string) {
 		fmt.Fprintf(os.Stderr, "[crit] open %s/live\n", entry.BaseURL())
 	}
 
-	installLiveDaemonSignalHandler(entry.PID)
+	installLiveDaemonSignalHandler(entry, daemon.TerminationSignals()...)
 
 	runLiveClient(entry, key, quiet)
 }
@@ -312,17 +315,4 @@ func checkLiveSmoke(origin, cookies string) {
 	for _, n := range result.frameworkNotes {
 		fmt.Fprintf(os.Stderr, "[crit] note: %s\n", n)
 	}
-}
-
-func installDaemonSignalHandler(pid int) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		proc, err := os.FindProcess(pid)
-		if err == nil {
-			_ = daemon.TerminateProcess(proc)
-		}
-		os.Exit(0)
-	}()
 }

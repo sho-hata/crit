@@ -50,7 +50,7 @@ func TestDecodePRFileContent_HappyPath(t *testing.T) {
 
 	body := []byte("hello world\n")
 	encoded := base64.StdEncoding.EncodeToString(body)
-	raw := []byte(fmt.Sprintf(`{"content":%q,"encoding":"base64","sha":"abc"}`, encoded))
+	raw := fmt.Appendf(nil, `{"content":%q,"encoding":"base64","sha":"abc"}`, encoded)
 	got, err := decodePRFileContent(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -74,7 +74,7 @@ func TestDecodePRFileContent_StripsNewlinesInPayload(t *testing.T) {
 		}
 		wrapped.WriteRune(r)
 	}
-	raw := []byte(fmt.Sprintf(`{"content":%q,"encoding":"base64"}`, wrapped.String()))
+	raw := fmt.Appendf(nil, `{"content":%q,"encoding":"base64"}`, wrapped.String())
 	got, err := decodePRFileContent(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

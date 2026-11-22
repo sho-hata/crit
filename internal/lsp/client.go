@@ -325,7 +325,7 @@ func lookupSection(settings map[string]any, section string) any {
 		return v
 	}
 	var cur any = settings
-	for _, part := range strings.Split(section, ".") {
+	for part := range strings.SplitSeq(section, ".") {
 		m, ok := cur.(map[string]any)
 		if !ok {
 			return nil
@@ -433,6 +433,9 @@ func (c *Client) Initialize(rootDir string, initOpts map[string]any) error {
 		caps["workspace"] = map[string]any{"configuration": true}
 	}
 	params := map[string]any{
+		// nil, never crit's pid: a node server given a processId watches it
+		// with kill(pid, 0), which the sandbox refuses, and exits a few
+		// seconds after initialize with no message.
 		"processId": nil,
 		"rootUri":   rootURI,
 		"workspaceFolders": []map[string]any{
@@ -505,6 +508,14 @@ func (c *Client) DidChange(path, text string, version int) error {
 			"version": version,
 		},
 		"contentChanges": []map[string]any{{"text": text}},
+	})
+}
+
+// DidClose tells the server a document is no longer open, so it reads the
+// file from disk again.
+func (c *Client) DidClose(path string) error {
+	return c.notify("textDocument/didClose", map[string]any{
+		"textDocument": map[string]any{"uri": PathToURI(path)},
 	})
 }
 
