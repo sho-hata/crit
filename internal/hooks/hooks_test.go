@@ -203,9 +203,10 @@ func TestRun_InlineWritesStdoutStdinEnv(t *testing.T) {
 	}
 }
 
+// Not parallel: it writes a script and execs it, and on Linux a sibling
+// test forking in between inherits the write fd, so exec fails with
+// ETXTBSY (golang/go#22315).
 func TestRun_FileHookShebang(t *testing.T) {
-	t.Parallel()
-
 	if runtime.GOOS == "windows" {
 		t.Skip("file shebang hook tested on unix")
 	}
