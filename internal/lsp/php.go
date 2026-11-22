@@ -90,9 +90,9 @@ func phpExtraRoots(root string, _ Run) []PeekRoot {
 
 // intelephenseStubs returns "" when the binary is not laid out like the npm
 // package; built-in definitions then still answer, but their peek is
-// unreadable. The binary is the one the sandbox runs, never a copy in tree.
+// unreadable.
 func intelephenseStubs(tree string) string {
-	bin := serverBinary("intelephense", tree)
+	bin := binaryOutsideTree("intelephense", tree)
 	if bin == "" {
 		return ""
 	}

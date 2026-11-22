@@ -110,9 +110,6 @@ func TestPHPExtraRootsVendor(t *testing.T) {
 	}
 }
 
-// installIntelephense lays out the npm package under prefix, with <prefix>/bin
-// linking to lib/intelephense.js and the stubs beside it in lib/stub. It
-// returns the bin and stub dirs.
 func installIntelephense(t *testing.T, prefix string) (bin, stub string) {
 	t.Helper()
 	lib := filepath.Join(prefix, "lib", "node_modules", "intelephense", "lib")
@@ -143,9 +140,6 @@ func phpStubsRoot(roots []PeekRoot) string {
 	return ""
 }
 
-// A peek root is readable through the API, so a copy of intelephense in the
-// tree under review, ahead on PATH, must not name it: its stub dir can be a
-// symlink to anywhere. The sandbox never runs that copy either.
 func TestPHPExtraRootsSkipAServerInTheTree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs symlinks")

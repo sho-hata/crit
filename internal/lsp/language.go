@@ -410,7 +410,7 @@ func npmGlobalRoots(root string, run Run) []PeekRoot {
 // this is the binary that will run and not a copy in the repository's
 // node_modules/.bin.
 func serverNodeModules(name, tree string) string {
-	bin := serverBinary(name, tree)
+	bin := binaryOutsideTree(name, tree)
 	if bin == "" {
 		return ""
 	}
@@ -431,7 +431,7 @@ func serverNodeModules(name, tree string) string {
 	return ""
 }
 
-func serverBinary(name, tree string) string {
+func binaryOutsideTree(name, tree string) string {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if !filepath.IsAbs(dir) || (tree != "" && sandbox.Beneath(dir, tree)) {
 			continue
