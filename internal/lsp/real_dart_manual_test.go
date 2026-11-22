@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sho-hata/crit/internal/sandbox"
 )
 
 const dartPubspecSource = "name: contract\nenvironment:\n  sdk: ^3.0.0\n"
@@ -120,7 +122,7 @@ func TestRealDartNeverRunsAnalyzerPlugins(t *testing.T) {
 	marker := writeDartPluginCanary(t, dir)
 	before := listTree(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	t.Cleanup(m.Shutdown) // a failed Hover must not leak the server
 
 	got, err := m.Hover(main, dartGreetUseLine, dartGreetUseChar)
@@ -150,6 +152,9 @@ func TestRealDartNeverRunsAnalyzerPlugins(t *testing.T) {
 // leaves nothing behind.
 func TestRealDartRunsAnalyzerPluginsByDefault(t *testing.T) {
 	requireRealDart(t)
+	if sb := sandbox.Detect(); sb.Name != "" {
+		t.Skipf("%s denies the plugin's pub fetch and its marker write; the control needs an unconfined server", sb.Name)
+	}
 	t.Setenv("PUB_CACHE", t.TempDir())
 
 	dir := t.TempDir()
@@ -159,7 +164,8 @@ func TestRealDartRunsAnalyzerPluginsByDefault(t *testing.T) {
 	lang := *LanguageForPath(main)
 	lang.Command = slices.DeleteFunc(slices.Clone(lang.Command), func(a string) bool { return a == "--no-plugins" })
 
-	c, err := startServer(context.Background(), dir, &lang, nil, nil)
+	m := NewManager(dir, "", t.TempDir(), context.Background())
+	c, err := m.startServer(context.Background(), &lang, nil, nil)
 	if err != nil {
 		t.Fatalf("startServer: %v", err)
 	}
@@ -182,7 +188,7 @@ func TestRealDartSDKDefinitionIsPeekable(t *testing.T) {
 	dir := t.TempDir()
 	main := writeDartProject(t, dir)
 
-	m := NewManager(dir, "", context.Background())
+	m := NewManager(dir, "", t.TempDir(), context.Background())
 	defer m.Shutdown()
 
 	locs, err := m.Definition(main, dartPrintLine, dartPrintChar)
@@ -229,7 +235,7 @@ func TestRealDartPackageImportNeedsPackageConfig(t *testing.T) {
 			writeTree(t, dir, files)
 			main := filepath.Join(dir, "bin", "main.dart")
 
-			m := NewManager(dir, "", context.Background())
+			m := NewManager(dir, "", t.TempDir(), context.Background())
 			defer m.Shutdown()
 
 			got, err := m.Hover(main, dartGreetUseLine, dartGreetUseChar)
@@ -247,5 +253,24 @@ func TestRealDartPackageImportNeedsPackageConfig(t *testing.T) {
 				t.Errorf("definition = %+v, want one=%v", locs, tc.withConfig)
 			}
 		})
+	}
+}
+
+func TestRealDartKeepsItsCacheInTheScratch(t *testing.T) {
+	t.Parallel()
+	requireRealDart(t)
+
+	dir := t.TempDir()
+	main := writeDartProject(t, dir)
+	m := NewManager(dir, "", t.TempDir(), context.Background())
+	t.Cleanup(m.Shutdown)
+
+	if _, err := m.Hover(main, dartGreetUseLine, dartGreetUseChar); err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	cache := filepath.Join(testSandbox(t, m).Workspace("dart").Scratch, "cache")
+	entries, err := os.ReadDir(cache)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("nothing cached under %s: %v", cache, err)
 	}
 }

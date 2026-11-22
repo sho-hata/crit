@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 )
@@ -13,12 +12,18 @@ import (
 //   - the pub cache, where hosted packages live; the repo's
 //     .dart_tool/package_config.json points package: imports there
 //
-// Both are machine-wide, so root is ignored. The cache holds whatever the
+// Both are machine-wide; root only keeps the dart lookup off the tree. The cache holds whatever the
 // reviewer has fetched, not the reviewed SHA's versions, hence LocalEnv.
 // Each source is optional; only a lookup that finds nothing at all is nil.
-func dartExtraRoots(_ string) []PeekRoot {
+// dartArgs moves the analysis server's cache from ~/.dartServer, which the
+// sandbox cannot write, into the scratch, where it survives restarts.
+func dartArgs(ws Workspace) []string {
+	return []string{"--cache=" + filepath.Join(ws.Scratch, "cache")}
+}
+
+func dartExtraRoots(root string, _ Run) []PeekRoot {
 	var roots []PeekRoot
-	if sdk := dartSDKRoot(); sdk != "" {
+	if sdk := dartSDKRoot(root); sdk != "" {
 		roots = append(roots, PeekRoot{Path: filepath.Join(sdk, "lib"), Label: "$DART_SDK"})
 	}
 	if cache := pubCacheDir(); cache != "" {
@@ -30,11 +35,12 @@ func dartExtraRoots(_ string) []PeekRoot {
 	return roots
 }
 
-// dartSDKRoot is the SDK behind the dart on PATH, "" when its layout is not
-// recognized (built-in definitions then still answer, without a peek).
-func dartSDKRoot() string {
-	bin, err := exec.LookPath("dart")
-	if err != nil {
+// dartSDKRoot is the SDK behind the dart the sandbox will run, "" when its
+// layout is not recognized (built-in definitions then still answer, without
+// a peek).
+func dartSDKRoot(tree string) string {
+	bin := serverBinary("dart", tree)
+	if bin == "" {
 		return ""
 	}
 	// Package managers link the binary; the SDK sits around the target.
