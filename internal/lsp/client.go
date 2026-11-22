@@ -154,6 +154,12 @@ func (c *Client) markDone() {
 	c.mu.Unlock()
 }
 
+// maxFrameBytes bounds the body readFrame allocates from a server-chosen
+// Content-Length: a value past what a slice can hold panics the daemon, a
+// large one exhausts its memory. References to fmt.Errorf across the Go
+// standard library (1.5k locations) come to about 270KB.
+const maxFrameBytes = 64 << 20
+
 func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
 	var msg jsonrpcMessage
 	contentLen := -1
@@ -174,6 +180,9 @@ func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
 	}
 	if contentLen < 0 {
 		return msg, fmt.Errorf("lsp: missing Content-Length header")
+	}
+	if contentLen > maxFrameBytes {
+		return msg, fmt.Errorf("lsp: frame of %d bytes exceeds the %d-byte limit", contentLen, maxFrameBytes)
 	}
 	body := make([]byte, contentLen)
 	if _, err := io.ReadFull(r, body); err != nil {

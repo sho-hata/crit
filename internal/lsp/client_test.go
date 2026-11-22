@@ -494,6 +494,7 @@ func TestClientDeadAfterOversizedFrame(t *testing.T) {
 		name   string
 		length int64
 	}{
+		{"one byte over the limit", maxFrameBytes + 1},
 		{"beyond int range of a slice", 1 << 62},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
