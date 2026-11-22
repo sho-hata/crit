@@ -208,7 +208,6 @@ var languages = []*Language{
 		SparsePatterns: []string{
 			"*.php", "*.phtml", "composer.json", "composer.lock",
 		},
-		// Static: intelephense runs neither PHP nor Composer.
 		InitOptions:    phpInitOptions,
 		ConfigSettings: phpConfigSettings,
 		Env:            nodeEnv,

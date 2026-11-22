@@ -109,8 +109,6 @@ func TestPHPExtraRootsVendor(t *testing.T) {
 	}
 }
 
-// intelephense's index must outlive a server restart, so it goes under the
-// scratch but not under its tmp/, which every start empties.
 func TestPHPInitOptionsKeepTheIndexInTheScratch(t *testing.T) {
 	t.Parallel()
 	lang := LanguageForPath("index.php")

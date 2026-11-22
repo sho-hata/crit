@@ -253,9 +253,6 @@ func TestRealPHPWritesNothingIntoTheRepo(t *testing.T) {
 	}
 }
 
-// The index is written under the server's scratch and is still there for
-// the next server: a restart after the idle shutdown does not start from
-// nothing.
 func TestRealPHPKeepsItsIndexAcrossRestarts(t *testing.T) {
 	t.Parallel()
 	requireRealIntelephense(t)
@@ -263,8 +260,6 @@ func TestRealPHPKeepsItsIndexAcrossRestarts(t *testing.T) {
 	dir := t.TempDir()
 	app := writePHPProject(t, dir, true)
 	scratchBase := t.TempDir()
-	// intelephense keeps one directory per workspace under storagePath and
-	// renumbers the files in it as it goes; the directory is what persists.
 	stores := func(m *Manager) []string {
 		t.Helper()
 		entries, err := os.ReadDir(filepath.Join(testSandbox(t, m).Workspace("php").Scratch, "storage"))
