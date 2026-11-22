@@ -129,7 +129,7 @@ var realCases = map[string]realCase{
 		defFile:   "src/main/java/com/example/Greeter.java",
 		defLine:   javaGreetDefLine,
 		refsAt:    realPos{javaGreetUseLine, javaGreetUseChar},
-		refsMin:   0, // the syntax server has no references provider: empty, not an error
+		refsMin:   0,
 		blank:     realPos{1, 0},
 	},
 }

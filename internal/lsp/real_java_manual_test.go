@@ -1,13 +1,5 @@
 package lsp
 
-// Opt-in integration tests against a real jdt.ls (same CRIT_LSP_REAL gate as
-// the other real-server tests). Skipped unless enabled:
-//
-//	CRIT_LSP_REAL=1 go test ./internal/lsp -run TestRealJava -v
-//
-// Requires jdtls (Eclipse JDT Language Server's launcher) and a JDK 21+ on
-// PATH. No Gradle or Maven: the syntax server never runs a build tool.
-
 import (
 	"context"
 	"os"
@@ -37,12 +29,22 @@ public class App {
 }
 `
 
-// Positions (0-based line, UTF-16 character) in javaAppSource.
-const (
-	javaGreetUseLine, javaGreetUseChar = 4, 35 // greet
-	javaGreetDefLine                   = 5     // "public static String greet" in javaGreeterSource
-	javaPrintlnLine, javaPrintlnChar   = 4, 19 // println
+var (
+	javaGreetUseLine, javaGreetUseChar = sourcePos(javaAppSource, "greet(")
+	javaGreetDefLine, _                = sourcePos(javaGreeterSource, "public static String greet")
+	javaPrintlnLine, javaPrintlnChar   = sourcePos(javaAppSource, "println")
 )
+
+// sourcePos is the 0-based line and character of needle's first occurrence
+// in an ASCII fixture.
+func sourcePos(src, needle string) (line, char int) {
+	i := strings.Index(src, needle)
+	if i < 0 {
+		panic("fixture has no " + needle)
+	}
+	before := src[:i]
+	return strings.Count(before, "\n"), i - (strings.LastIndex(before, "\n") + 1)
+}
 
 func requireRealJdtls(t *testing.T) {
 	t.Helper()
@@ -54,9 +56,6 @@ func requireRealJdtls(t *testing.T) {
 	}
 }
 
-// writeJavaProject lays out the two sources plus a Gradle build whose settings
-// script records that it was evaluated — what a branch would commit to run
-// code on import. Returns App.java's path and the marker the script writes.
 func writeJavaProject(t *testing.T, dir string) (app, marker string) {
 	t.Helper()
 	marker = filepath.Join(t.TempDir(), "gradle-ran")
@@ -70,10 +69,6 @@ func writeJavaProject(t *testing.T, dir string) (app, marker string) {
 	return filepath.Join(dir, "src", "main", "java", "com", "example", "App.java"), marker
 }
 
-// The standard jdt.ls imports a Gradle project by evaluating its build
-// scripts (measured with 1.61.0: it started Gradle within 40s of didOpen and
-// wrote .gradle/, .project and .settings/ into the fixture). The syntax
-// server crit runs must do none of that, and still answer from the sources.
 func TestRealJavaNeverImportsTheBuild(t *testing.T) {
 	t.Parallel()
 	requireRealJdtls(t)
@@ -83,7 +78,7 @@ func TestRealJavaNeverImportsTheBuild(t *testing.T) {
 	before := listTree(t, dir)
 
 	m := NewManager(dir, "", t.TempDir(), context.Background())
-	t.Cleanup(m.Shutdown) // a failed Hover must not leak the server
+	t.Cleanup(m.Shutdown)
 
 	got, err := m.Hover(app, javaGreetUseLine, javaGreetUseChar)
 	if err != nil {
@@ -92,7 +87,6 @@ func TestRealJavaNeverImportsTheBuild(t *testing.T) {
 	if !strings.Contains(got, "friendly greeting") {
 		t.Errorf("hover = %q, want the Javadoc from Greeter.java", got)
 	}
-	// JDK types resolve from the running JDK, no build needed.
 	got, err = m.Hover(app, javaPrintlnLine, javaPrintlnChar)
 	if err != nil {
 		t.Fatalf("Hover(println): %v", err)
@@ -100,13 +94,10 @@ func TestRealJavaNeverImportsTheBuild(t *testing.T) {
 	if !strings.Contains(got, "java.io.PrintStream") {
 		t.Errorf("hover(println) = %q, want java.io.PrintStream", got)
 	}
-	// The syntax server declares no references provider: empty, not an
-	// error the UI would count toward its failure breaker.
 	refs, err := m.References(app, javaGreetUseLine, javaGreetUseChar)
 	if err != nil || len(refs) != 0 {
 		t.Errorf("References = %+v, %v; want none and no error", refs, err)
 	}
-	// Stop it before listing: a still-running server could write afterwards.
 	m.Shutdown()
 
 	if after := listTree(t, dir); !slices.Equal(after, before) {

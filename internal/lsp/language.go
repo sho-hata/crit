@@ -107,8 +107,7 @@ type Language struct {
 	ExtraRoots func(root string, run Run) []PeekRoot
 	// Env adds server environment, used to steer a tool's writes into
 	// ws.Scratch (GOCACHE). It may not set PATH, HOME or the temp dirs.
-	Env func(ws Workspace) []string
-	// Args appends server argv that names a directory under ws.Scratch.
+	Env  func(ws Workspace) []string
 	Args func(ws Workspace) []string
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
@@ -214,16 +213,12 @@ var languages = []*Language{
 	},
 	{
 		Name: "java",
-		// -Dsyntaxserver=true selects jdt.ls's syntax server, the mode
-		// vscode-java runs in an untrusted workspace: no build-tool import,
-		// so the repo's Gradle/Maven build scripts and the plugins they pull
-		// in never run (measured against jdt.ls 1.61.0: the standard server
-		// started Gradle in the fixture within 40s of didOpen and wrote
-		// .gradle/, .project and .settings/ into it; the syntax server
-		// touched nothing). Source roots are inferred from the .java files,
-		// so same-tree symbols and the JDK resolve; third-party types don't.
-		// It offers no find-references (see Client.provided). --jvm-arg is
-		// the launcher's; the property is read by JDTEnvironmentUtils.
+		// -Dsyntaxserver=true selects jdt.ls's syntax server: no build-tool
+		// import, so the repo's Gradle/Maven build scripts and the plugins
+		// they pull in never run. Source roots are inferred from the .java
+		// files, so same-tree symbols and the JDK resolve; third-party types
+		// don't. It offers no find-references. --jvm-arg is the launcher's;
+		// the property is read by JDTEnvironmentUtils.
 		Command:        []string{"jdtls", "--jvm-arg=-Dsyntaxserver=true"},
 		Args:           jdtlsArgs,
 		IDByExt:        map[string]string{"java": "java"},

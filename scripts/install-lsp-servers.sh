@@ -56,10 +56,9 @@ curl -fsSL -o "$tmp/SHA256SUMS" "$base/terraform-ls_${TERRAFORM_LS_VERSION}_SHA2
 (cd "$tmp" && grep " ${zip}\$" SHA256SUMS | shasum -a 256 -c -)
 unzip -o -q "$tmp/$zip" terraform-ls -d "$BIN"
 
-# jdt.ls: the milestone tarball from eclipse.org (one build per version, hence
-# the timestamp), pinned by checksum since the mirror publishes none. It
-# unpacks flat, so it gets a dir of its own; bin/jdtls is the Python launcher
-# crit runs, and it finds the install from its own real path.
+# The jdt.ls tarball unpacks flat, so it gets a dir of its own; bin/jdtls is
+# the Python launcher crit runs, and it finds the install from its own real
+# path.
 jdtls_tgz="jdt-language-server-${JDTLS_VERSION}-${JDTLS_TIMESTAMP}.tar.gz"
 curl -fsSL -o "$tmp/$jdtls_tgz" \
   "https://www.eclipse.org/downloads/download.php?file=/jdtls/milestones/${JDTLS_VERSION}/${jdtls_tgz}&r=1"

@@ -69,6 +69,7 @@ func startFakeWithSettings(handler func(method string, params json.RawMessage) a
 		reqDone: make(map[int64]chan jsonrpcMessage),
 	}
 	fs.client = newClient("", c2sW, s2cR, nil, settings)
+	fs.client.provides = providers{hover: true, definition: true, references: true}
 	go fs.loop()
 	return fs
 }
@@ -87,8 +88,6 @@ func (fs *fakeServer) loop() {
 				result = fs.handler(msg.Method, msg.Params)
 			}
 			if result == nil && msg.Method == "initialize" {
-				// Declare what the tests ask for: the client sends only the
-				// requests a server has declared.
 				result = map[string]any{"capabilities": map[string]any{
 					"hoverProvider": true, "definitionProvider": true, "referencesProvider": true,
 				}}
@@ -775,10 +774,6 @@ func TestWaitReadyReturnsWhenServerDies(t *testing.T) {
 	}
 }
 
-// A request the server did not declare a provider for is answered empty
-// without being sent: jdt.ls's syntax server offers no references and would
-// refuse the request with an error. An options object counts as declared,
-// like true does.
 func TestClientSkipsRequestsTheServerDoesNotProvide(t *testing.T) {
 	t.Parallel()
 
@@ -793,7 +788,6 @@ func TestClientSkipsRequestsTheServerDoesNotProvide(t *testing.T) {
 			return map[string]any{"capabilities": map[string]any{
 				"hoverProvider":      true,
 				"definitionProvider": map[string]any{"workDoneProgress": false},
-				// no referencesProvider
 			}}
 		case "textDocument/hover":
 			return map[string]any{"contents": "doc"}
