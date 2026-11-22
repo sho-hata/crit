@@ -2,6 +2,8 @@ package vcs
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,6 +127,25 @@ func TestAddSparseWorktreeRefusesExistingDir(t *testing.T) {
 	}
 	if _, err := os.Stat(keep); err != nil {
 		t.Fatalf("pre-existing file was deleted: %v", err)
+	}
+}
+
+func TestAddSparseWorktreeReusesHandDeletedPath(t *testing.T) {
+	t.Parallel()
+	repo := InitTestRepo(t)
+	sha := CommitAtForTest(t, repo, "a.go", "package a\n", "add a.go")
+	dir := filepath.Join(t.TempDir(), "wt")
+	if err := AddSparseWorktree(context.Background(), repo, sha, dir, []string{"*.go"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddSparseWorktree(context.Background(), repo, sha, dir, []string{"*.go"}); err != nil {
+		t.Fatalf("re-adding at a hand-deleted worktree path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.go")); err != nil {
+		t.Fatalf("a.go missing after re-add: %v", err)
 	}
 }
 
@@ -273,5 +294,55 @@ func TestSparseTreeSizeMatchesCheckout(t *testing.T) {
 	})
 	if actual != est {
 		t.Errorf("checked-out bytes %d != estimate %d", actual, est)
+	}
+}
+
+func TestRemoveWorktreeStopsAtContextDeadline(t *testing.T) {
+	t.Parallel()
+	repo := InitTestRepo(t)
+	sha := CommitAtForTest(t, repo, "a.go", "package a\n", "add a.go")
+	dir := filepath.Join(t.TempDir(), "wt")
+	if err := AddSparseWorktree(context.Background(), repo, sha, dir, []string{"*.go"}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = RemoveWorktree(context.Background(), repo, dir) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := RemoveWorktree(ctx, repo, dir); err == nil {
+		t.Fatal("RemoveWorktree with a done context succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.go")); err != nil {
+		t.Errorf("worktree touched after the deadline: %v", err)
+	}
+}
+
+func TestRemoveAllCtxStopsWhenDone(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "tree")
+	writeFileForTest(t, filepath.Join(dir, "a", "b.go"), "package b\n")
+	writeFileForTest(t, filepath.Join(dir, "c.go"), "package c\n")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	writeFileForTest(t, outside, "not ours")
+	// Best effort: Windows without developer mode cannot create symlinks.
+	symlinked := os.Symlink(filepath.Dir(outside), filepath.Join(dir, "link")) == nil
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := removeAllCtx(ctx, dir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("removeAllCtx with a done context: got %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a", "b.go")); err != nil {
+		t.Errorf("tree touched after the context was done: %v", err)
+	}
+
+	if err := removeAllCtx(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("tree still present: %v", err)
+	}
+	if _, err := os.Stat(outside); symlinked && err != nil {
+		t.Errorf("symlink target deleted: %v", err)
 	}
 }
