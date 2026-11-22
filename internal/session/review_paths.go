@@ -30,8 +30,6 @@ func ReviewPathsFor(identity string) ReviewPaths {
 // never need it.
 func (p ReviewPaths) LSPScratch() string { return filepath.Join(p.Folder, "lsp-scratch") }
 
-// HasLeftovers reports whether a folder without review.json still holds a
-// snapshots sidecar or an LSP scratch, which stale sweeps age out.
 func (p ReviewPaths) HasLeftovers() bool {
 	for _, path := range []string{p.Snapshots, p.LSPScratch()} {
 		if _, err := os.Stat(path); err == nil {
