@@ -593,8 +593,6 @@ func SaveGlobalConfig(apply func(m map[string]json.RawMessage) error) error {
 	return AtomicWriteFile(path, data, 0o600)
 }
 
-// lockGlobalConfig acquires an exclusive flock on `<path>.lock`, mirroring the
-// pattern in acquireSessionLock. Returns an unlock func the caller must defer.
 func lockGlobalConfig(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("creating config dir: %w", err)
