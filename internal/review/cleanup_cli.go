@@ -138,16 +138,6 @@ func findStaleReviews(revDir string, days int) []staleReview {
 	return stale
 }
 
-// checkStaleReviewFolder evaluates a directory entry inside the reviews dir.
-// It is a v4-native staleness check for folder-form reviews. Three possible
-// outcomes:
-//
-//  1. The folder contains review.json: read it, parse UpdatedAt, fall back
-//     to file mtime if missing. Stale if the timestamp is before cutoff.
-//  2. The folder lacks review.json but contains snapshots.json: it's an
-//     orphan-snapshots folder (e.g. a crashed migration or a deleted review
-//     left behind a sidecar). Stale if folder mtime is before cutoff.
-//  3. Empty / unrecognized contents: skip.
 func checkStaleReviewFolder(revDir string, de os.DirEntry, key string, cutoff time.Time) (staleReview, bool) {
 	folder := filepath.Join(revDir, de.Name())
 	reviewPath := filepath.Join(folder, "review.json")
@@ -190,8 +180,7 @@ func checkStaleReviewFolder(revDir string, de os.DirEntry, key string, cutoff ti
 		}, true
 	}
 
-	// review.json missing — check for orphan snapshots folder.
-	if _, err := os.Stat(filepath.Join(folder, "snapshots.json")); err != nil {
+	if !session.ReviewPathsFor(folder).HasLeftovers() {
 		return staleReview{}, false
 	}
 	info, err := de.Info()
