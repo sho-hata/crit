@@ -78,7 +78,7 @@ func TestServerExitLifecycle(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			m := NewManager(t.TempDir(), "", t.TempDir(), context.Background())
 			defer m.Shutdown()
-			marker := filepath.Join(m.jail.Workspace("exit-helper").Scratch, "exit")
+			marker := filepath.Join(testSandbox(t, m).Workspace("exit-helper").Scratch, "exit")
 			lang := &Language{
 				Name:    "exit-helper",
 				Command: []string{os.Args[0], "-test.run=^TestServerExitHelper$", "lsp-exit-helper", mode, marker},
@@ -111,7 +111,7 @@ func TestContextCancelLetsTheServerExit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := NewManager(t.TempDir(), "", t.TempDir(), ctx)
 	defer m.Shutdown()
-	marker := filepath.Join(m.jail.Workspace("exit-helper").Scratch, "exit")
+	marker := filepath.Join(testSandbox(t, m).Workspace("exit-helper").Scratch, "exit")
 	lang := &Language{
 		Name:    "exit-helper",
 		Command: []string{os.Args[0], "-test.run=^TestServerExitHelper$", "lsp-exit-helper", "graceful", marker},
@@ -153,7 +153,7 @@ func TestCloseKillsWhatTheServerForked(t *testing.T) {
 	if err == nil {
 		t.Fatal("startServer succeeded against a server that exits at once")
 	}
-	raw, err := os.ReadFile(filepath.Join(m.jail.Workspace(lang.Name).Scratch, "tmp", "child"))
+	raw, err := os.ReadFile(filepath.Join(testSandbox(t, m).Workspace(lang.Name).Scratch, "tmp", "child"))
 	if err != nil {
 		t.Fatal(err)
 	}

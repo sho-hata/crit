@@ -304,7 +304,8 @@ func mergeFileSnapshotIntoCritJSON(cj *CritJSON, fs writeFileSnapshot, deleted m
 }
 
 func critJSONIsEmpty(cj CritJSON) bool {
-	return len(cj.Files) == 0 && len(cj.ReviewComments) == 0 && cj.Story == nil && len(cj.ViewedFiles) == 0
+	return len(cj.Files) == 0 && len(cj.ReviewComments) == 0 && cj.Story == nil &&
+		len(cj.ViewedFiles) == 0 && len(cj.ChangeViewedFiles) == 0
 }
 
 // WriteFiles writes the review file to disk.

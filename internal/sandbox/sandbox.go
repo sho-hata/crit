@@ -12,7 +12,7 @@
 //
 // Containment, not prevention: a confined process cannot execute or, on
 // macOS, load as native code any file from the tree or the scratch, but
-// `sh <tree>/x.sh` still runs through the interpreter, inside the jail.
+// `sh <tree>/x.sh` still runs through the interpreter, inside the sandbox.
 // No config key, flag or environment variable turns the confinement off.
 package sandbox
 
@@ -83,16 +83,16 @@ type Process struct {
 	Stderr io.Writer
 }
 
-// Jail binds the trees and the scratch base; one per Manager, so per root.
-type Jail struct {
+// Sandbox binds the trees and the scratch base; one per Manager, so per root.
+type Sandbox struct {
 	trees       Trees
 	scratchBase string
 	readDeny    []string
 }
 
-// Open refuses a path that is not absolute and clean, and a scratchBase
+// New refuses a path that is not absolute and clean, and a scratchBase
 // under a tree.
-func Open(t Trees, scratchBase string) (*Jail, error) {
+func New(t Trees, scratchBase string) (*Sandbox, error) {
 	for _, p := range append(t.list(), scratchBase) {
 		if !filepath.IsAbs(p) || filepath.Clean(p) != p {
 			return nil, fmt.Errorf("sandbox: %q must be an absolute, clean path", p)
@@ -109,52 +109,52 @@ func Open(t Trees, scratchBase string) (*Jail, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: %w", err)
 	}
-	return &Jail{trees: t, scratchBase: scratchBase, readDeny: denied(home, scratchBase, t, os.Getenv)}, nil
+	return &Sandbox{trees: t, scratchBase: scratchBase, readDeny: denied(home, scratchBase, t, os.Getenv)}, nil
 }
 
 // Workspace names the scratch directory Command mints for name, so a
 // handshake hook can point the server at it before the spawn.
-func (j *Jail) Workspace(name string) Workspace {
-	sum := sha256.Sum256([]byte(j.trees.Root))
+func (s *Sandbox) Workspace(name string) Workspace {
+	sum := sha256.Sum256([]byte(s.trees.Root))
 	return Workspace{
-		Root:    j.trees.Root,
-		Scratch: filepath.Join(j.scratchBase, name, hex.EncodeToString(sum[:])[:12]),
+		Root:    s.trees.Root,
+		Scratch: filepath.Join(s.scratchBase, name, hex.EncodeToString(sum[:])[:12]),
 	}
 }
 
 // Command returns a confined command for p, with Dir = Root, and empties the
 // scratch's tmp/. Where the OS has no backend the command runs plainly, with
 // the scrubbed environment; while a backend's self-test fails it is refused.
-func (j *Jail) Command(ctx context.Context, name string, p Process) (*exec.Cmd, error) {
-	ws, err := j.mint(name, true)
+func (s *Sandbox) Command(ctx context.Context, name string, p Process) (*exec.Cmd, error) {
+	ws, err := s.mint(name, true)
 	if err != nil {
 		return nil, err
 	}
-	return j.command(ctx, p, ws.Scratch, j.trees.Root)
+	return s.command(ctx, p, ws.Scratch, s.trees.Root)
 }
 
 // Output runs a short helper (go env, npm root -g) the same way, with Dir =
 // scratch, never the tree, and returns its stdout. The scratch is not
 // emptied: a server may be using it.
-func (j *Jail) Output(ctx context.Context, name string, p Process) ([]byte, error) {
-	ws, err := j.mint(name, false)
+func (s *Sandbox) Output(ctx context.Context, name string, p Process) ([]byte, error) {
+	ws, err := s.mint(name, false)
 	if err != nil {
 		return nil, err
 	}
-	cmd, err := j.command(ctx, p, ws.Scratch, ws.Scratch)
+	cmd, err := s.command(ctx, p, ws.Scratch, ws.Scratch)
 	if err != nil {
 		return nil, err
 	}
 	return cmd.Output()
 }
 
-func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
+func (s *Sandbox) mint(name string, emptyTmp bool) (Workspace, error) {
 	// name is one path element: anything else would put the scratch, and
 	// the cleanup below, outside the scratch base.
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 		return Workspace{}, fmt.Errorf("sandbox: %q is not a scratch name", name)
 	}
-	ws := j.Workspace(name)
+	ws := s.Workspace(name)
 	tmp := filepath.Join(ws.Scratch, "tmp")
 	if emptyTmp {
 		if err := os.RemoveAll(tmp); err != nil {
@@ -176,8 +176,8 @@ func (j *Jail) mint(name string, emptyTmp bool) (Workspace, error) {
 	return ws, nil
 }
 
-func (j *Jail) command(ctx context.Context, p Process, scratch, dir string) (*exec.Cmd, error) {
-	pol, err := plan(j.trees, j.scratchBase, scratch, dir, p, j.readDeny, os.Environ())
+func (s *Sandbox) command(ctx context.Context, p Process, scratch, dir string) (*exec.Cmd, error) {
+	pol, err := plan(s.trees, s.scratchBase, scratch, dir, p, s.readDeny, os.Environ())
 	if err != nil {
 		return nil, err
 	}

@@ -16,9 +16,6 @@ import (
 	"testing"
 )
 
-// canary is one planted probe set bound to a listener on 127.0.0.1. It tries,
-// from inside the jail, everything the jail must prevent; assertEscaped runs
-// it unconfined, the control that proves the probes are live.
 type canary struct {
 	tree     string
 	script   string
@@ -34,8 +31,7 @@ type canary struct {
 // must not be an executable one.
 var steps = []string{"outside-write", "tree-write", "connect", "udp", "exec", "copy-exec", "secret"}
 
-// plantCanary points HOME at a fresh directory, so call it before Open.
-func plantCanary(t testing.TB, tree string) *canary {
+func plantCanary(t testing.TB, tree, scratchBase string) (*canary, *Sandbox) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -70,12 +66,14 @@ func plantCanary(t testing.TB, tree string) *canary {
 	mustWrite(t, filepath.Join(tree, "bin", "canary"), "#!/bin/sh\n: > \"${TMPDIR:?}/exec-ran\"\n", 0o755)
 	mustWrite(t, c.script, c.scriptText(), 0o644)
 	c.treeHash = hashTree(t, tree)
-	return c
+	sb, err := New(Trees{Root: tree}, scratchBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, sb
 }
 
-// Each probe appends "<step> ok|denied" to $TMPDIR/probe.log; the jail sets
-// TMPDIR under its scratch, the only place a confined write may land. The
-// subshells keep a failed redirection from exiting a POSIX sh.
+// The subshells keep a failed redirection from exiting a POSIX sh.
 func (c *canary) scriptText() string {
 	return fmt.Sprintf(`#!/bin/sh
 log="${TMPDIR:?}/probe.log"

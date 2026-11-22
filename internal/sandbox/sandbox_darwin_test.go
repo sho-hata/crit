@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-func catUnderJail(t *testing.T, j *Jail, path string) (string, error) {
+func catUnderSandbox(t *testing.T, sb *Sandbox, path string) (string, error) {
 	t.Helper()
-	cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"/bin/cat", path}})
+	cmd, err := sb.Command(context.Background(), "t", Process{Argv: []string{"/bin/cat", path}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func writeFile(t *testing.T, path, text string, mode os.FileMode) {
 	}
 }
 
-func TestJailDeniesRelocatedSecrets(t *testing.T) {
+func TestSandboxDeniesRelocatedSecrets(t *testing.T) {
 	requireBackend(t)
 	t.Setenv("HOME", realTempDir(t))
 	xdg, cargo := realTempDir(t), realTempDir(t)
@@ -41,21 +41,21 @@ func TestJailDeniesRelocatedSecrets(t *testing.T) {
 	}
 	other := filepath.Join(xdg, "nvim", "init.lua")
 	writeFile(t, other, "ok\n", 0o600)
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range secrets {
-		if out, err := catUnderJail(t, j, p); err == nil {
-			t.Errorf("%s readable under the jail: %q", p, out)
+		if out, err := catUnderSandbox(t, sb, p); err == nil {
+			t.Errorf("%s readable under the sandbox: %q", p, out)
 		}
 	}
-	if out, err := catUnderJail(t, j, other); err != nil {
+	if out, err := catUnderSandbox(t, sb, other); err != nil {
 		t.Errorf("the rest of XDG_CONFIG_HOME must stay readable: %v: %s", err, out)
 	}
 }
 
-func TestJailReadsATreeThatIsASecret(t *testing.T) {
+func TestSandboxReadsATreeThatIsASecret(t *testing.T) {
 	requireBackend(t)
 	home := realTempDir(t)
 	t.Setenv("HOME", home)
@@ -64,21 +64,21 @@ func TestJailReadsATreeThatIsASecret(t *testing.T) {
 	t.Setenv("GNUPGHOME", filepath.Join(tree, "gnupg"))
 	key := filepath.Join(tree, "gnupg", "key")
 	writeFile(t, key, "key\n", 0o600)
-	j, err := Open(Trees{Root: tree}, realTempDir(t))
+	sb, err := New(Trees{Root: tree}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := catUnderJail(t, j, filepath.Join(tree, "a.txt")); err != nil || out != "hello\n" {
+	if out, err := catUnderSandbox(t, sb, filepath.Join(tree, "a.txt")); err != nil || out != "hello\n" {
 		t.Errorf("tree file: %v %q", err, out)
 	}
-	if out, err := catUnderJail(t, j, key); err == nil {
+	if out, err := catUnderSandbox(t, sb, key); err == nil {
 		t.Errorf("secret beneath the tree readable: %q", out)
 	}
 }
 
 // A secret behind a symlink whose target appears after the policy is built
 // (a volume mounted later) is unreadable at the target as well as the link.
-func TestJailDeniesASecretBehindADanglingSymlink(t *testing.T) {
+func TestSandboxDeniesASecretBehindADanglingSymlink(t *testing.T) {
 	requireBackend(t)
 	home := realTempDir(t)
 	t.Setenv("HOME", home)
@@ -86,18 +86,18 @@ func TestJailDeniesASecretBehindADanglingSymlink(t *testing.T) {
 	if err := os.Symlink(filepath.Join(vault, "ssh"), filepath.Join(home, ".ssh")); err != nil {
 		t.Fatal(err)
 	}
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{filepath.Join(vault, "ssh", "id"), filepath.Join(home, ".ssh", "id")} {
-		cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"/bin/cat", p}})
+		cmd, err := sb.Command(context.Background(), "t", Process{Argv: []string{"/bin/cat", p}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		writeFile(t, filepath.Join(vault, "ssh", "id"), "key\n", 0o600)
 		if out, err := cmd.CombinedOutput(); err == nil {
-			t.Errorf("%s readable under the jail: %q", p, out)
+			t.Errorf("%s readable under the sandbox: %q", p, out)
 		}
 		if err := os.RemoveAll(vault); err != nil {
 			t.Fatal(err)
@@ -106,7 +106,7 @@ func TestJailDeniesASecretBehindADanglingSymlink(t *testing.T) {
 }
 
 // The reviewer's git config is unreadable, and git still runs without it.
-func TestJailHidesGitConfig(t *testing.T) {
+func TestSandboxHidesGitConfig(t *testing.T) {
 	requireBackend(t)
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -119,26 +119,26 @@ func TestJailHidesGitConfig(t *testing.T) {
 	if out, err := exec.Command(git, "config", "--global", "--list").CombinedOutput(); err != nil || !strings.Contains(string(out), "token x") { //nolint:gosec // control: git reads the config unconfined
 		t.Fatalf("control: git does not read %s unconfined: %v: %s", config, err, out)
 	}
-	j, err := Open(Trees{Root: realTempDir(t)}, realTempDir(t))
+	sb, err := New(Trees{Root: realTempDir(t)}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := catUnderJail(t, j, config); err == nil {
-		t.Errorf("%s readable under the jail: %q", config, out)
+	if out, err := catUnderSandbox(t, sb, config); err == nil {
+		t.Errorf("%s readable under the sandbox: %q", config, out)
 	}
-	cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"git", "config", "--global", "--list"}})
+	cmd, err := sb.Command(context.Background(), "t", Process{Argv: []string{"git", "config", "--global", "--list"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out, err := cmd.CombinedOutput(); err != nil || len(out) != 0 {
-		t.Errorf("git under the jail: %v: %q, want it to run and see no config", err, out)
+		t.Errorf("git under the sandbox: %v: %q, want it to run and see no config", err, out)
 	}
 }
 
 // The Go-side checks compare paths as spelled; on a case-insensitive volume
 // the same tree has other spellings. The kernel matches the file, not the
 // spelling, so a tree file does not run whichever way either is written.
-func TestJailRefusesTreeExecUnderAnotherSpelling(t *testing.T) {
+func TestSandboxRefusesTreeExecUnderAnotherSpelling(t *testing.T) {
 	requireBackend(t)
 	t.Setenv("HOME", realTempDir(t))
 	base := realTempDir(t)
@@ -148,17 +148,17 @@ func TestJailRefusesTreeExecUnderAnotherSpelling(t *testing.T) {
 		t.Skip("case-sensitive volume")
 	}
 	for _, root := range []string{tree, other} {
-		j, err := Open(Trees{Root: root}, realTempDir(t))
+		sb, err := New(Trees{Root: root}, realTempDir(t))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, bin := range []string{filepath.Join(tree, "evil"), filepath.Join(other, "evil")} {
-			cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{"/bin/sh", "-c", `"$0"`, bin}})
+			cmd, err := sb.Command(context.Background(), "t", Process{Argv: []string{"/bin/sh", "-c", `"$0"`, bin}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if out, err := cmd.CombinedOutput(); err == nil {
-				t.Errorf("root %s: %s ran under the jail (%q)", root, bin, out)
+				t.Errorf("root %s: %s ran under the sandbox (%q)", root, bin, out)
 			}
 		}
 	}
@@ -166,7 +166,7 @@ func TestJailRefusesTreeExecUnderAnotherSpelling(t *testing.T) {
 
 // The canary's exec probes are shebang scripts and never map native code, so
 // this one covers file-map-executable.
-func TestJailRefusesNativeCodeFromTheTrees(t *testing.T) {
+func TestSandboxRefusesNativeCodeFromTheTrees(t *testing.T) {
 	requireBackend(t)
 	cc, err := exec.LookPath("cc")
 	if err != nil {
@@ -178,7 +178,7 @@ func TestJailRefusesNativeCodeFromTheTrees(t *testing.T) {
 	src := t.TempDir()
 	tools := realTempDir(t)
 	tree := realTempDir(t)
-	j, err := Open(Trees{Root: tree}, realTempDir(t))
+	sb, err := New(Trees{Root: tree}, realTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
 	treeLib := filepath.Join(tree, "lib.dylib")
 	build("-dynamiclib", "-o", treeLib, filepath.Join(src, "lib.c"))
 
-	ws := j.Workspace("t")
+	ws := sb.Workspace("t")
 	scratchLib := filepath.Join(ws.Scratch, "lib.dylib")
 	if err := os.MkdirAll(ws.Scratch, 0o700); err != nil {
 		t.Fatal(err)
@@ -224,12 +224,12 @@ int main(int argc, char **argv) {
 		if out, err := exec.Command(loader, lib).CombinedOutput(); err != nil { //nolint:gosec // control: the probe loads unconfined
 			t.Fatalf("control: %s does not load unconfined: %v: %s", lib, err, out)
 		}
-		cmd, err := j.Command(context.Background(), "t", Process{Argv: []string{loader, lib}})
+		cmd, err := sb.Command(context.Background(), "t", Process{Argv: []string{loader, lib}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if out, err := cmd.CombinedOutput(); err == nil {
-			t.Errorf("%s loaded under the jail (%q)", lib, out)
+			t.Errorf("%s loaded under the sandbox (%q)", lib, out)
 		}
 	}
 }
