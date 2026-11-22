@@ -487,6 +487,31 @@ func TestClientDeadAfterTransportClose(t *testing.T) {
 	}
 }
 
+func TestClientDeadAfterOversizedFrame(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		length int64
+	}{
+		{"beyond int range of a slice", 1 << 62},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fs := startFake(nil)
+			defer fs.kill()
+			fs.outMu.Lock()
+			fmt.Fprintf(fs.out, "Content-Length: %d\r\n\r\n", tc.length)
+			fs.outMu.Unlock()
+			waitFor(t, "client dead", fs.client.Dead)
+			if _, err := fs.client.Hover("/tmp/x.go", 0, 0); err == nil {
+				t.Error("Hover after an oversized frame should error")
+			}
+		})
+	}
+}
+
 func TestHoverContentsToMarkdown(t *testing.T) {
 	t.Parallel()
 
