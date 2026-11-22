@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 const javaGreeterSource = `package com.example;
