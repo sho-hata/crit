@@ -154,10 +154,6 @@ func (c *Client) markDone() {
 	c.mu.Unlock()
 }
 
-// maxFrameBytes bounds the body readFrame allocates from a server-chosen
-// Content-Length: a value past what a slice can hold panics the daemon, a
-// large one exhausts its memory. References to fmt.Errorf across the Go
-// standard library (1.5k locations) come to about 270KB.
 const maxFrameBytes = 64 << 20
 
 func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
