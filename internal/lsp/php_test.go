@@ -164,6 +164,18 @@ func TestPHPExtraRootsSkipAServerInTheTree(t *testing.T) {
 	if got := phpStubsRoot(phpExtraRoots(repo, noRun)); got != "" {
 		t.Errorf("$PHP_STUBS with only the tree's copy on PATH = %q, want none", got)
 	}
+
+	linkedBin := filepath.Join(realTempDir(t), "bin")
+	if err := os.Mkdir(linkedBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(localBin, "intelephense"), filepath.Join(linkedBin, "intelephense")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", linkedBin)
+	if got := phpStubsRoot(phpExtraRoots(repo, noRun)); got != "" {
+		t.Errorf("$PHP_STUBS through an outside link into the tree = %q, want none", got)
+	}
 }
 
 func TestPHPInitOptionsKeepTheIndexInTheScratch(t *testing.T) {
