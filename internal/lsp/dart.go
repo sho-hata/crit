@@ -27,7 +27,7 @@ func dartExtraRoots(root string, _ Run) []PeekRoot {
 }
 
 func dartSDKRoot(tree string) string {
-	bin := serverBinary("dart", tree)
+	bin := binaryOutsideTree("dart", tree)
 	if bin == "" {
 		return ""
 	}
