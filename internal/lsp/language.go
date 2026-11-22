@@ -183,7 +183,6 @@ var languages = []*Language{
 		SparsePatterns: []string{
 			"*.py", "*.pyi", "pyproject.toml", "pyrightconfig.json",
 		},
-		// Static: pyright is never given an interpreter (pyConfigSettings).
 		ConfigSettings:  pyConfigSettings,
 		Env:             nodeEnv,
 		LocalEnv:        true,
