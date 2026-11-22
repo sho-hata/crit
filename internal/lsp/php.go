@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+func phpInitOptions(ws Workspace, _ string) map[string]any {
+	return map[string]any{
+		"storagePath":       filepath.Join(ws.Scratch, "storage"),
+		"globalStoragePath": filepath.Join(ws.Scratch, "global-storage"),
+	}
+}
+
 // phpConfigSettings points intelephense at the nearest Composer vendor dir.
 //
 // intelephense indexes the workspace only, so it already finds a vendor/ under

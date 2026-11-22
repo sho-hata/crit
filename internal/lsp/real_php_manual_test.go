@@ -252,3 +252,45 @@ func TestRealPHPWritesNothingIntoTheRepo(t *testing.T) {
 		t.Errorf("repo files changed:\nbefore %v\nafter  %v", before, after)
 	}
 }
+
+func TestRealPHPKeepsItsIndexAcrossRestarts(t *testing.T) {
+	t.Parallel()
+	requireRealIntelephense(t)
+
+	dir := t.TempDir()
+	app := writePHPProject(t, dir, true)
+	scratchBase := t.TempDir()
+	stores := func(m *Manager) []string {
+		t.Helper()
+		entries, err := os.ReadDir(filepath.Join(testSandbox(t, m).Workspace("php").Scratch, "storage"))
+		if err != nil {
+			t.Fatalf("no storage directory under the scratch: %v", err)
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		return names
+	}
+
+	first := NewManager(dir, "", scratchBase, context.Background())
+	t.Cleanup(first.Shutdown)
+	if _, err := first.Hover(app, phpSpinUseLine, phpSpinUseChar); err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	first.Shutdown()
+	written := stores(first)
+	if len(written) == 0 {
+		t.Fatal("intelephense wrote no index under the scratch's storage directory")
+	}
+
+	second := NewManager(dir, "", scratchBase, context.Background())
+	t.Cleanup(second.Shutdown)
+	if _, err := second.Hover(app, phpSpinUseLine, phpSpinUseChar); err != nil {
+		t.Fatalf("Hover after a restart: %v", err)
+	}
+	second.Shutdown()
+	if kept := stores(second); !slices.Equal(kept, written) {
+		t.Errorf("stores after a restart = %v, want the first run's %v reused", kept, written)
+	}
+}

@@ -207,7 +207,9 @@ var languages = []*Language{
 		SparsePatterns: []string{
 			"*.php", "*.phtml", "composer.json", "composer.lock",
 		},
+		InitOptions:    phpInitOptions,
 		ConfigSettings: phpConfigSettings,
+		Env:            nodeEnv,
 		LocalEnv:       true,
 		ExtraRoots:     phpExtraRoots,
 	},
