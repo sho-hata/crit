@@ -184,6 +184,7 @@ var languages = []*Language{
 			"*.py", "*.pyi", "pyproject.toml", "pyrightconfig.json",
 		},
 		ConfigSettings:  pyConfigSettings,
+		Env:             nodeEnv,
 		LocalEnv:        true,
 		SkipReadyWait:   true,
 		OpenSessionFile: pyOpenSessionFile,
