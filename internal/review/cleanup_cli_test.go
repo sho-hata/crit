@@ -81,8 +81,6 @@ func TestFindStaleReviews_FolderForm(t *testing.T) {
 	}
 }
 
-// A review that was only hovered leaves its LSP scratch and no review.json;
-// `crit cleanup` must reclaim it like the background sweep does.
 func TestFindStaleReviews_LSPScratchOnlyFolder(t *testing.T) {
 	t.Parallel()
 
