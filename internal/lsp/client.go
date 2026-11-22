@@ -154,6 +154,8 @@ func (c *Client) markDone() {
 	c.mu.Unlock()
 }
 
+const maxFrameBytes = 64 << 20
+
 func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
 	var msg jsonrpcMessage
 	contentLen := -1
@@ -174,6 +176,9 @@ func readFrame(r *bufio.Reader) (jsonrpcMessage, error) {
 	}
 	if contentLen < 0 {
 		return msg, fmt.Errorf("lsp: missing Content-Length header")
+	}
+	if contentLen > maxFrameBytes {
+		return msg, fmt.Errorf("lsp: frame of %d bytes exceeds the %d-byte limit", contentLen, maxFrameBytes)
 	}
 	body := make([]byte, contentLen)
 	if _, err := io.ReadFull(r, body); err != nil {
