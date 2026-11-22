@@ -105,25 +105,28 @@ type Language struct {
 	// cwd outside the tree; the Manager caches successful results per root.
 	// A nil result means the lookup failed and may be retried.
 	ExtraRoots func(root string, run Run) []PeekRoot
-	// Args appends per-workspace argv (a data directory under ws.Scratch).
-	Args func(ws Workspace) []string
 	// Env adds server environment, used to steer a tool's writes into
 	// ws.Scratch (GOCACHE). It may not set PATH, HOME or the temp dirs.
 	Env func(ws Workspace) []string
 	// CacheSweep is housekeeping for a server's on-disk cache that the server
 	// would do itself if crit's idle shutdown didn't stop it first. Run once
-	// per crit process in the background after the server first spawns, with
-	// the server's workspace; nil for none.
+	// per scratch in this process, in the background after a server spawns
+	// there, with the server's workspace; nil for none.
 	CacheSweep func(ws Workspace)
 
-	sweepOnce sync.Once
+	// swept holds the scratch directories already swept: the cache lives in
+	// the scratch, and a focus change moves the server to another one.
+	swept sync.Map
 }
 
 // sweepCacheOnce starts CacheSweep in the background the first time it is
-// called in this process.
+// called for ws.Scratch in this process.
 func (l *Language) sweepCacheOnce(ws Workspace) {
-	if l.CacheSweep != nil {
-		l.sweepOnce.Do(func() { go l.CacheSweep(ws) })
+	if l.CacheSweep == nil {
+		return
+	}
+	if _, done := l.swept.LoadOrStore(ws.Scratch, struct{}{}); !done {
+		go l.CacheSweep(ws)
 	}
 }
 
@@ -355,30 +358,60 @@ func goExtraRoots(_ string, run Run) []PeekRoot {
 
 // npmGlobalRoots is where lib.*.d.ts definitions land when typescript is
 // installed globally (the README's install command) and the repo has no
-// local typescript: the node_modules the server on PATH is installed in.
-// Not `npm root -g`: the npm on PATH can belong to another prefix than the
-// server's, and in the sandbox it cannot read a prefix set in ~/.npmrc.
-// Machine-wide, so root is ignored.
-func npmGlobalRoots(string, Run) []PeekRoot {
-	bin, err := exec.LookPath("typescript-language-server")
-	if err != nil {
+// local typescript: the node_modules the server that will run is installed
+// in. `npm root -g` alone is not that: the npm on PATH can belong to another
+// prefix than the server's, and in the sandbox it cannot read a prefix set
+// in ~/.npmrc. It is asked only when the binary's path does not tell, behind
+// a version manager's shim. root is the tree the server must not come from.
+func npmGlobalRoots(root string, run Run) []PeekRoot {
+	dir := serverNodeModules("typescript-language-server", root)
+	if dir == "" {
+		out, err := run("npm", "root", "-g")
+		if err != nil {
+			return nil
+		}
+		dir = strings.TrimSpace(string(out))
+	}
+	if dir == "" {
 		return nil
+	}
+	return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+}
+
+// serverNodeModules is the node_modules directory the npm-installed server
+// name on PATH lives in, "" when its path does not show one. PATH is read as
+// the sandbox reads it, without relative entries and entries under tree, so
+// this is the binary that will run and not a copy in the repository's
+// node_modules/.bin.
+func serverNodeModules(name, tree string) string {
+	var bin string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if !filepath.IsAbs(dir) || (tree != "" && sandbox.Beneath(dir, tree)) {
+			continue
+		}
+		if p, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+			bin = p
+			break
+		}
+	}
+	if bin == "" {
+		return ""
 	}
 	// npm links the bin into <prefix>/bin on Unix and writes a .cmd shim
 	// beside node_modules on Windows.
 	real, err := filepath.EvalSymlinks(bin)
 	if err != nil {
-		return nil
+		return ""
 	}
 	for dir := filepath.Dir(real); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 		if filepath.Base(dir) == "node_modules" {
-			return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+			return dir
 		}
 	}
-	if dir := filepath.Join(filepath.Dir(real), "node_modules"); isDir(filepath.Join(dir, "typescript-language-server")) {
-		return []PeekRoot{{Path: dir, Label: "$NPM_GLOBAL"}}
+	if dir := filepath.Join(filepath.Dir(real), "node_modules"); isDir(filepath.Join(dir, name)) {
+		return dir
 	}
-	return nil
+	return ""
 }
 
 func pathExt(path string) string {

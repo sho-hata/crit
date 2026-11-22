@@ -13,7 +13,18 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sho-hata/crit/internal/sandbox"
 )
+
+func testSandbox(t *testing.T, m *Manager) *sandbox.Sandbox {
+	t.Helper()
+	sb, err := m.sandbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sb
+}
 
 // managerHarness tracks the fake servers a Manager spawned via its start hook.
 type managerHarness struct {

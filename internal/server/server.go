@@ -31,7 +31,6 @@ import (
 	"github.com/sho-hata/crit/internal/pathsafe"
 	"github.com/sho-hata/crit/internal/prompt"
 	"github.com/sho-hata/crit/internal/review"
-	"github.com/sho-hata/crit/internal/sandbox"
 	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/vcs"
 )
@@ -278,7 +277,7 @@ func isLoopbackHost(host string) bool {
 // is bound to a loopback address, the request's Host header must also resolve
 // to a loopback hostname — this is the canonical DNS-rebinding defense.
 func (s *Server) checkHost(r *http.Request) bool {
-	host := requestHost(r.Host)
+	host := config.RequestHost(r.Host)
 	if s.publicURLHost != "" && strings.EqualFold(host, s.publicURLHost) {
 		return true
 	}
@@ -286,18 +285,6 @@ func (s *Server) checkHost(r *http.Request) bool {
 		return true
 	}
 	return isLoopbackHost(host)
-}
-
-func requestHost(hostport string) string {
-	host := hostport
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	} else {
-		// SplitHostPort fails when there's no port (e.g. "Host: [::1]").
-		// Strip IPv6 brackets so ParseIP can recognise the address.
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	}
-	return host
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +308,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // hostForbiddenMessage explains a checkHost rejection so a reverse-proxy /
 // --public-url misconfig is diagnosable from the 403 body (see #788).
 func (s *Server) hostForbiddenMessage(r *http.Request) string {
-	host := requestHost(r.Host)
+	host := config.RequestHost(r.Host)
 	if s.publicURLHost == "" {
 		return fmt.Sprintf(
 			"Forbidden: request Host %q does not match loopback (set --public-url if reaching Crit via a reverse proxy)",
@@ -571,7 +558,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// lsp_sandbox names the confinement every language server runs
 		// under ("seatbelt", "" for none; without one a --pr review has
 		// lsp_available false).
-		"lsp_sandbox": sandbox.Detect().Name,
+		"lsp_sandbox": s.lspBackend().Name,
 		// Initial view for files with a Document/Diff toggle (markdown) in
 		// git mode: "document" forces document view, anything else keeps the
 		// historical default (diff in git mode, document in file mode).
@@ -1813,7 +1800,9 @@ func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.session.Load().SetFocus(req); err != nil {
+	sess := s.session.Load()
+	// A range picked at the branch tip follows HEAD from round to round.
+	if err := sess.SetFocus(sess.WithHeadRefAtTip(req)); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -2046,6 +2035,13 @@ func (s *Server) handleReviewCycle(w http.ResponseWriter, r *http.Request) {
 	defer sess.Unsubscribe(ch)
 
 	if !sess.IsAwaitingFirstReview() {
+		// A --range review whose head is HEAD (or a branch) shows the commit
+		// the agent is at now, not the one it was at when the daemon started.
+		if oldHead, newHead, err := sess.FollowRangeHead(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: range head not updated: %v\n", err)
+		} else if newHead != "" {
+			fmt.Fprintf(os.Stderr, "Range head moved: %.7s -> %.7s\n", oldHead, newHead)
+		}
 		// Agent finished changes — signal round-complete so browser refreshes
 		sess.SignalRoundComplete()
 	}

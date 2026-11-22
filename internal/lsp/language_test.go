@@ -239,8 +239,6 @@ func TestTypeScriptLanguageSendsInitOptions(t *testing.T) {
 	}
 }
 
-// A language joins this list only with a measurement that its server never
-// executes code from the tree, written next to its registry entry.
 func TestAvailableCachesLookupPerPath(t *testing.T) {
 	// Its own binary name, so no other test's lookups share the cache keys.
 	lang := &Language{Name: "fake", Command: []string{"crit-fake-lsp-for-cache-test"}}

@@ -946,14 +946,22 @@
     });
   }
 
+  // Marks are saved per PR layer, so a focus change reloads them. Saves still
+  // in flight land first, or the reload would miss them, but a save that
+  // never answers must not hold up the reload. On failure the marks stay
+  // empty rather than keep another layer's: localStorage still restores this
+  // origin's marks.
   async function loadServerViewed() {
+    await Promise.race([viewedPersistChain, new Promise(function(resolve) { setTimeout(resolve, 3000); })]);
+    serverViewed = {};
+    serverViewedLoaded = false;
     try {
       const res = await fetch('/api/viewed');
       if (res.ok) {
         serverViewed = (await res.json()).files || {};
         serverViewedLoaded = true;
       }
-    } catch { /* localStorage still restores this origin's marks */ }
+    } catch { /* see above */ }
   }
 
   // Whether a saved mark still describes this file. Lazy files have no hash
@@ -973,17 +981,27 @@
     updateTreeViewedState();
   }
 
+  // Reads a JSON object from localStorage, or {} when storage is blocked
+  // (some privacy modes throw on access) or the value is unreadable.
+  function readStoredObject(key) {
+    try {
+      const data = JSON.parse(localStorage.getItem(key) || '{}');
+      return data && typeof data === 'object' ? data : {};
+    } catch {
+      return {};
+    }
+  }
+
   function restoreViewedState() {
+    // Marks saved in the review file apply even when localStorage is blocked.
+    const local = readStoredObject(viewedStorageKey());
+    for (let i = 0; i < files.length; i++) {
+      const mark = serverViewed[files[i].path];
+      files[i].viewed = mark ? mark.viewed && viewedMarkIsCurrent(mark, files[i]) : !!local[files[i].path];
+      if (files[i].viewed) files[i].collapsed = true;
+    }
     try {
-      const data = JSON.parse(localStorage.getItem(viewedStorageKey()) || '{}');
-      for (let i = 0; i < files.length; i++) {
-        const mark = serverViewed[files[i].path];
-        files[i].viewed = mark ? mark.viewed && viewedMarkIsCurrent(mark, files[i]) : !!data[files[i].path];
-        if (files[i].viewed) files[i].collapsed = true;
-      }
-    } catch {}
-    try {
-      const data = JSON.parse(localStorage.getItem('crit-viewed-hunks-' + viewedIdentityHash()) || '{}');
+      const data = readStoredObject('crit-viewed-hunks-' + viewedIdentityHash());
       files.forEach(function(file) {
         if (Array.isArray(data[file.path])) file.viewedHunks = data[file.path];
         reconcileStoryViewed(file);
@@ -1104,19 +1122,7 @@
     agentEnabled = configRes.agent_cmd_enabled || false;
     agentName = configRes.agent_name || 'agent';
 
-    // LSP hover / go-to-definition. Only wired when the server reports a
-    // language server available + enabled; lsp_extensions says which file
-    // extensions it covers. The module owns all its listeners.
-    if (configRes.lsp_available && window.crit.lsp) {
-      window.crit.lsp.init({
-        jumpToLocation: lspJumpToLocation,
-        mountLineWidget: mountPierreLineWidget,
-        unmountLineWidget: unmountPierreLineWidget,
-        languageForPath: pierreLanguageForPath,
-        toast: function (message) { showMiniToast(message); },
-        extensions: configRes.lsp_extensions,
-      });
-    }
+    applyLspConfig(configRes);
     promptTrustConfig = {
       project_prompts_untrusted: !!configRes.project_prompts_untrusted,
       project_prompt_sources: configRes.project_prompt_sources || [],
@@ -1270,9 +1276,7 @@
         session = corrected;
         reviewComments = corrected.review_comments || [];
       }
-      scopeToggle.querySelectorAll('.toggle-btn').forEach(function(b) {
-        b.classList.toggle('active', b.dataset.scope === diffScope);
-      });
+      updateScopePinIndicator();
 
       updateCompareAndCommitChrome();
     }
@@ -2744,14 +2748,24 @@
   function scrollPierreElementIntoView(el, isCurrent) {
     const root = document.getElementById('filesContainer');
     if (!root || !el) return;
+    // A rebuild (scope, palette, SSE) does not supersede the jump, so check
+    // the card and view are still the ones this alignment started on.
+    const view = pierreView;
     let frames = 0;
     (function align() {
       if (isCurrent && !isCurrent()) return;
+      if (!el.isConnected || view !== pierreView) return;
       const rootRect = root.getBoundingClientRect();
       const elRect = el.getBoundingClientRect();
       const gap = Math.max(0, (root.clientHeight - elRect.height) / 2);
       const offset = elRect.top - rootRect.top - gap;
-      if (Math.abs(offset) < 2 || frames++ >= 12) return;
+      if (Math.abs(offset) < 2 || frames++ >= 12) {
+        // The card now sits away from the file or line Pierre was asked to
+        // scroll to. Left pending, that target would be re-applied on the
+        // next render (e.g. the next click) and pull the card off-center.
+        if (view) view.releaseScroll();
+        return;
+      }
       // Make each layout correction immediate instead of starting overlapping
       // browser scroll animations during the bounded alignment loop.
       root.scrollTo({ top: root.scrollTop + offset, behavior: 'instant' });
@@ -2785,6 +2799,16 @@
       else {
         ignoreTreeObserverUntil = Date.now() + 400;
         updateTreeActive(filePath);
+      }
+      // A mounted card is centered directly. Asking Pierre to scroll too
+      // would race the alignment: Pierre applies its scroll a frame later,
+      // after the align loop saw the card in place and stopped, so repeat
+      // clicks on the same comment bounced between the file top and the card.
+      const mounted = card();
+      if (mounted) {
+        scrollPierreElementIntoView(mounted, isCurrent);
+        done(mounted);
+        return;
       }
       const scrolled = anchored
         ? pierreView.scrollToLine(filePath, comment.end_line, comment.side, 'center')
@@ -4006,6 +4030,7 @@
     html = processTaskLists(html);
     html = rewriteImageSrcs(html, file.path);
     contentEl.innerHTML = html;
+    window.crit.shared.applyAutoTextDirection(contentEl);
     lineBlockEl.appendChild(contentEl);
 
     frag.appendChild(lineBlockEl);
@@ -4307,7 +4332,10 @@
           if (renderedRow) {
             while (renderedRow.firstChild) {
               const cell = renderedRow.firstChild;
-              cell.className = buildContentClasses(block) + (cell.className ? ' ' + cell.className : '');
+              if (cell.nodeType === 1) {
+                cell.className = buildContentClasses(block) + (cell.className ? ' ' + cell.className : '');
+                window.crit.shared.applyAutoTextDirection(cell);
+              }
               lineBlockEl.appendChild(cell);
             }
           }
@@ -4319,6 +4347,7 @@
         html = processTaskLists(html);
         html = rewriteImageSrcs(html, file.path);
         content.innerHTML = html;
+        window.crit.shared.applyAutoTextDirection(content);
         lineBlockEl.appendChild(gutter);
         lineBlockEl.appendChild(content);
       }
@@ -4464,6 +4493,47 @@
       if (m) suffix = m[1];
     }
     return '@@ -' + oldStart + ',' + oldCount + ' +' + newStart + ',' + newCount + ' @@' + suffix;
+  }
+
+  // ===== LSP =====
+
+  // applyLspConfig wires hover / go-to-definition to what /api/config
+  // reports. Both lsp_available and lsp_extensions depend on the focus (a PR
+  // review offers no server where nothing can confine one), so this runs on
+  // load and again after every focus change. crit-lsp owns its listeners
+  // and init is idempotent; an empty extension list switches it off.
+  function applyLspConfig(config) {
+    if (!window.crit.lsp) return;
+    const extensions = config.lsp_available && Array.isArray(config.lsp_extensions) ? config.lsp_extensions : [];
+    if (extensions.length) {
+      window.crit.lsp.init({
+        jumpToLocation: lspJumpToLocation,
+        mountLineWidget: mountPierreLineWidget,
+        unmountLineWidget: unmountPierreLineWidget,
+        languageForPath: pierreLanguageForPath,
+        toast: function (message) { showMiniToast(message); },
+        extensions: extensions,
+      });
+    }
+    window.crit.lsp.setExtensions(extensions);
+  }
+
+  // Lookups are switched off until the answer arrives: one still pending
+  // would act on the previous focus, and a failed refresh must not leave
+  // them on for a review the server may refuse. A second focus change can
+  // overtake the first one's response; only the latest request is applied.
+  let lspConfigRequest = 0;
+  function refreshLspConfig() {
+    if (window.crit.lsp) window.crit.lsp.setExtensions([]);
+    const request = ++lspConfigRequest;
+    fetch('/api/config').then(function (r) {
+      if (!r.ok) throw new Error('config: ' + r.status);
+      return r.json();
+    }).then(function (config) {
+      if (request === lspConfigRequest) applyLspConfig(config);
+    }).catch(function (err) {
+      console.error('refreshing LSP availability:', err);
+    });
   }
 
   // ===== LSP definition jump =====
@@ -4888,9 +4958,9 @@
   }
 
   // A new form can open below an existing thread; flash it once it is on
-  // screen so it is easy to spot (same animation as a comment-ref jump).
+  // screen so it is easy to spot (a softer accent pulse than a comment-ref jump).
   function flashNewCommentForm(formEl) {
-    if (formEl) restartFlash(formEl, 'comment-ref-flash');
+    if (formEl) restartFlash(formEl, 'comment-form-flash');
   }
 
   function openFileCommentForm(filePath) {
@@ -5393,6 +5463,7 @@
 
     const textarea = document.createElement('textarea');
     textarea.placeholder = 'Leave a review comment... (Ctrl+Enter to submit, Escape to cancel)';
+    textarea.dir = 'auto';
     textarea.dataset.formKey = formObj.formKey;
     if (opts.initialBody) textarea.value = opts.initialBody;
 
@@ -5937,6 +6008,7 @@
       replyBody.className = 'reply-body';
       replyBody.dataset.rawBody = reply.body;
       replyBody.innerHTML = commentMd.render(reply.body);
+      window.crit.shared.applyAutoTextDirection(replyBody);
       linkifyCommentRefsInDom(replyBody);
       replyEl.appendChild(replyBody);
 
@@ -6502,6 +6574,7 @@
       pendingNewDraft = existingNewTa.value;
     }
 
+    const focusedCtl = focusedCommitCtl();
     section.hidden = false;
     section.innerHTML = '';
 
@@ -6516,6 +6589,12 @@
 
     const collapsed = isReviewConversationCollapsed() && !reviewCommentFormActive;
     section.classList.toggle('collapsed', collapsed);
+
+    const commitCard = buildCommitContextCard();
+    if (commitCard) {
+      section.appendChild(commitCard);
+      restoreCommitCardFocus(commitCard, focusedCtl);
+    }
 
     // Header — chevron on the left, matching `.tree-folder` and `.comment-card`
     // collapse conventions elsewhere in the UI.
@@ -6682,6 +6761,7 @@
 
     const textarea = document.createElement('textarea');
     textarea.className = 'comment-textarea';
+    textarea.dir = 'auto';
     textarea.value = currentText;
     textarea.rows = 3;
     bodyEl.replaceWith(textarea);
@@ -6758,6 +6838,7 @@
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'reply-input';
+    input.dir = 'auto';
     input.placeholder = isPending ? 'Waiting for @' + agentName + '\u2026' : 'Write a reply\u2026';
     if (isPending) input.disabled = true;
     form.appendChild(input);
@@ -6765,6 +6846,7 @@
     // Expanded state elements (hidden initially)
     const textarea = document.createElement('textarea');
     textarea.className = 'reply-textarea';
+    textarea.dir = 'auto';
     textarea.placeholder = isPending ? 'Waiting for @' + agentName + '\u2026' : 'Write a reply\u2026';
     textarea.rows = 3;
     if (isPending) textarea.disabled = true;
@@ -7834,6 +7916,7 @@
       } catch (err) {
         console.error('focus-changed parse:', err);
       }
+      refreshLspConfig();
       // Reuse the same refresh path as base-changed.
       reloadForScope();
       fetchCommits();
@@ -8506,12 +8589,7 @@
     } else if (scopes.indexOf(diffScope) === -1) {
       diffScope = scopes.indexOf('branch') !== -1 ? 'branch' : 'all';
     }
-    const scopeToggle = document.getElementById('scopeToggle');
-    if (scopeToggle) {
-      scopeToggle.querySelectorAll('.toggle-btn').forEach(function(b) {
-        b.classList.toggle('active', b.dataset.scope === diffScope);
-      });
-    }
+    updateScopePinIndicator();
   }
 
   function compareTargetChromeVisible() {
@@ -8590,19 +8668,59 @@
       diffCommit = '';
     }
     updateScopePinIndicator();
+    refreshCommitContextCard();
   }
 
-  // Marks the scope toggle while a pinned commit overrides it. The hint goes
-  // on each button, since the browser shows the innermost element's title.
+  // Short label for a pinned ref: the commit's short sha, the virtual
+  // commit's message, or the compare-target label for anything else.
+  function commitPinRef(sha) {
+    const c = commitList.find(function(x) { return x.sha === sha; });
+    if (!c) return compareTargetChipLabel(sha);
+    return c.virtual ? c.message : c.short_sha;
+  }
+
+  const SCOPE_NAMES = { all: 'All', branch: 'Branch', staged: 'Staged', unstaged: 'Unstaged' };
+
+  // A pinned commit overrides the scope. The toggle recedes, a chip on its
+  // left names the pin, and the scope that comes back on unpin keeps a ghost
+  // outline instead of the active fill. The hint goes on each button, since
+  // the browser shows the innermost element's title.
   function updateScopePinIndicator() {
     if (!wtScopeToggleEl) return;
     const pinned = !!diffCommit;
     wtScopeToggleEl.classList.toggle('commit-pinned', pinned);
+    scopePinEl.hidden = !pinned;
+    const scopeName = SCOPE_NAMES[diffScope] || diffScope;
+    if (pinned) {
+      let kind;
+      let ref;
+      if (diffCommit === VIRTUAL_WORKING_COMMIT) {
+        const virtual = commitList.find(function(c) { return c.virtual; });
+        kind = '';
+        ref = virtual ? virtual.message : 'Working changes';
+      } else if (commitThrough) {
+        kind = 'Range';
+        ref = commitPinRef(commitFrom) + '\u2026' + commitPinRef(commitThrough);
+      } else {
+        kind = 'Commit';
+        ref = commitPinRef(commitFrom);
+      }
+      scopePinKindEl.textContent = kind;
+      scopePinRefEl.textContent = ref;
+      scopePinNoteEl.textContent = '. The scope is not applied while it is pinned; choosing a scope unpins it.';
+      scopePinLabelEl.title = 'The diff shows ' + (kind ? kind.toLowerCase() + ' ' : '') + ref + ' instead of a scope';
+      scopePinClearEl.setAttribute('aria-label', 'Unpin and show ' + scopeName + ' changes');
+      scopePinClearEl.title = 'Unpin (Esc) \u00b7 back to ' + scopeName;
+    }
     wtScopeToggleEl.querySelectorAll('.toggle-btn').forEach(function(b) {
+      const current = b.dataset.scope === diffScope;
+      b.classList.toggle('active', current && !pinned);
+      b.classList.toggle('remembered', current && pinned);
+      b.setAttribute('aria-pressed', String(current && !pinned));
       if (b.dataset.baseTitle === undefined) b.dataset.baseTitle = b.title || '';
-      b.title = pinned
-        ? b.dataset.baseTitle + ' (a commit is pinned; click to show this scope)'
-        : b.dataset.baseTitle;
+      b.title = pinned ? b.dataset.baseTitle + ' (unpins the commit)' : b.dataset.baseTitle;
+      if (pinned) b.setAttribute('aria-describedby', 'scopePinLabel');
+      else b.removeAttribute('aria-describedby');
     });
   }
 
@@ -8678,15 +8796,9 @@
       if (label) {
         if (commitFrom && !commitThrough) {
           const sel = commitList.find(function(c) { return c.sha === commitFrom; });
-          label.textContent = sel
-            ? (sel.virtual ? sel.message : (sel.short_sha + ' only'))
-            : compareTargetChipLabel(commitFrom) + ' only';
+          label.textContent = sel && sel.virtual ? sel.message : commitPinRef(commitFrom) + ' only';
         } else if (commitFrom && commitThrough) {
-          const a = commitList.find(function(c) { return c.sha === commitFrom; });
-          const b = commitList.find(function(c) { return c.sha === commitThrough; });
-          const aLabel = a ? (a.virtual ? a.message : a.short_sha) : compareTargetChipLabel(commitFrom);
-          const bLabel = b ? (b.virtual ? b.message : b.short_sha) : compareTargetChipLabel(commitThrough);
-          label.textContent = aLabel + ' \u2192 ' + bLabel;
+          label.textContent = commitPinRef(commitFrom) + ' \u2192 ' + commitPinRef(commitThrough);
         }
       }
     }
@@ -8711,11 +8823,215 @@
       return '<div class="' + cls + '" data-commit="' + c.sha + '" role="button" tabindex="0">'
         + fromPin + throughPin
         + '<span class="commit-picker-item-sha">' + escapeHtml(c.short_sha) + '</span>'
-        + '<span class="commit-picker-item-msg">' + escapeHtml(c.message.length > 40 ? c.message.slice(0, 40) + '\u2026' : c.message) + '</span>'
+        + '<span class="commit-picker-item-msg" title="' + escapeHtml(commitTooltip(c)) + '">' + escapeHtml(c.message) + '</span>'
         + virtualPill
         + time
         + '</div>';
     }).join('');
+    refreshCommitContextCard();
+  }
+
+  function commitTooltip(c) {
+    if (c.virtual) return c.message;
+    const lines = (c.body || '').split('\n').slice(0, 12);
+    return c.message + (lines.join('').trim() ? '\n\n' + lines.join('\n') : '');
+  }
+
+  // Index range [newest, oldest] in commitList for the pinned scope, or null
+  // when nothing real is pinned.
+  function pinnedCommitSpan() {
+    if (!commitFrom) return null;
+    const fromIdx = commitIndexForSha(commitFrom);
+    if (fromIdx < 0 || commitList[fromIdx].virtual) return null;
+    if (!commitThrough) return { newest: fromIdx, oldest: fromIdx };
+    const throughIdx = commitIndexForSha(commitThrough);
+    if (throughIdx < 0) return null;
+    return { newest: Math.min(fromIdx, throughIdx), oldest: Math.max(fromIdx, throughIdx) };
+  }
+
+  function realCommits() {
+    return commitList.filter(function(c) { return !c.virtual; });
+  }
+
+  // Step the single-commit pin to an older (-1) or newer (+1) commit. With a
+  // range pinned, lands on the range's oldest (next) or newest (previous)
+  // commit; with nothing pinned, starts the walk at the oldest commit.
+  function stepPinnedCommit(dir) {
+    const real = realCommits();
+    // One commit alone is the whole branch, so there is nothing to step to.
+    // Beside uncommitted changes it is a scope of its own, as in the picker.
+    if (real.length === 0 || (real.length === 1 && real.length === commitList.length)) return false;
+    const indexOf = function(sha) { return real.findIndex(function(c) { return c.sha === sha; }); };
+    const span = pinnedCommitSpan();
+    let next;
+    if (span && span.newest === span.oldest) {
+      next = indexOf(commitFrom) - dir; // list is newest first
+    } else if (span) {
+      next = indexOf(commitList[dir > 0 ? span.oldest : span.newest].sha);
+    } else {
+      next = real.length - 1;
+    }
+    if (next < 0 || next >= real.length) return false;
+    focusSingleCommit(real[next].sha);
+    return true;
+  }
+
+  // Which card control has focus, so a rebuild can put it back.
+  function focusedCommitCtl() {
+    const active = document.activeElement;
+    const ctl = active && active.closest && active.closest('.commit-context [data-commit-ctl]');
+    return ctl ? ctl.dataset.commitCtl : '';
+  }
+
+  function restoreCommitCardFocus(card, ctlName) {
+    if (!ctlName || !card) return;
+    let el = card.querySelector('[data-commit-ctl="' + ctlName + '"]');
+    if (el && el.disabled) el = card.querySelector('.commit-context-step:not(:disabled)');
+    if (!el) el = card.querySelector('[data-commit-ctl="sha"]');
+    if (el) el.focus();
+  }
+
+  function focusSingleCommit(sha) {
+    const focusedCtl = focusedCommitCtl();
+    const prev = diffCommit;
+    virtualCommitSelected = false;
+    commitFrom = sha;
+    commitThrough = '';
+    recomputeDiffCommit();
+    renderCommitPicker();
+    if (diffCommit === prev) return;
+    // The reload rebuilds the list and moves the review conversation, which
+    // drops focus; put it back on the same control once it settles.
+    reloadForScope().then(function() {
+      restoreCommitCardFocus(document.querySelector('#reviewConversation > .commit-context'), focusedCtl);
+    });
+  }
+
+  function buildCommitContextCard() {
+    if (!session || session.mode !== 'git' || !commitRangeChromeVisible()) return null;
+    const span = pinnedCommitSpan();
+    if (!span) return null;
+    const real = realCommits();
+    const card = document.createElement('section');
+    card.className = 'commit-context';
+    card.setAttribute('aria-label', 'Commit details');
+
+    if (span.newest === span.oldest) {
+      const c = commitList[span.newest];
+      const pos = real.findIndex(function(r) { return r.sha === c.sha; });
+      const number = real.length - pos; // 1 = oldest
+
+      const meta = document.createElement('div');
+      meta.className = 'commit-context-meta';
+
+      const nav = document.createElement('div');
+      nav.className = 'commit-context-nav';
+      const prevBtn = document.createElement('button');
+      prevBtn.type = 'button';
+      prevBtn.className = 'commit-context-step';
+      prevBtn.dataset.commitCtl = 'prev';
+      prevBtn.textContent = '\u2039';
+      prevBtn.title = 'Previous commit (,)';
+      prevBtn.setAttribute('aria-label', 'Previous commit');
+      prevBtn.disabled = pos >= real.length - 1;
+      prevBtn.addEventListener('click', function() { stepPinnedCommit(-1); });
+      const counter = document.createElement('span');
+      counter.className = 'commit-context-counter';
+      counter.textContent = 'Commit ' + number + ' of ' + real.length;
+      const nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'commit-context-step';
+      nextBtn.dataset.commitCtl = 'next';
+      nextBtn.textContent = '\u203a';
+      nextBtn.title = 'Next commit (.)';
+      nextBtn.setAttribute('aria-label', 'Next commit');
+      nextBtn.disabled = pos <= 0;
+      nextBtn.addEventListener('click', function() { stepPinnedCommit(1); });
+      nav.append(prevBtn, counter, nextBtn);
+      meta.appendChild(nav);
+
+      const sha = document.createElement('button');
+      sha.type = 'button';
+      sha.className = 'commit-context-sha';
+      sha.dataset.commitCtl = 'sha';
+      sha.textContent = c.short_sha;
+      sha.title = 'Copy full SHA';
+      sha.setAttribute('aria-label', 'Copy commit SHA ' + c.sha);
+      sha.addEventListener('click', function() {
+        navigator.clipboard.writeText(c.sha).then(function() {
+          sha.textContent = 'Copied';
+          setTimeout(function() { sha.textContent = c.short_sha; }, 1200);
+        }).catch(function() { sha.textContent = c.short_sha; });
+      });
+      meta.appendChild(sha);
+
+      const who = document.createElement('span');
+      who.className = 'commit-context-author';
+      who.textContent = (c.author || '') + (c.date ? ' \u00b7 ' + relativeTime(c.date) : '');
+      if (c.date) who.title = new Date(c.date).toLocaleString();
+      meta.appendChild(who);
+      card.appendChild(meta);
+
+      const title = document.createElement('h2');
+      title.className = 'commit-context-title';
+      title.textContent = c.message;
+      card.appendChild(title);
+
+      // jj and Sapling do not send bodies, so an empty one says nothing.
+      if (c.body) {
+        const body = document.createElement('div');
+        body.className = 'commit-context-body comment-body';
+        body.innerHTML = commentMd.render(c.body);
+        card.appendChild(body);
+      }
+      return card;
+    }
+
+    const count = span.oldest - span.newest + 1;
+    const meta = document.createElement('div');
+    meta.className = 'commit-context-meta';
+    const counter = document.createElement('span');
+    counter.className = 'commit-context-counter';
+    counter.textContent = count + ' commits \u00b7 ' + commitList[span.oldest].short_sha + ' \u2192 ' + commitList[span.newest].short_sha;
+    meta.appendChild(counter);
+    card.appendChild(meta);
+
+    const list = document.createElement('ol');
+    list.className = 'commit-context-list';
+    for (let i = span.oldest; i >= span.newest; i--) {
+      const c = commitList[i];
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'commit-context-list-item';
+      btn.dataset.commitCtl = 'list';
+      btn.title = commitTooltip(c);
+      const shaEl = document.createElement('span');
+      shaEl.className = 'commit-context-list-sha';
+      shaEl.textContent = c.short_sha;
+      const msg = document.createElement('span');
+      msg.className = 'commit-context-list-msg';
+      msg.textContent = c.message;
+      btn.append(shaEl, msg);
+      btn.addEventListener('click', function() { focusSingleCommit(c.sha); });
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+    card.appendChild(list);
+    return card;
+  }
+
+  // Swap only the card so an open review-comment form is left alone.
+  function refreshCommitContextCard() {
+    const section = document.getElementById('reviewConversation');
+    if (!section || section.hidden) return;
+    const old = section.querySelector(':scope > .commit-context');
+    const focusedCtl = focusedCommitCtl();
+    const next = buildCommitContextCard();
+    if (old && next) old.replaceWith(next);
+    else if (old) old.remove();
+    else if (next) section.insertBefore(next, section.firstChild);
+    restoreCommitCardFocus(next, focusedCtl);
   }
 
   document.getElementById('commitDropdownBtn').addEventListener('click', function() {
@@ -9092,11 +9408,24 @@
     navCommentId = null;
     setSetting('diffScope', scope);
     clearCommitPins();
-    document.querySelectorAll('#scopeToggle .toggle-btn').forEach(function(b) {
-      b.classList.toggle('active', b.dataset.scope === scope);
-    });
     updateCompareAndCommitChrome();
     await reloadForScope();
+  });
+
+  // Unpinning from the chip (or Esc inside the toggle) returns to the scope
+  // the pin set aside, through the same path as clicking that scope.
+  function unpinToRememberedScope() {
+    const btn = document.querySelector('#scopeToggle .toggle-btn.remembered');
+    if (!btn || btn.disabled) return false;
+    btn.click();
+    btn.focus();
+    return true;
+  }
+  document.getElementById('scopePinClear').addEventListener('click', unpinToRememberedScope);
+  document.getElementById('scopeToggle').addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape' || !diffCommit || !unpinToRememberedScope()) return;
+    e.preventDefault();
+    e.stopPropagation();
   });
 
   let reloadInFlight = null;
@@ -9110,19 +9439,26 @@
   // Story/Diff also changes the effective fetch/file-data scopes without
   // changing diffScope itself, so include those derived scopes in the key.
   let reloadInFlightKey = null;
-  async function reloadForScope() {
+  let reloadRequestVersion = 0;
+  function scopeReloadKey() {
     const diffFetchMode = ignoreWhitespace && !storyNeedsRawDiff() ? 'filtered' : 'raw';
-    const key = currentSessionFetchScope() + '\0' + currentFileDataScope() + '\0' + diffCommit + '\0' + diffFetchMode;
+    return currentSessionFetchScope() + '\0' + currentFileDataScope() + '\0' + diffCommit + '\0' + diffFetchMode;
+  }
+  async function reloadForScope() {
+    const key = scopeReloadKey();
     if (reloadInFlight && reloadInFlightKey === key) return reloadInFlight;
     if (reloadInFlight) {
       // Different inputs — chain after the in-flight reload finishes so we
       // don't tear down filesContainer mid-render. The previous reload's
       // finally clears reloadInFlight; we then re-enter reloadForScope().
+      reloadRequestVersion++;
+      showFilesMessage('Loading...');
       const prev = reloadInFlight;
       const chained = prev.then(function() { return reloadForScope(); }, function() { return reloadForScope(); });
       return chained;
     }
     reloadInFlightKey = key;
+    const requestVersion = ++reloadRequestVersion;
     reloadInFlight = (async function() {
       try {
         activeReplyForms.clear();
@@ -9141,6 +9477,7 @@
           sessionRes = await hydrateStoryIfMissing(sessionRes);
         }
         sessionRes = await hydrateFullSessionForStoryIfNeeded(sessionRes);
+        if (requestVersion !== reloadRequestVersion) return;
         session = sessionRes;
         reviewComments = sessionRes.review_comments || [];
 
@@ -9161,7 +9498,11 @@
           return;
         }
 
-        files = await loadAllFileData(session.files, currentFileDataScope());
+        const viewedLoad = loadServerViewed();
+        const loadedFiles = await loadAllFileData(session.files, currentFileDataScope());
+        await viewedLoad;
+        if (requestVersion !== reloadRequestVersion) return;
+        files = loadedFiles;
         hiddenUnresolved = session.hidden_unresolved || 0;
         files.sort(fileSortComparator);
         restoreViewedState();
@@ -9911,6 +10252,11 @@
         navigateToChange(-1);
         break;
       }
+      case 'next_commit': case 'previous_commit': {
+        if (session.mode !== 'git' || storyActive() || !commitRangeChromeVisible()) break;
+        if (stepPinnedCommit(shortcutAction === 'next_commit' ? 1 : -1)) e.preventDefault();
+        break;
+      }
       case 'scope_all': case 'scope_branch': case 'scope_staged': case 'scope_unstaged': {
         if (session.mode !== 'git') break;
         const scopeMap = { scope_all: 'all', scope_branch: 'branch', scope_staged: 'staged', scope_unstaged: 'unstaged' };
@@ -10093,6 +10439,12 @@
   const compareRailEl = document.getElementById('compareRail');
   const baseBranchArrowEl = document.getElementById('baseBranchArrow');
   const wtScopeToggleEl = document.getElementById('scopeToggle');
+  const scopePinEl = document.getElementById('scopePin');
+  const scopePinLabelEl = document.getElementById('scopePinLabel');
+  const scopePinKindEl = document.getElementById('scopePinKind');
+  const scopePinRefEl = document.getElementById('scopePinRef');
+  const scopePinNoteEl = document.getElementById('scopePinNote');
+  const scopePinClearEl = document.getElementById('scopePinClear');
 
   // Cached /api/picker.stack array. We only consume `stack` now — `other_prs`
   // and `branches` are intentionally unused. Refreshed on focus-changed SSE.

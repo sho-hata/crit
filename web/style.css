@@ -879,6 +879,25 @@ body.dragging { user-select: none; cursor: grabbing; }
   overflow-wrap: break-word;
 }
 
+/* Hebrew/Arabic (RTL) and mixed-script text: let the browser pick direction
+   per block from its first strong character. English-only blocks stay LTR. */
+.line-content,
+.comment-body,
+.reply-body,
+.comment-textarea,
+.comment-form textarea,
+.reply-input,
+.reply-textarea {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+.line-content pre,
+.line-content code {
+  unicode-bidi: normal;
+  text-align: left;
+  direction: ltr;
+}
+
 /* ===== Markdown Styles ===== */
 /* Heading/paragraph top spacing lives on the .line-block row (see the
    .line-block:has(...) rules below), NOT as margin-top on the heading itself.
@@ -1239,7 +1258,7 @@ body.dragging { user-select: none; cursor: grabbing; }
   overflow-wrap: break-word;
 }
 .native-table th.line-content {
-  text-align: left;
+  text-align: start;
   font-weight: 600;
   padding: 10px 14px;
   color: var(--crit-editor-fg-secondary);
@@ -1297,7 +1316,7 @@ body.dragging { user-select: none; cursor: grabbing; }
 .line-content blockquote {
   margin: 6px 0;
   padding: 8px 16px;
-  border-left: 3px solid var(--crit-blockquote-border);
+  border-inline-start: 3px solid var(--crit-blockquote-border);
   background: var(--crit-blockquote-bg);
   border-radius: 0 6px 6px 0;
   color: var(--crit-editor-fg-secondary);
@@ -1309,7 +1328,7 @@ body.dragging { user-select: none; cursor: grabbing; }
 
 .line-content ul,
 .line-content ol {
-  padding-left: 24px;
+  padding-inline-start: 24px;
   margin: 0;
 }
 
@@ -1330,7 +1349,7 @@ body.dragging { user-select: none; cursor: grabbing; }
    their own bullet/marker. */
 .line-content ul.crit-list-wrapper,
 .line-content ol.crit-list-wrapper {
-  padding-left: 24px;
+  padding-inline-start: 24px;
   margin: 0;
 }
 .line-content li.crit-list-wrapper {
@@ -1348,7 +1367,7 @@ body.dragging { user-select: none; cursor: grabbing; }
 }
 
 .line-content th {
-  text-align: left;
+  text-align: start;
   font-weight: 600;
   padding: 10px 14px;
   border-bottom: 2px solid var(--crit-border);
@@ -1374,8 +1393,8 @@ body.dragging { user-select: none; cursor: grabbing; }
 /* Task lists */
 .line-content .task-list-item {
   list-style: none;
-  margin-left: -24px;
-  padding-left: 4px;
+  margin-inline-start: -24px;
+  padding-inline-start: 4px;
 }
 
 .line-content .task-list-item input[type="checkbox"] {
@@ -1623,7 +1642,7 @@ tspan.quote-highlight {
   flex: 1;
   min-width: 0;
 }
-.comment-body ul, .comment-body ol { margin: 0.3em 0; padding-left: 1.5em; }
+.comment-body ul, .comment-body ol { margin: 0.3em 0; padding-inline-start: 1.5em; }
 .comment-body a {
   color: var(--crit-brand);
   text-decoration: none;
@@ -1637,7 +1656,7 @@ tspan.quote-highlight {
 .comment-body blockquote {
   margin: 6px 0;
   padding: 8px 16px;
-  border-left: 3px solid var(--crit-blockquote-border);
+  border-inline-start: 3px solid var(--crit-blockquote-border);
   background: var(--crit-blockquote-bg);
   border-radius: 0 6px 6px 0;
   color: var(--crit-editor-fg-secondary);
@@ -1670,7 +1689,7 @@ tspan.quote-highlight {
 .reply-body td {
   border: 1px solid var(--crit-border);
   padding: 4px 10px;
-  text-align: left;
+  text-align: start;
 }
 
 .comment-body th,
@@ -1733,14 +1752,14 @@ tspan.quote-highlight {
 }
 
 .reply-body ul, .reply-body ol {
-  padding-left: 1.5em;
+  padding-inline-start: 1.5em;
   margin: 0.3em 0;
 }
 
 .reply-body blockquote {
   margin: 6px 0;
   padding: 8px 16px;
-  border-left: 3px solid var(--crit-blockquote-border);
+  border-inline-start: 3px solid var(--crit-blockquote-border);
   background: var(--crit-blockquote-bg);
   border-radius: 0 6px 6px 0;
   color: var(--crit-editor-fg-secondary);
@@ -2111,6 +2130,19 @@ textarea.drag-active {
   0%   { background-color: var(--crit-comment-ref-flash-bg); box-shadow: 0 0 0 2px var(--crit-comment-ref-flash-ring); }
   15%  { background-color: var(--crit-comment-ref-flash-bg); box-shadow: 0 0 0 2px var(--crit-comment-ref-flash-ring); }
   100% { background-color: transparent; box-shadow: 0 0 0 2px transparent; }
+}
+
+/* New comment form: a soft accent ring that fades out, so the form is easy
+   to spot without the louder comment-ref jump flash. */
+.comment-form-flash {
+  animation: comment-form-flash 1.4s var(--crit-ease);
+}
+@keyframes comment-form-flash {
+  0%, 20% {
+    background-color: color-mix(in srgb, var(--crit-brand) 12%, var(--crit-editor-comment-bg));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit-brand) 55%, transparent);
+  }
+  100% { box-shadow: 0 0 0 2px var(--crit-brand-subtle); }
 }
 
 /* ===== Save Template Dialog ===== */
@@ -4592,8 +4624,85 @@ html[data-theme="light"] .toggle-btn.active {
   padding: 0 10px;
 }
 .scope-toggle .toggle-btn:disabled { opacity: 0.4; cursor: default; }
+/* A pinned commit overrides the scope. The toggle recedes (no track fill,
+   dashed hairline, dimmer labels) and a chip on its left names the pin. The
+   scope that comes back on unpin keeps a ghost outline. */
 .scope-toggle.commit-pinned {
-  border-color: var(--crit-orange);
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--crit-border-strong);
+}
+.scope-toggle.commit-pinned .toggle-btn:not(:disabled) {
+  color: var(--crit-scope-idle-fg);
+}
+.scope-toggle.commit-pinned .toggle-btn.remembered {
+  box-shadow: inset 0 0 0 1px var(--crit-scope-ghost);
+}
+.scope-toggle.commit-pinned .toggle-btn:not(:disabled):hover,
+.scope-toggle.commit-pinned .toggle-btn:not(:disabled):focus-visible {
+  color: var(--crit-editor-fg);
+  background: color-mix(in srgb, var(--crit-editor-fg) 5%, transparent);
+}
+.scope-toggle.commit-pinned .toggle-btn:disabled { opacity: 0.3; }
+.scope-pin {
+  display: inline-flex;
+  align-items: center;
+  padding-right: 5px;
+  margin-right: 3px;
+  border-right: 1px solid var(--crit-border-strong);
+}
+.scope-pin[hidden] { display: none; }
+.scope-pin-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 4px 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--crit-editor-fg);
+  background: var(--crit-pin-chip-bg);
+  border-radius: 6px 0 0 6px;
+  box-shadow: inset 0 0 0 1px var(--crit-pin-chip-border);
+}
+.scope-pin-icon { color: var(--crit-brand); flex-shrink: 0; }
+.scope-pin-kind { color: var(--crit-editor-fg-muted); font-weight: 500; }
+.scope-pin-ref {
+  font-family: var(--crit-font-mono);
+  font-size: 11.5px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scope-pin-note {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.scope-pin-clear {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 26px;
+  border: 0;
+  border-radius: 0 6px 6px 0;
+  background: var(--crit-pin-chip-bg);
+  box-shadow: inset 0 0 0 1px var(--crit-pin-chip-border);
+  color: var(--crit-editor-fg-muted);
+  cursor: pointer;
+}
+.scope-pin-clear:hover {
+  background: var(--crit-pin-chip-hover);
+  color: var(--crit-editor-fg);
+}
+.scope-pin-clear:focus-visible {
+  outline: 2px solid var(--crit-brand);
+  outline-offset: 1px;
 }
 
 /* Commit picker (sidebar dropdown) */
@@ -4755,6 +4864,7 @@ html[data-theme="light"] .toggle-btn.active {
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
+  min-width: 0;
 }
 .commit-picker-item-time {
   font-size: 10px;
@@ -5598,6 +5708,109 @@ html[data-theme="light"] .toggle-btn.active {
 /* The review list already pads the files; line the conversation up with them. */
 body.pierre-review .review-conversation:not([data-doc-layout="centered"]) { margin-inline: 0; }
 .review-conversation.collapsed .review-conversation-body { display: none; }
+
+/* Commit context card: what the pinned commit (or range) is for, shown
+   above the review conversation when reviewing commit by commit. */
+.commit-context {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: var(--crit-editor-bg-elevated);
+  border: 1px solid var(--crit-border);
+  border-radius: var(--crit-r-md);
+}
+.commit-context-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--crit-editor-fg-muted);
+}
+.commit-context-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.commit-context-step {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--crit-editor-fg);
+  background: transparent;
+  border: 1px solid var(--crit-border);
+  border-radius: var(--crit-r-sm);
+  cursor: pointer;
+}
+.commit-context-step:hover:not(:disabled) { background: var(--crit-editor-bg-hover); }
+.commit-context-step:disabled { opacity: 0.35; cursor: default; }
+.commit-context-counter {
+  font-weight: 600;
+  color: var(--crit-editor-fg-secondary);
+}
+.commit-context-sha {
+  padding: 1px 6px;
+  font-family: var(--crit-font-mono);
+  font-size: 11px;
+  color: var(--crit-editor-fg-muted);
+  background: transparent;
+  border: 1px solid var(--crit-border);
+  border-radius: var(--crit-r-sm);
+  cursor: pointer;
+}
+.commit-context-sha:hover { color: var(--crit-editor-fg); background: var(--crit-editor-bg-hover); }
+.commit-context-title {
+  margin: 10px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--crit-editor-fg);
+  overflow-wrap: anywhere;
+}
+.commit-context-body {
+  margin-top: 8px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--crit-editor-fg-secondary);
+  overflow-wrap: anywhere;
+}
+.commit-context-body > :first-child { margin-top: 0; }
+.commit-context-body > :last-child { margin-bottom: 0; }
+.commit-context-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.commit-context-list-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 6px;
+  margin-left: -6px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--crit-editor-fg);
+  background: transparent;
+  border: 0;
+  border-radius: var(--crit-r-sm);
+  cursor: pointer;
+}
+.commit-context-list-item:hover { background: var(--crit-editor-bg-hover); }
+.commit-context-list-sha {
+  flex-shrink: 0;
+  font-family: var(--crit-font-mono);
+  font-size: 11px;
+  color: var(--crit-editor-fg-muted);
+}
+.commit-context-list-msg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .review-conversation-header {
   display: flex;

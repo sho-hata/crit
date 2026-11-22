@@ -47,6 +47,46 @@ test.describe('LSP — Git Mode — Pierre diff', () => {
     for (const call of calls.hover) expect(call).toEqual({ path: 'server.go', line: String(USE_LINE), char: String(p.char) });
   });
 
+  // lsp_available follows the focus (a PR review offers no server where
+  // nothing can confine one), so the page must follow /api/config across a
+  // focus change in both directions, not only read it at load.
+  test('LSP switches on and off with /api/config across focus changes', async ({ page, request }) => {
+    await mockLSP(page, calls);
+    let available = false;
+    await page.route('**/api/config', async route => {
+      const res = await route.fetch();
+      const json = await res.json();
+      json.lsp_available = available;
+      json.lsp_extensions = available ? ['go'] : [];
+      await route.fulfill({ response: res, json });
+    });
+    const refocus = async (next: boolean) => {
+      available = next;
+      const refreshed = page.waitForResponse('**/api/config');
+      await request.post('/api/focus', { data: { kind: 'working_tree' } });
+      await refreshed;
+    };
+    // While LSP is off the pointer rests on `logRequest`; the tooltip is
+    // then asked for on `r`, a different column, so a request for the first
+    // one is recognizable and would have been sent earlier.
+    const expectOnlyTheLaterHover = async () => {
+      const off = await hoverWord(page, await useLine(page), 'logRequest');
+      await refocus(true);
+      const on = await hoverForTooltip(page, await useLine(page), 'r');
+      expect(on.char).not.toBe(off.char);
+      expect(calls.hover.length).toBeGreaterThan(0);
+      for (const call of calls.hover) expect(call.char).toBe(String(on.char));
+    };
+
+    await loadPage(page);
+    await expectOnlyTheLaterHover();
+
+    await refocus(false);
+    await expect(page.locator('.lsp-tooltip')).toBeHidden();
+    calls.hover.length = 0;
+    await expectOnlyTheLaterHover();
+  });
+
   test('hover over the old side sends nothing', async ({ page }) => {
     await mockLSP(page, calls);
     await loadPage(page);

@@ -3,6 +3,7 @@ package lsp
 import (
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 )
@@ -22,14 +23,20 @@ func goplsCacheDir(ws Workspace) string { return filepath.Join(ws.Scratch, "gopl
 // sweepGoplsCache deletes gopls cache files older than goplsCacheMaxAge.
 // gopls does this itself, but its GC first runs 5 minutes after start and
 // crit's 3-minute idle shutdown kills the server before that.
+//
+// The walk goes through an os.Root on the scratch: the server can write
+// everything beneath it, a symlink in the cache's place included, and this
+// runs in the daemon, unconfined. A Root refuses to follow one out.
 func sweepGoplsCache(ws Workspace) {
-	dir := filepath.Join(goplsCacheDir(ws), "gopls")
-	if _, err := os.Stat(dir); err != nil {
+	root, err := os.OpenRoot(ws.Scratch)
+	if err != nil {
 		return
 	}
+	defer root.Close()
+	dir := path.Join("goplscache", "gopls")
 	cutoff := time.Now().Add(-goplsCacheMaxAge)
 	removed := 0
-	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	_ = fs.WalkDir(root.FS(), dir, func(name string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil //nolint:nilerr // best effort
 		}
@@ -37,10 +44,10 @@ func sweepGoplsCache(ws Workspace) {
 		if err != nil || !info.ModTime().Before(cutoff) {
 			return nil //nolint:nilerr // best effort
 		}
-		if os.Remove(path) == nil {
+		if root.Remove(name) == nil {
 			removed++
 		}
 		return nil
 	})
-	debugf(debugEnabled(), "", "gopls cache sweep removed %d stale files from %s", removed, dir)
+	debugf(debugEnabled(), "", "gopls cache sweep removed %d stale files from %s", removed, filepath.Join(ws.Scratch, dir))
 }

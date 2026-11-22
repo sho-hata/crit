@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -64,11 +63,8 @@ type Manager struct {
 	// only — node_modules and .venv are absent — so a language whose handshake
 	// needs a dependency resolves it from depRoot at the same repo-relative
 	// path.
-	depRoot string
-	// jail is the only way a server or helper process gets started. jailErr
-	// is Open's failure, surfaced on every spawn rather than worked around.
-	jail        *sandbox.Jail
-	jailErr     error
+	depRoot     string
+	sandbox     func() (*sandbox.Sandbox, error)
 	baseCtx     context.Context
 	idleTimeout time.Duration
 	start       startFunc
@@ -99,12 +95,11 @@ func NewManager(root, depRoot, scratchBase string, baseCtx context.Context) *Man
 	if baseCtx == nil {
 		baseCtx = context.Background()
 	}
-	jail, err := sandbox.Open(sandbox.Trees{Root: root, DepRoot: depRoot}, scratchBase)
+	sb, err := sandbox.New(sandbox.Trees{Root: root, DepRoot: depRoot}, scratchBase)
 	m := &Manager{
 		root:        root,
 		depRoot:     depRoot,
-		jail:        jail,
-		jailErr:     err,
+		sandbox:     func() (*sandbox.Sandbox, error) { return sb, err },
 		baseCtx:     baseCtx,
 		idleTimeout: DefaultIdleTimeout,
 		servers:     make(map[string]*serverState),
@@ -291,12 +286,13 @@ func (m *Manager) ensureClient(srv *serverState, lang *Language, absPath string)
 		srv.files = make(map[string]fileState)
 		srv.reviewDocs = make(map[string]bool)
 	}
-	if m.jailErr != nil {
-		return fmt.Errorf("lsp: %w", m.jailErr)
+	sb, err := m.sandbox()
+	if err != nil {
+		return fmt.Errorf("lsp: %w", err)
 	}
 	// The scratch is named before the spawn so an InitOptions hook can point
 	// the server's own writes at it; Command creates it.
-	scratch := m.jail.Workspace(lang.Name).Scratch
+	scratch := sb.Workspace(lang.Name).Scratch
 	var initOpts map[string]any
 	if lang.InitOptions != nil {
 		initOpts = m.handshake(func(root, absPath string) map[string]any {
@@ -550,10 +546,11 @@ func (m *Manager) PeekRoots() []PeekRoot {
 // like its server, with cwd in its scratch rather than the tree.
 func (m *Manager) run(lang *Language) Run {
 	return func(argv ...string) ([]byte, error) {
-		if m.jailErr != nil {
-			return nil, m.jailErr
+		sb, err := m.sandbox()
+		if err != nil {
+			return nil, err
 		}
-		return m.jail.Output(m.baseCtx, lang.Name, sandbox.Process{Argv: argv})
+		return sb.Output(m.baseCtx, lang.Name, sandbox.Process{Argv: argv})
 	}
 }
 
@@ -630,19 +627,20 @@ func (m *Manager) startServer(ctx context.Context, lang *Language, initOpts, set
 	if !lang.Available() {
 		return nil, fmt.Errorf("lsp: %s not found on PATH", lang.Command[0])
 	}
-	debug := debugEnabled()
-	ws := m.jail.Workspace(lang.Name)
-	p := sandbox.Process{Argv: slices.Clone(lang.Command), Stderr: io.Discard}
-	if lang.Args != nil {
-		p.Argv = append(p.Argv, lang.Args(ws)...)
+	sb, err := m.sandbox()
+	if err != nil {
+		return nil, fmt.Errorf("lsp: %w", err)
 	}
+	debug := debugEnabled()
+	ws := sb.Workspace(lang.Name)
+	p := sandbox.Process{Argv: lang.Command, Stderr: io.Discard}
 	if lang.Env != nil {
 		p.Env = lang.Env(ws)
 	}
 	if debug {
 		p.Stderr = &stderrLogger{name: lang.Name}
 	}
-	cmd, err := m.jail.Command(ctx, lang.Name, p)
+	cmd, err := sb.Command(ctx, lang.Name, p)
 	if err != nil {
 		return nil, fmt.Errorf("lsp: %s: %w", lang.Command[0], err)
 	}
