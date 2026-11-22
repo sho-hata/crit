@@ -11,7 +11,6 @@ type ReviewPaths struct {
 	Review      string
 	Snapshots   string
 	Attachments string
-	LSPWorktree string
 }
 
 // ReviewPathsFor returns the v4 folder-form paths for a review identity.
@@ -21,7 +20,6 @@ func ReviewPathsFor(identity string) ReviewPaths {
 		Review:      filepath.Join(identity, "review.json"),
 		Snapshots:   filepath.Join(identity, "snapshots.json"),
 		Attachments: filepath.Join(identity, "attachments"),
-		LSPWorktree: filepath.Join(identity, "lsp-worktree"),
 	}
 }
 

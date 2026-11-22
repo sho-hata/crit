@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/sho-hata/crit/internal/config"
+	"github.com/sho-hata/crit/internal/flock"
 )
 
 type CommonDaemonFlags struct {
@@ -68,7 +69,9 @@ var shutdownClient = &http.Client{Timeout: time.Second}
 // stopWait bounds how long a stopping daemon may take to exit before it is
 // killed. It is longer than the daemon's own 2 s HTTP drain, so a daemon with
 // no agent run in flight still reaches its final write. Tests may shorten it.
-var stopWait = 3 * time.Second
+var stopWait = DefaultStopWait
+
+const DefaultStopWait = 3 * time.Second
 
 // terminateProc is the function StopDaemon uses to request graceful
 // termination. Tests may override it to simulate signal failures.
@@ -594,8 +597,7 @@ func acquireSessionLock(key string) (*os.File, error) {
 	deadline := time.Now().Add(5 * time.Second)
 	backoff := 100 * time.Millisecond
 	for time.Now().Before(deadline) {
-		err = flockExclusiveNB(f)
-		if err == nil {
+		if locked, _ := flock.TryLock(f); locked {
 			if isFileAt(f, lockPath) {
 				return f, nil
 			}
@@ -644,14 +646,14 @@ func removeLockIfFree(path string) {
 // removeOpenedLockIfFree also checks whether the file was replaced after it
 // was opened, before deleting the path.
 func removeOpenedLockIfFree(f *os.File, path string) {
-	if flockExclusiveNB(f) != nil {
+	if locked, _ := flock.TryLock(f); !locked {
 		f.Close()
 		return
 	}
 	// The file may have been replaced after OpenFile but before the lock was
 	// acquired. Never remove a newer session's lock by its pathname.
 	if !isFileAt(f, path) {
-		_ = Funlock(f)
+		_ = flock.Unlock(f)
 		f.Close()
 		return
 	}
