@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -106,6 +107,68 @@ func TestPHPExtraRootsVendor(t *testing.T) {
 	}
 	if got == nil || got.Path != vendor || !got.LocalEnv {
 		t.Errorf("$VENDOR root = %+v, want %s marked LocalEnv", got, vendor)
+	}
+}
+
+// installIntelephense lays out the npm package under prefix, with <prefix>/bin
+// linking to lib/intelephense.js and the stubs beside it in lib/stub. It
+// returns the bin and stub dirs.
+func installIntelephense(t *testing.T, prefix string) (bin, stub string) {
+	t.Helper()
+	lib := filepath.Join(prefix, "lib", "node_modules", "intelephense", "lib")
+	stub = filepath.Join(lib, "stub")
+	if err := os.MkdirAll(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(lib, "intelephense.js")
+	if err := os.WriteFile(entry, []byte("#!/usr/bin/env node\n"), 0o755); err != nil { //nolint:gosec // LookPath needs it executable
+		t.Fatal(err)
+	}
+	bin = filepath.Join(prefix, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(entry, filepath.Join(bin, "intelephense")); err != nil {
+		t.Fatal(err)
+	}
+	return bin, stub
+}
+
+func phpStubsRoot(roots []PeekRoot) string {
+	for _, r := range roots {
+		if r.Label == "$PHP_STUBS" {
+			return r.Path
+		}
+	}
+	return ""
+}
+
+// A peek root is readable through the API, so a copy of intelephense in the
+// tree under review, ahead on PATH, must not name it: its stub dir can be a
+// symlink to anywhere. The sandbox never runs that copy either.
+func TestPHPExtraRootsSkipAServerInTheTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs symlinks")
+	}
+	repo := realTempDir(t)
+	localBin, localStub := installIntelephense(t, filepath.Join(repo, "node_modules", ".prefix"))
+	if err := os.Remove(localStub); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realTempDir(t), localStub); err != nil {
+		t.Fatal(err)
+	}
+	globalBin, globalStub := installIntelephense(t, realTempDir(t))
+	sep := string(os.PathListSeparator)
+
+	t.Setenv("PATH", localBin+sep+globalBin)
+	if got := phpStubsRoot(phpExtraRoots(repo, noRun)); got != globalStub {
+		t.Errorf("$PHP_STUBS = %q, want the installed %s", got, globalStub)
+	}
+
+	t.Setenv("PATH", localBin)
+	if got := phpStubsRoot(phpExtraRoots(repo, noRun)); got != "" {
+		t.Errorf("$PHP_STUBS with only the tree's copy on PATH = %q, want none", got)
 	}
 }
 
