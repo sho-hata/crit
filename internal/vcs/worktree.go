@@ -80,9 +80,7 @@ func noEOLConversion() []string {
 // list as a worktree of repoRoot. It prunes metadata only after falling back
 // to deleting the directory itself — a repo-wide prune would also drop the
 // user's other worktrees whose directories are temporarily missing
-// (unmounted volume). ctx bounds the whole removal, so a caller holding a
-// lock caps how long it is held; a shutdown path passes a fresh context, not
-// its cancelled one.
+// (unmounted volume). ctx bounds the whole removal.
 func RemoveWorktree(ctx context.Context, repoRoot, dir string) error {
 	dir, err := absWorktreeDir(dir)
 	if err != nil {
@@ -114,10 +112,6 @@ func removeWorktree(ctx context.Context, repoRoot, dir string, ownDir bool) erro
 	return err
 }
 
-// removeAllCtx is os.RemoveAll that stops between entries once ctx is done,
-// so a caller's lock is not held past its budget on a large checkout. It
-// returns only after deletion has stopped; whatever is left stays registered
-// with git for the next removal to finish.
 func removeAllCtx(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err

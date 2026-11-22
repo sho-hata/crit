@@ -65,10 +65,7 @@ type lspProvider interface {
 
 const (
 	lspWorktreeRemoveTimeout = 30 * time.Second
-	// Shutdown runs before the HTTP server stops, and `crit stop` falls back
-	// to signals after daemon.stopWait (3s). A checkout cut short here is
-	// cleared by whichever daemon takes the slot next.
-	lspShutdownRemoveTimeout = 2 * time.Second
+	lspShutdownRemoveTimeout = daemon.DefaultStopWait - time.Second
 )
 
 type lspWorktree struct {
@@ -249,12 +246,10 @@ func (s *Server) checkoutLSPWorktree(sess *Session, headSHA string, patterns []s
 	if err != nil {
 		return nil, fmt.Errorf("locating lsp worktree pool: %w", err)
 	}
-	// One budget for every leftover: this runs under s.lsp.mu, which each
-	// LSP request waits on.
-	ctx, cancel := context.WithTimeout(context.Background(), lspWorktreeRemoveTimeout)
+	leftoverBudget, cancel := context.WithTimeout(context.Background(), lspWorktreeRemoveTimeout)
 	defer cancel()
 	remove := func(dir string) error {
-		err := vcs.RemoveWorktree(ctx, sess.RepoRoot, dir)
+		err := vcs.RemoveWorktree(leftoverBudget, sess.RepoRoot, dir)
 		if err != nil {
 			log.Printf("lsp: removing leftover worktree %s: %v", dir, err)
 		}
@@ -291,8 +286,6 @@ func (s *Server) dropIdleLSPRoot() {
 	s.dropLSPRootLocked(s.session.Load(), lspWorktreeRemoveTimeout)
 }
 
-// A failed removal is only logged: whoever takes the slot next clears the
-// leftover. timeout bounds the removal. Caller holds s.lsp.mu.
 func (s *Server) dropLSPRootLocked(sess *Session, timeout time.Duration) {
 	if s.lsp.idleTimer != nil {
 		s.lsp.idleTimer.Stop()
@@ -314,7 +307,7 @@ func (s *Server) dropLSPRootLocked(sess *Session, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if err := vcs.RemoveWorktree(ctx, sess.RepoRoot, wt.slot.Dir); err != nil {
-		log.Printf("lsp: removing stale worktree %s: %v", wt.slot.Dir, err)
+		log.Printf("lsp: removing stale worktree %s (left for the next daemon that takes the slot): %v", wt.slot.Dir, err)
 	}
 }
 

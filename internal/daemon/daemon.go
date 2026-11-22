@@ -69,7 +69,9 @@ var shutdownClient = &http.Client{Timeout: time.Second}
 // stopWait bounds how long a stopping daemon may take to exit before it is
 // killed. It is longer than the daemon's own 2 s HTTP drain, so a daemon with
 // no agent run in flight still reaches its final write. Tests may shorten it.
-var stopWait = 3 * time.Second
+var stopWait = DefaultStopWait
+
+const DefaultStopWait = 3 * time.Second
 
 // terminateProc is the function StopDaemon uses to request graceful
 // termination. Tests may override it to simulate signal failures.

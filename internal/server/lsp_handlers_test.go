@@ -459,9 +459,6 @@ func TestLSPWorktreeSelfHealsStaleLeftover(t *testing.T) {
 	}
 }
 
-// A slot holding something RemoveWorktree refuses to delete (git doesn't list
-// it: a re-cloned repo, an interrupted `worktree add`) must not be handed out,
-// or every checkout in the repository fails on "already exists".
 func TestLSPWorktreeSkipsUnremovableSlot(t *testing.T) {
 	t.Parallel()
 
