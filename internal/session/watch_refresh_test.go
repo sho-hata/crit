@@ -470,7 +470,7 @@ func TestRefreshHelpers_RangeFocusNoOp(t *testing.T) {
 func TestRefreshFileList_RefreshesLazyListedHash(t *testing.T) {
 	total := lazyFileThreshold + 2
 	changes := make([]vcs.FileChange, 0, total)
-	for i := 0; i < total; i++ {
+	for i := range total {
 		changes = append(changes, vcs.FileChange{Path: fmt.Sprintf("f%03d.go", i), Status: "modified"})
 	}
 	v := &fakeWatchVCS{currentBranch: "feature", defaultBranch: "main", branchChanges: changes}

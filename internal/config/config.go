@@ -440,7 +440,7 @@ func ValidRemoteImagePattern(p string) bool {
 	if p == "" || len(p) > 253 {
 		return false
 	}
-	for _, label := range strings.Split(p, ".") {
+	for label := range strings.SplitSeq(p, ".") {
 		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return false
 		}

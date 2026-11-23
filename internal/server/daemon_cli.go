@@ -191,7 +191,7 @@ func resolveVCSOverride(flagVal, cfgVal string) string {
 // ResolveDaemonCLIConfig parses flags, loads config files, and resolves the
 // final daemon configuration from all sources (CLI > env > config > defaults).
 // Returns nil when the command should exit early (e.g. --version).
-func ResolveDaemonCLIConfig(args []string) (*DaemonCLIConfig, error) {
+func ResolveDaemonCLIConfig(args []string) (*DaemonCLIConfig, error) { //nolint:gocyclo // Central CLI configuration resolver.
 	// Taken before anything else so no early return leaves the cookies in the
 	// environment for this process's children to inherit.
 	liveCookie := daemon.TakeLiveCookieEnv()

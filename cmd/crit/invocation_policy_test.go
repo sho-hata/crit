@@ -225,7 +225,7 @@ func TestIntegrationAuthorsMatchAgent(t *testing.T) {
 	}
 	authorRe := regexp.MustCompile(`--author '([^']+)'`)
 	for path := range integrationHashes {
-		agent := strings.SplitN(strings.TrimPrefix(path, "integrations/"), "/", 2)[0]
+		agent, _, _ := strings.Cut(strings.TrimPrefix(path, "integrations/"), "/")
 		for _, m := range authorRe.FindAllStringSubmatch(readIntegrationForPolicyTest(t, path), -1) {
 			expected, ok := want[agent]
 			if !ok {
