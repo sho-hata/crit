@@ -29,10 +29,16 @@ function extractFunction(name) {
   throw new Error(`could not extract ${name}`);
 }
 
+// rewriteImageSrcs hands its output to window.crit.remoteImages.rewriteHtml
+// (click-to-load placeholders, covered by crit-remote-images.test.js). These
+// tests are about the /files/ path rewrite, so that step passes HTML through.
+const appWindow = { crit: { remoteImages: { rewriteHtml: (html) => html } } };
+
 const rewriteImageSrcs = new Function(
   'escapeHtml',
+  'window',
   extractFunction('resolveImagePath') + '\n' + extractFunction('rewriteImageSrcs') + '\nreturn rewriteImageSrcs;'
-)(escapeHtml);
+)(escapeHtml, appWindow);
 
 test('rewriteImageSrcs: resolves relative images against the file directory', () => {
   assert.equal(
