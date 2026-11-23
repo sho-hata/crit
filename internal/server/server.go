@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -76,6 +75,7 @@ type Server struct {
 	projectDir          string
 	homeDir             string
 	cfg                 Config
+	configConfigured    bool
 	reviewPath          string
 	cliArgs             []string     // positional file args; flags (--pr, --range, etc.) are not preserved
 	prList              *PRListCache // 60s cache for picker "Other PRs"
@@ -140,6 +140,9 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	mux.HandleFunc("/preview", s.serveIndexHTML())
 	mux.HandleFunc("/preview-content/", s.handlePreviewContent)
 	mux.HandleFunc("/preview-content", s.handlePreviewContent)
+
+	// Click-to-load frame for one remote image (see csp.go). No session needed.
+	mux.HandleFunc("/remote-image", s.handleRemoteImage)
 
 	// Theme preview page — static samples, no session needed.
 	mux.HandleFunc("/themes", s.serveHTML("themes.html"))
@@ -223,7 +226,7 @@ func NewServer(session *Session, frontendFS embed.FS, author string, currentVers
 	// Static file serving (repo files need session; embedded assets do not)
 	mux.HandleFunc("/files/", s.withReady(s.handleFiles))
 	mux.Handle(precompressedPrefix, servePrecompressed(frontendFS))
-	mux.Handle("/", http.FileServer(http.FS(frontendFS)))
+	mux.Handle("/", s.serveAssets(frontendFS))
 
 	s.mux = mux
 	return s, nil
@@ -468,6 +471,11 @@ func (s *Server) WaitBackground(timeout time.Duration) bool {
 func (s *Server) SetSession(session *Session) {
 	if session != nil {
 		session.MarkSessionStarted()
+		if s.configConfigured {
+			for _, problem := range s.checkFinishPrompts(session) {
+				fmt.Fprintf(os.Stderr, "Warning: finish prompt %s\n", problem)
+			}
+		}
 	}
 	s.session.Store(session)
 }
@@ -584,12 +592,19 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	// Integration detection
 	s.addIntegrationStatus(resp)
 
-	maps.Copy(resp, s.projectPromptTrustPayload())
-	if sess != nil && s.projectPromptsUntrusted() {
-		resp["project_prompt_preview"] = s.renderProjectPromptPreview(sess)
+	globalPrompts, projectPrompts, trust := s.loadPromptConfig()
+	resp["project_prompts_untrusted"] = trust.Untrusted
+	if trust.HasProjectPrompts {
+		resp["project_prompt_sources"] = trust.Sources
+		resp["project_prompt_content_hash"] = trust.ContentHash
+	}
+	mode := finishPromptMode(sess)
+	resp["prompt_problems"] = prompt.Check(globalPrompts, projectPrompts, s.projectDir, s.homeDir, mode, trust.UseProject)
+	if trust.Untrusted {
+		resp["project_prompt_preview"] = prompt.PreviewProjectFinish(projectPrompts, s.projectDir, mode)
 	}
 
-	if sess != nil && sess.ReviewType != "" {
+	if sess.ReviewType != "" {
 		resp["review_type"] = sess.ReviewType
 	}
 
@@ -729,15 +744,19 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	type liveSessionResponse struct {
 		SessionInfo
-		ReviewType string `json:"review_type,omitempty"`
-		Origin     string `json:"origin,omitempty"`
-		ProxyPort  int    `json:"proxy_port,omitempty"`
+		ReviewType     string           `json:"review_type,omitempty"`
+		Origin         string           `json:"origin,omitempty"`
+		ProxyPort      int              `json:"proxy_port,omitempty"`
+		PromptProblems []prompt.Problem `json:"prompt_problems,omitempty"`
 	}
 	resp := liveSessionResponse{SessionInfo: info}
 	if session != nil {
 		resp.ReviewType = session.ReviewType
 		resp.Origin = session.Origin
 		resp.ProxyPort = session.ProxyPort
+		if r.URL.Query().Get("check_prompts") == "1" {
+			resp.PromptProblems = s.checkFinishPrompts(session)
+		}
 	}
 	writeJSON(w, resp)
 }
@@ -751,21 +770,30 @@ func (s *Server) serveIndexHTML() http.HandlerFunc {
 // serveHTML serves an embedded HTML page at a clean path (e.g. /themes).
 func (s *Server) serveHTML(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		f, err := s.assets.Open(name)
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		defer f.Close()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if _, err := io.Copy(w, f); err != nil {
-			log.Printf("serveHTML %s: %v", name, err)
-		}
+		s.serveShell(w, name)
 	}
+}
+
+// serveAssets serves the embedded frontend. The HTML shells go through
+// serveShell so they carry the review page's Content-Security-Policy.
+func (s *Server) serveAssets(frontendFS embed.FS) http.Handler {
+	files := http.FileServer(http.FS(frontendFS))
+	index := s.serveHTML("index.html")
+	themes := s.serveHTML("themes.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/", "/index.html":
+			index(w, r)
+		case "/themes.html":
+			themes(w, r)
+		default:
+			files.ServeHTTP(w, r)
+		}
+	})
 }
 
 func (s *Server) handleCritAgentJS(w http.ResponseWriter, r *http.Request) {
@@ -1815,7 +1843,7 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.projectPromptsUntrusted() {
+	if _, _, trust := s.loadPromptConfig(); trust.Untrusted {
 		http.Error(w, "project prompt trust required", http.StatusForbidden)
 		return
 	}
@@ -1839,7 +1867,10 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 	if unresolvedComments > 0 {
 		comments = listUnresolvedComments(sess)
 	}
-	prompt, promptMeta := s.renderFinishPrompts(sess, approved, stats)
+	finish, ok := s.renderFinishPrompt(w, sess, approved, stats)
+	if !ok {
+		return
+	}
 	nextCommand := session.NextRoundCommand(sess)
 	if !approved {
 		sess.SetWaitingForAgent(true)
@@ -1856,12 +1887,12 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 	// as soon as the approved finish response has been processed.
 	finishResp := map[string]any{
 		"status":       "finished",
-		"prompt":       prompt,
+		"prompt":       finish.Prompt,
 		"approved":     approved,
 		"comments":     comments,
 		"next_command": nextCommand,
 		"stats":        stats,
-		"prompt_meta":  promptMeta,
+		"prompt_meta":  finish.Meta,
 	}
 	if ms, enabled := s.cfg.CloseOnApproveAfterMsEnabled(); enabled {
 		finishResp["close_on_approve_after_ms"] = ms
@@ -1874,12 +1905,12 @@ func (s *Server) handleFinish(w http.ResponseWriter, r *http.Request) {
 	// clients can extract it without string matching on the prompt.
 	// Mirror the finish response so review-cycle consumers see the same fields.
 	eventDataMap := map[string]any{
-		"prompt":       prompt,
+		"prompt":       finish.Prompt,
 		"approved":     approved,
 		"stats":        stats,
 		"comments":     comments,
 		"next_command": nextCommand,
-		"prompt_meta":  promptMeta,
+		"prompt_meta":  finish.Meta,
 	}
 	if ms, enabled := s.cfg.CloseOnApproveAfterMsEnabled(); enabled {
 		eventDataMap["close_on_approve_after_ms"] = ms

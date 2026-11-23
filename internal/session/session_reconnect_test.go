@@ -47,7 +47,7 @@ func TestReconnectDeadSession_MissingReview(t *testing.T) {
 	home := t.TempDir()
 	testutil.SetHome(t, home)
 
-	_, err := reconnectDeadSession("839f3b4cd5d6", daemon.SessionEntry{}, false)
+	_, err := reconnectDeadSession("839f3b4cd5d6", daemon.SessionEntry{}, false, false)
 	if err == nil {
 		t.Fatal("expected error for missing review")
 	}
@@ -71,7 +71,7 @@ func TestReconnectDeadSession_InvalidJSON(t *testing.T) {
 	}
 	writeFile(t, critPath, "not json")
 
-	_, err = reconnectDeadSession(key, daemon.SessionEntry{}, false)
+	_, err = reconnectDeadSession(key, daemon.SessionEntry{}, false, false)
 	if err == nil {
 		t.Fatal("expected parse error")
 	}
@@ -113,7 +113,7 @@ func TestReconnectDeadSession_RestartsDaemon(t *testing.T) {
 	t.Cleanup(func() { startDaemonForReconnect = orig })
 
 	stderr := captureStderr(t, func() {
-		entry, err := reconnectDeadSession(key, daemon.SessionEntry{}, false)
+		entry, err := reconnectDeadSession(key, daemon.SessionEntry{}, false, false)
 		if err != nil {
 			t.Fatalf("reconnectDeadSession: %v", err)
 		}
@@ -156,8 +156,10 @@ func TestRunReview_SessionByID_ReconnectsDeadDaemon(t *testing.T) {
 	defer ts.Close()
 	port, _ := strconv.Atoi(ts.URL[strings.LastIndex(ts.URL, ":")+1:])
 
+	var gotArgs []string
 	origStart := startDaemonForReconnect
-	startDaemonForReconnect = func(string, []string, string) (daemon.SessionEntry, error) {
+	startDaemonForReconnect = func(_ string, args []string, _ string) (daemon.SessionEntry, error) {
+		gotArgs = args
 		return daemon.SessionEntry{PID: os.Getpid(), Port: port}, nil
 	}
 	t.Cleanup(func() { startDaemonForReconnect = origStart })
@@ -170,6 +172,10 @@ func TestRunReview_SessionByID_ReconnectsDeadDaemon(t *testing.T) {
 
 	if err := RunReview(nil); err != nil {
 		t.Fatalf("RunReview: %v", err)
+	}
+	// The restarted daemon opens the browser itself unless told not to (#1189).
+	if !containsArg(gotArgs, "--no-open") {
+		t.Fatalf("restart args %v missing --no-open", gotArgs)
 	}
 }
 
@@ -210,7 +216,7 @@ func TestReconnectDeadSession_OutputReviewPath(t *testing.T) {
 	}
 	t.Cleanup(func() { startDaemonForReconnect = orig })
 
-	if _, err := reconnectDeadSession(key, stale, false); err != nil {
+	if _, err := reconnectDeadSession(key, stale, false, false); err != nil {
 		t.Fatalf("reconnectDeadSession: %v", err)
 	}
 }
@@ -225,11 +231,36 @@ func TestDaemonArgsForReconnect_OutputAndPublicURL(t *testing.T) {
 		ReviewPath: revDir,
 		PublicURL:  "https://crit.example.com",
 	}
-	args := daemonArgsForReconnect(key, []string{"doc.md"}, stale, revDir)
+	args := daemonArgsForReconnect(key, []string{"doc.md"}, stale, revDir, false)
 	assertDaemonFlag(t, args, "--output", outputDir)
 	assertDaemonFlag(t, args, "--public-url", "https://crit.example.com")
 	if !containsArg(args, "doc.md") {
 		t.Fatalf("args %v missing doc.md", args)
+	}
+}
+
+func TestDaemonArgsForReconnect_NoOpen(t *testing.T) {
+	home := t.TempDir()
+	testutil.SetHome(t, home)
+	key := "839f3b4cd5d6"
+	defaultDir, err := daemon.ReviewFilePath(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		noOpen bool
+	}{
+		{name: "opens browser by default", noOpen: false},
+		{name: "passes --no-open through", noOpen: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := daemonArgsForReconnect(key, []string{"range:HEAD~1..HEAD"}, daemon.SessionEntry{}, defaultDir, tt.noOpen)
+			if got := containsArg(args, "--no-open"); got != tt.noOpen {
+				t.Errorf("args %v: --no-open present = %v, want %v", args, got, tt.noOpen)
+			}
+		})
 	}
 }
 
@@ -447,7 +478,7 @@ func TestDaemonArgsForReconnect_Host(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := daemon.SessionEntry{Host: "0.0.0.0"}
-	args := daemonArgsForReconnect(key, nil, stale, defaultDir)
+	args := daemonArgsForReconnect(key, nil, stale, defaultDir, false)
 	assertDaemonFlag(t, args, "--host", "0.0.0.0")
 	foundAllow := slices.Contains(args, "--allow-unauthenticated-network")
 	if !foundAllow {
@@ -460,7 +491,7 @@ func TestReconnectDeadSession_StalePathMissing(t *testing.T) {
 	testutil.SetHome(t, home)
 	key := "839f3b4cd5d6"
 	missing := filepath.Join(t.TempDir(), ".crit")
-	_, err := reconnectDeadSession(key, daemon.SessionEntry{ReviewPath: missing}, false)
+	_, err := reconnectDeadSession(key, daemon.SessionEntry{ReviewPath: missing}, false, false)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -533,7 +564,7 @@ func TestReconnectDeadSession_StartsDaemonInRecordedDirectory(t *testing.T) {
 	t.Cleanup(func() { startDaemonForReconnect = orig })
 
 	captureStderr(t, func() {
-		if _, err := reconnectDeadSession(key, daemon.SessionEntry{}, false); err != nil {
+		if _, err := reconnectDeadSession(key, daemon.SessionEntry{}, false, false); err != nil {
 			t.Fatalf("reconnectDeadSession: %v", err)
 		}
 	})
@@ -561,7 +592,7 @@ func TestReconnectDeadSession_MissingDirectoryFails(t *testing.T) {
 	}
 	t.Cleanup(func() { startDaemonForReconnect = orig })
 
-	if _, err := reconnectDeadSession(key, daemon.SessionEntry{}, false); err == nil {
+	if _, err := reconnectDeadSession(key, daemon.SessionEntry{}, false, false); err == nil {
 		t.Fatal("expected an error for a missing review directory")
 	}
 }

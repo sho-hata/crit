@@ -12,6 +12,7 @@ import (
 	"github.com/sho-hata/crit/internal/clicmd"
 	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/daemon"
+	"github.com/sho-hata/crit/internal/session"
 )
 
 // PreviewSessionKey returns the session key for preview mode.
@@ -23,13 +24,14 @@ func PreviewSessionKey(cwd, absPath string) string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
-// LooksLikePreviewArgs returns true when args is a single .html/.htm file path.
+// LooksLikePreviewArgs returns true when args is a single .html/.htm file
+// path, or a single Excalidraw scene (previewed as a canvas page).
 func LooksLikePreviewArgs(args []string) bool {
 	if len(args) != 1 {
 		return false
 	}
 	ext := filepath.Ext(args[0])
-	if ext != ".html" && ext != ".htm" {
+	if ext != ".html" && ext != ".htm" && !session.IsExcalidrawScene(args[0]) {
 		return false
 	}
 	info, err := os.Stat(args[0])
@@ -93,7 +95,7 @@ func RunPreview(args []string) {
 	quietResolved := *quiet || cfg.Quiet
 
 	if rawPath == "" {
-		fmt.Fprintln(os.Stderr, "Usage: crit preview <file.html>")
+		fmt.Fprintln(os.Stderr, "Usage: crit preview <file.html|file.excalidraw>")
 		os.Exit(1)
 	}
 

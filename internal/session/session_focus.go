@@ -757,7 +757,7 @@ func (s *Session) buildFilesForFocus(f Focus, v vcs.VCS, repoRoot string) ([]*Fi
 			OldPath:  fc.OldPath,
 			AbsPath:  filepath.Join(repoRoot, fc.Path),
 			Status:   fc.Status,
-			FileType: detectFileType(fc.Path),
+			FileType: detectFileType(s.languages, fc.Path),
 			Comments: []Comment{},
 		}
 		// Same eager/lazy split as NewGitSession: range focus is how --pr
@@ -826,7 +826,7 @@ func (s *Session) buildFilesForWorkingTree(v vcs.VCS, repoRoot string) ([]*FileE
 			OldPath:  fc.OldPath,
 			AbsPath:  filepath.Join(repoRoot, fc.Path),
 			Status:   fc.Status,
-			FileType: detectFileType(fc.Path),
+			FileType: detectFileType(s.languages, fc.Path),
 			Comments: []Comment{},
 		}
 		if len(changes) > lazyFileThreshold && i >= lazyFileThreshold {
@@ -964,10 +964,11 @@ type scopedSessionSnapshot struct {
 	branch           string
 	reviewRound      int
 	ignorePatterns   []string
+	languages        config.LanguageRules
 	commentCounts    map[string]int
 	unresolvedCounts map[string]int
 	totalUnresolved  int
-	lazyFiles        map[string]*FileEntry
+	lazyFiles        map[string]lazyStub
 	reviewComments   []Comment
 	focus            Focus
 	lastRangeFocus   *Focus
@@ -990,7 +991,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 
 	commentCounts := make(map[string]int, len(s.Files))
 	unresolvedCounts := make(map[string]int, len(s.Files))
-	lazyFiles := make(map[string]*FileEntry, len(s.Files))
+	lazyFiles := make(map[string]lazyStub, len(s.Files))
 	totalUnresolved := 0
 	var commentedFiles, removedFiles []SessionFileInfo
 	for _, f := range s.Files {
@@ -1002,7 +1003,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 			}
 		}
 		if f.Lazy {
-			lazyFiles[f.Path] = f
+			lazyFiles[f.Path] = lazyStub{additions: f.LazyAdditions, deletions: f.LazyDeletions, hash: f.ListedHash}
 		}
 		if n := commentCounts[f.Path]; n > 0 {
 			row := SessionFileInfo{
@@ -1010,6 +1011,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 				OldPath:      f.OldPath,
 				Status:       f.Status,
 				FileType:     f.FileType,
+				Lang:         s.languages.Lang(f.Path),
 				CommentCount: n,
 				Orphaned:     true,
 				Generated:    f.Generated,
@@ -1045,6 +1047,7 @@ func (s *Session) snapshotForScoped() scopedSessionSnapshot {
 		branch:           s.Branch,
 		reviewRound:      s.ReviewRound,
 		ignorePatterns:   s.IgnorePatterns,
+		languages:        s.languages,
 		commentCounts:    commentCounts,
 		unresolvedCounts: unresolvedCounts,
 		totalUnresolved:  totalUnresolved,
@@ -1248,6 +1251,13 @@ func (snap *scopedSessionSnapshot) sessionInfo() SessionInfo {
 	}
 }
 
+// lazyStub is the listing data of a lazy file, copied under the session lock
+// so scoped listings never read a FileEntry that a refresh may rewrite.
+type lazyStub struct {
+	additions, deletions int
+	hash                 string
+}
+
 // scopedFileInfos builds the file rows for changes.
 func (snap *scopedSessionSnapshot) scopedFileInfos(changes []vcs.FileChange, scope, commit string) []SessionFileInfo {
 	counter := snap.newScopedLineCounter(changes, scope, commit)
@@ -1257,11 +1267,12 @@ func (snap *scopedSessionSnapshot) scopedFileInfos(changes []vcs.FileChange, sco
 			Path:         fc.Path,
 			OldPath:      fc.OldPath,
 			Status:       fc.Status,
-			FileType:     detectFileType(fc.Path),
+			FileType:     detectFileType(snap.languages, fc.Path),
+			Lang:         snap.languages.Lang(fc.Path),
 			CommentCount: snap.commentCounts[fc.Path],
 			Generated:    vcs.IsGenerated(fc.Path, snap.generatedRules),
 		}
-		fi.Lazy, fi.Additions, fi.Deletions = counter.count(i, fc)
+		fi.Lazy, fi.Additions, fi.Deletions, fi.FileHash = counter.count(i, fc)
 		files = append(files, fi)
 	}
 	return files
@@ -1291,20 +1302,25 @@ func (snap *scopedSessionSnapshot) newScopedLineCounter(changes []vcs.FileChange
 	return c
 }
 
-// count returns whether the file at index i is lazy, and its +/- counts.
-func (c scopedLineCounter) count(i int, fc vcs.FileChange) (lazy bool, additions, deletions int) {
+// count returns whether the file at index i is lazy, its +/- counts, and for a
+// lazy file its working-tree hash.
+func (c scopedLineCounter) count(i int, fc vcs.FileChange) (lazy bool, additions, deletions int, hash string) {
 	lazy = c.lazyAll && i >= lazyFileThreshold
 	if c.liveAll && (c.haveNumstats || lazy) {
-		if additions, deletions, ok := c.numstatCounts(fc, lazy); ok {
-			return lazy, additions, deletions
+		if additions, deletions, hash, ok := c.numstatCounts(fc, lazy); ok {
+			return lazy, additions, deletions, hash
 		}
 	}
-	if lf, ok := c.snap.lazyFiles[fc.Path]; ok && !c.liveAll {
-		return true, lf.LazyAdditions, lf.LazyDeletions
+	lf, sessionLazy := c.snap.lazyFiles[fc.Path]
+	if sessionLazy && !c.liveAll && c.commit == "" {
+		return true, lf.additions, lf.deletions, lf.hash
 	}
 	hunks := scopedHunks(fc, c.scope, c.commit, c.snap.baseRef, c.snap.repoRoot, c.snap.vc, false)
 	additions, deletions = countHunkStats(hunks)
-	return false, additions, deletions
+	// A session-lazy file stays lazy under a commit pin so the page still
+	// loads it on demand, but its counts are the commit's, not the branch's
+	// (#1202). It has no hash: the stub's is the working tree's.
+	return sessionLazy && c.commit != "", additions, deletions, ""
 }
 
 // numstatCounts returns fc's +/- counts from the numstat run, counting lines
@@ -1313,18 +1329,33 @@ func (c scopedLineCounter) count(i int, fc vcs.FileChange) (lazy bool, additions
 // for a file that is not lazy and that numstat does not list, such as a
 // rename git did not detect or a backend whose stat output names it
 // differently; the caller then counts its hunks.
-func (c scopedLineCounter) numstatCounts(fc vcs.FileChange, lazy bool) (additions, deletions int, ok bool) {
+//
+// Only a lazy file needs a hash, and the session's lazy stub already carries
+// one: SyncWorkingTree re-hashed it just before the listing. The file is read
+// from disk only when numstat does not list it or the stub has no hash.
+func (c scopedLineCounter) numstatCounts(fc vcs.FileChange, lazy bool) (additions, deletions int, hash string, ok bool) {
 	if !lazy && fc.Status == "deleted" {
-		return 0, 0, true
+		return 0, 0, "", true
 	}
-	_, listed := c.numstats[fc.Path]
+	ns, listed := c.numstats[fc.Path]
+	if listed && !lazy {
+		return ns.Additions, ns.Deletions, "", true
+	}
+	if listed {
+		if h := c.snap.lazyFiles[fc.Path].hash; h != "" {
+			return ns.Additions, ns.Deletions, h, true
+		}
+	}
 	isNew := fc.Status == "untracked" || fc.Status == "added"
-	if !lazy && !listed && !isNew {
-		return 0, 0, false
+	if !lazy && !isNew {
+		return 0, 0, "", false
 	}
 	fe := &FileEntry{AbsPath: filepath.Join(c.snap.repoRoot, fc.Path)}
 	populateLazyFile(fe, fc, c.numstats, true)
-	return fe.LazyAdditions, fe.LazyDeletions, true
+	if lazy {
+		hash = fe.ListedHash
+	}
+	return fe.LazyAdditions, fe.LazyDeletions, hash, true
 }
 
 // appendOrphanedCommentedFiles adds an orphaned row for each commented file
@@ -1425,12 +1456,16 @@ func (s *Session) loadScopedFileState(path, scope, commit string) (status, conte
 }
 
 func computeScopedDiffHunks(path, scope, commit, status, oldPath, content, baseRef, repoRoot string, v vcs.VCS, ignoreWhitespace bool) []vcs.DiffHunk {
-	// Pure content-based diffs don't need VCS.
-	if status == "untracked" && (scope == "unstaged" || scope == "all" || scope == "") {
-		return vcs.FileDiffUnifiedNewFile(content)
-	}
-	if status == "added" && addedFileRendersWhole(scope) {
-		return vcs.FileDiffUnifiedNewFile(content)
+	// Pure content-based diffs don't need VCS. They render the working-tree
+	// content, so they never apply to a commit pin: a file added in a pinned
+	// commit must show that commit's version, not HEAD's.
+	if commit == "" {
+		if status == "untracked" && (scope == "unstaged" || scope == "all" || scope == "") {
+			return vcs.FileDiffUnifiedNewFile(content)
+		}
+		if status == "added" && addedFileRendersWhole(scope) {
+			return vcs.FileDiffUnifiedNewFile(content)
+		}
 	}
 	return scopedHunks(vcs.FileChange{Path: path, OldPath: oldPath, Status: status}, scope, commit, baseRef, repoRoot, v, ignoreWhitespace)
 }
@@ -1513,7 +1548,7 @@ func (s *Session) liveAllFileDiff(path string, ignoreWhitespace bool) (map[strin
 	if hunks != nil {
 		result["hunks"] = hunks
 	}
-	if detectFileType(path) != "code" {
+	if detectFileType(s.languages, path) != "code" {
 		result["previous_content"] = gitBaseContentForMarkdown(s, focus, fc.Path, fc.OldPath, fc.Status, baseRef, repoRoot, vc)
 	}
 	return result, true
@@ -1628,6 +1663,34 @@ func (s *Session) GetFileDiffSnapshotScoped(path, scope, commit string, ignoreWh
 			result["previous_content"] = previousContent
 			result["content"] = scopedContent
 		}
+	} else if previousContent, commitContent, ok := commitDiffContents(path, oldPath, commit, repoRoot, vc); ok {
+		result["previous_content"] = previousContent
+		result["content"] = commitContent
 	}
 	return result, true
+}
+
+// commitDiffContents returns the old- and new-side content for a commit pin,
+// so the page draws the hunks on the file as it was in that commit rather
+// than on the working tree. ok is false for the virtual working-tree commit,
+// whose new side is the working tree. The old side of a single commit is its
+// first parent, which only Git addresses as sha^; other backends leave it
+// empty (it only feeds the rendered markdown diff).
+func commitDiffContents(path, oldPath, commit, repoRoot string, v vcs.VCS) (previousContent, content string, ok bool) {
+	if v == nil || commit == virtualWorkingTreeCommitSHA {
+		return "", "", false
+	}
+	if oldPath == "" {
+		oldPath = path
+	}
+	if base, head, rangeOK := vcs.SplitCommitRange(commit); rangeOK {
+		previousContent, _ = v.FileContentAtRef(oldPath, base, repoRoot)
+		content, _ = v.FileContentAtRef(path, head, repoRoot)
+		return previousContent, content, true
+	}
+	if v.Name() == "git" {
+		previousContent, _ = v.FileContentAtRef(oldPath, commit+"^", repoRoot)
+	}
+	content, _ = v.FileContentAtRef(path, commit, repoRoot)
+	return previousContent, content, true
 }

@@ -392,6 +392,14 @@
     state.proxyOrigin = origins.expect;
     state.agentTargetOrigin = origins.target;
     buildShell();
+    state.promptChecks = shared.setupPromptChecks({}, function (cfg) {
+      shared.applyProjectPromptTrustUI(cfg, document.getElementById('finishBtn'));
+    });
+    state.promptChecks.refresh().then(function (cfg) {
+      state.config = cfg;
+      // Only preview sessions can share a self-contained snapshot.
+      if (state.isPreview) installShareController(cfg);
+    }).catch(function () { /* Config can be refreshed on Finish. */ });
     // Cache the iframeWindow once buildShell has inserted it.
     state.iframeWindow = els.iframe ? els.iframe.contentWindow : null;
 
@@ -411,11 +419,18 @@
     { key: 'fit',     label: 'Fit',     w: 0,    h: 0 },
   ];
 
+  // A previewed Excalidraw scene is a canvas page: it fills the pane (Fit)
+  // and leaves the saved viewport of other previews alone.
+  function isCanvasPreview() {
+    var files = state.isPreview && state.session && state.session.files;
+    return !!(files && files.length && /\.excalidraw(\.json)?$/i.test(files[0].path));
+  }
+
   function applyViewport(vp, opts) {
     state.viewport = { w: vp.w, h: vp.h, key: vp.key };
     // Persist viewport key in crit-settings cookie. Skip 'custom'
     // (drag-resize) so the next session restarts at the nearest preset.
-    if (vp.key && vp.key !== 'custom' && shared && shared.setSetting) {
+    if (vp.key && vp.key !== 'custom' && !isCanvasPreview() && shared && shared.setSetting) {
       try { shared.setSetting('live_viewport', vp.key); } catch (_) { /* noop */ }
     }
     var paneRect = els.pane.getBoundingClientRect();
@@ -470,7 +485,8 @@
       if (vp) applyViewport(vp);
     });
     // Hydrate persisted viewport (desktop default).
-    var savedKey = (shared && shared.getSetting) ? shared.getSetting('live_viewport', 'desktop') : 'desktop';
+    var savedKey = isCanvasPreview() ? 'fit'
+      : (shared && shared.getSetting) ? shared.getSetting('live_viewport', 'desktop') : 'desktop';
     var initial = VIEWPORTS.find(function (v) { return v.key === savedKey; })
       || VIEWPORTS.find(function (v) { return v.key === 'desktop'; });
     applyViewport(initial);
@@ -952,6 +968,7 @@
     // this wrapper supplies the live-mode dedup flag and uiState wiring.
     return await shared.runFinishReview({
       dedup: finishInFlight,
+      checkConsent: function () { return state.promptChecks.confirmTrust(); },
       onApproved: function () { setUIState('waiting'); },
       onWaiting: function () { setUIState('waiting'); },
       onError: function (err) {
@@ -1731,11 +1748,12 @@
         var pending = 2;
         function done() { pending--; if (pending === 0) renderAllPanes(); }
         try {
-          fetch('/api/config').then(function (r) { return r.ok ? r.json() : {}; }).then(function (c) {
-            state.config = c || {};
+          // A failed fetch keeps what we already have rather than blanking it.
+          fetch('/api/config').then(function (r) { return r.ok ? r.json() : null; }).then(function (c) {
+            if (c) state.config = c;
           }).catch(function () {}).finally(done);
-          fetch('/api/session').then(function (r) { return r.ok ? r.json() : {}; }).then(function (s) {
-            state.session = s || {};
+          fetch('/api/session').then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+            if (s) state.session = s;
           }).catch(function () {}).finally(done);
         } catch (_) {
           // best-effort

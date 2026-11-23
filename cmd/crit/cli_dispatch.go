@@ -26,7 +26,7 @@ var commandRegistry = []commandDescriptor{
 	{name: "check", handler: func([]string) { runCheck() }, help: `Usage: crit check
 
 Check installed integrations for missing or stale configuration.`},
-	{name: "pr", handler: runPR, help: `Usage: crit pr <num|url>
+	{name: "pr", handler: runPR, help: `Usage: crit pr [num|url]
 
 Open a GitHub pull request for review.`},
 	{name: "pull", handler: runPull, help: `Usage: crit pull [--session <id>] [--viewed] [--output <dir>] [pr-number]
@@ -98,9 +98,10 @@ Options:
       --cdp-url <url>      Reuse cookies from Chrome DevTools
       --no-open            Do not open a browser
   -q, --quiet              On success, suppress connect/start status, tips, and session summary`},
-	{name: "preview", handler: runPreview, help: `Usage: crit preview [options] <file.html>
+	{name: "preview", handler: runPreview, help: `Usage: crit preview [options] <file.html|file.excalidraw>
 
-Review a local HTML file in preview mode.
+Review a local HTML file in preview mode. An Excalidraw scene opens as a
+canvas: hover an element to outline it, click it to comment on it.
 
 Options:
   -p, --port <port>       Port to listen on
@@ -260,7 +261,7 @@ Review:
   crit                                       Auto-detect changed files via git
   crit <file|dir> [...]                      Review specific files or directories
   crit live <url>                            Review a running web app in live mode
-  crit preview <file.html>                   Review a local HTML file in preview mode
+  crit preview <file.html|file.excalidraw>   Review an HTML file or Excalidraw canvas in preview mode
   crit --pr <num|url>                        Review a GitHub pull request
   crit --range <base>..<head>                Review a commit range
   crit plan --name <slug> <file>             Review a plan file

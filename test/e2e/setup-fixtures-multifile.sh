@@ -163,6 +163,173 @@ sequenceDiagram
   Server-->>Client: Reply
 MMDFILE
 
+# Template file: the language comes from the name without the `.tmpl` suffix.
+cat > main.py.tmpl << 'PYFILE'
+from app import agents
+
+
+@agents.tool
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+
+agent = agents.Agent(name="$name", tools=[greet])
+PYFILE
+
+# Ember template-tag component: TypeScript with an embedded <template> block.
+cat > greeting.gts << 'GTSFILE'
+import Component from "@glimmer/component";
+import { on } from "@ember/modifier";
+
+interface Signature { Args: { name: string } }
+
+export default class Greeting extends Component<Signature> {
+  greet = () => alert(`Hello, ${this.args.name}!`);
+
+  <template>
+    <button type="button" {{on "click" this.greet}}>Hi {{@name}}</button>
+  </template>
+}
+GTSFILE
+# Excalidraw scene (.excalidraw): rendered by the built-in Excalidraw renderer
+# with a Diagram / Source toggle; labels are text elements bound to shapes, in
+# Excalifont, a freedraw stroke, a sticky note and an ER-style arrow.
+cat > flow.excalidraw << 'EXCALIDRAWFILE'
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "https://excalidraw.com",
+  "elements": [
+    {
+      "id": "gw",
+      "type": "rectangle",
+      "x": 0,
+      "y": 0,
+      "width": 200,
+      "height": 80,
+      "strokeColor": "#1971c2",
+      "backgroundColor": "#a5d8ff",
+      "roundness": { "type": 3 },
+      "seed": 101
+    },
+    {
+      "id": "gw-label",
+      "type": "text",
+      "x": 10,
+      "y": 27.5,
+      "width": 180,
+      "height": 25,
+      "text": "API gateway",
+      "fontSize": 20,
+      "textAlign": "center",
+      "containerId": "gw",
+      "seed": 102
+    },
+    {
+      "id": "call",
+      "type": "arrow",
+      "x": 200,
+      "y": 40,
+      "points": [[0, 0], [120, 0]],
+      "endArrowhead": "arrow",
+      "seed": 103
+    },
+    {
+      "id": "db",
+      "type": "ellipse",
+      "x": 320,
+      "y": 0,
+      "width": 160,
+      "height": 80,
+      "strokeColor": "#2f9e44",
+      "backgroundColor": "#b2f2bb",
+      "seed": 104
+    },
+    {
+      "id": "db-label",
+      "type": "text",
+      "x": 330,
+      "y": 27.5,
+      "width": 140,
+      "height": 25,
+      "text": "Orders DB",
+      "fontSize": 20,
+      "textAlign": "center",
+      "containerId": "db",
+      "seed": 105
+    },
+    {
+      "id": "scribble",
+      "type": "freedraw",
+      "x": 40,
+      "y": 120,
+      "strokeColor": "#e03131",
+      "points": [[0, 0], [20, 10], [40, 4], [60, 18], [80, 6], [100, 14]],
+      "pressures": [],
+      "simulatePressure": true,
+      "seed": 106
+    },
+    {
+      "id": "note",
+      "type": "stickynote",
+      "x": 520,
+      "y": 120,
+      "width": 160,
+      "height": 120,
+      "baseHeight": 120,
+      "roughness": 1,
+      "roundness": { "type": 3 },
+      "created": 1788800000000,
+      "seed": 107
+    },
+    {
+      "id": "note-label",
+      "type": "text",
+      "x": 536,
+      "y": 155,
+      "width": 128,
+      "height": 25,
+      "text": "Cache reads?",
+      "fontSize": 20,
+      "textAlign": "center",
+      "containerId": "note",
+      "seed": 108
+    },
+    {
+      "id": "relation",
+      "type": "arrow",
+      "x": 400,
+      "y": 80,
+      "points": [[0, 0], [0, 60], [12, 60]],
+      "startArrowhead": "cardinality_one",
+      "endArrowhead": "cardinality_zero_or_many",
+      "seed": 109
+    }
+  ],
+  "appState": { "viewBackgroundColor": "#ffffff" },
+  "files": {}
+}
+EXCALIDRAWFILE
+
+# `languages` config: a Quarto file reviewed as a markdown document, and a
+# .conf file (Pierre detects nginx) highlighted as YAML. HOME is this
+# directory (e2e_export_fake_home), so this file is also the global config.
+cat > report.qmd << 'QMDFILE'
+# Quarterly Report
+
+Revenue grew in **every** region.
+QMDFILE
+
+cat > app.conf << 'CONFFILE'
+server:
+  port: 8080
+  debug: true
+CONFFILE
+
+cat > .crit.config.json << 'CFGFILE'
+{ "languages": { "*.qmd": "markdown", "*.conf": "yaml" } }
+CFGFILE
+
 git add -A && git commit -q -m "initial commit"
 
 # Build crit binary outside the fixture dir (skip if CRIT_BIN is set)
@@ -175,4 +342,4 @@ fi
 e2e_export_fake_home "$DIR"
 
 # Run crit in file mode with explicit files AND a directory
-e2e_serve "$CRIT_BIN" _serve --no-open --port "$PORT" plan.md main.go handler.ex flow.mmd seq.mmd lib/
+e2e_serve "$CRIT_BIN" _serve --no-open --port "$PORT" plan.md main.go handler.ex flow.mmd seq.mmd main.py.tmpl greeting.gts report.qmd app.conf flow.excalidraw lib/
