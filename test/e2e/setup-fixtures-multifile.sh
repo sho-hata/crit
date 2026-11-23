@@ -326,10 +326,6 @@ server:
   debug: true
 CONFFILE
 
-cat > .crit.config.json << 'CFGFILE'
-{ "languages": { "*.qmd": "markdown", "*.conf": "yaml" } }
-CFGFILE
-
 git add -A && git commit -q -m "initial commit"
 
 # Build crit binary outside the fixture dir (skip if CRIT_BIN is set)
@@ -340,6 +336,12 @@ fi
 
 # Isolate from user's ~/.crit.config.json (and USERPROFILE on Windows).
 e2e_export_fake_home "$DIR"
+# The fake home is the fixture dir, so its global config is this project
+# config too: write the `languages` rules after e2e_export_fake_home, keeping
+# the "lsp": false it would otherwise overwrite.
+cat > .crit.config.json << 'CFGFILE'
+{ "lsp": false, "languages": { "*.qmd": "markdown", "*.conf": "yaml" } }
+CFGFILE
 
 # Run crit in file mode with explicit files AND a directory
 e2e_serve "$CRIT_BIN" _serve --no-open --port "$PORT" plan.md main.go handler.ex flow.mmd seq.mmd main.py.tmpl greeting.gts report.qmd app.conf flow.excalidraw lib/

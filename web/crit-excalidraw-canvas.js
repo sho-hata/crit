@@ -70,24 +70,45 @@
   }
 
   // The review page's theme from the crit-settings cookie (URL-encoded JSON).
+  // Reading document.cookie throws in a sandboxed document without
+  // allow-same-origin (how /preview-content is served), so a throw falls back
+  // to the system theme like a missing cookie.
   function reviewTheme() {
-    var m = /(?:^|;\s*)crit-settings=([^;]*)/.exec(document.cookie || '');
     var theme = 'system';
-    try { theme = (m && JSON.parse(decodeURIComponent(m[1])).theme) || 'system'; } catch (_) { /* default */ }
+    try {
+      var m = /(?:^|;\s*)crit-settings=([^;]*)/.exec(document.cookie || '');
+      theme = (m && JSON.parse(decodeURIComponent(m[1])).theme) || 'system';
+    } catch (_) { /* default */ }
     if (theme === 'light' || theme === 'dark') return theme;
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   }
 
   // sessionStorage can be missing or throw (private windows, blocked
-  // storage); the view then just starts afresh.
+  // storage, and always in /preview-content, which is sandboxed without
+  // allow-same-origin). window.name then carries the view across the reload:
+  // it survives a reload of the same frame and needs no storage.
+  var VIEW_NAME_PREFIX = VIEW_KEY + ':';
+
   function saveView(view) {
-    try { window.sessionStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch (_) { /* start afresh */ }
+    var raw = JSON.stringify(view);
+    try {
+      window.sessionStorage.setItem(VIEW_KEY, raw);
+    } catch (_) {
+      window.name = VIEW_NAME_PREFIX + raw;
+    }
   }
 
   function takeSavedView() {
+    var raw = null;
     try {
-      var raw = window.sessionStorage.getItem(VIEW_KEY);
+      raw = window.sessionStorage.getItem(VIEW_KEY);
       window.sessionStorage.removeItem(VIEW_KEY);
+    } catch (_) { /* fall back to window.name */ }
+    if (!raw && typeof window.name === 'string' && window.name.indexOf(VIEW_NAME_PREFIX) === 0) {
+      raw = window.name.slice(VIEW_NAME_PREFIX.length);
+      window.name = '';
+    }
+    try {
       return raw ? JSON.parse(raw) : null;
     } catch (_) {
       return null;
