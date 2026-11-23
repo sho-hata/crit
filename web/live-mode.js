@@ -397,8 +397,6 @@
     });
     state.promptChecks.refresh().then(function (cfg) {
       state.config = cfg;
-      // Only preview sessions can share a self-contained snapshot.
-      if (state.isPreview) installShareController(cfg);
     }).catch(function () { /* Config can be refreshed on Finish. */ });
     // Cache the iframeWindow once buildShell has inserted it.
     state.iframeWindow = els.iframe ? els.iframe.contentWindow : null;
