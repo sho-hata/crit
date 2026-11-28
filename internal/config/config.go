@@ -33,9 +33,16 @@ type Config struct {
 	// behavior: diff in git mode, document in file mode. Project overrides
 	// global (scalar, not unioned). No CLI flag.
 	DefaultMarkdownView string `json:"default_markdown_view,omitempty"`
-	NoIntegrationCheck  bool   `json:"no_integration_check,omitempty"`
-	NoUpdateCheck       bool   `json:"no_update_check,omitempty"`
-	AgentCmd            string `json:"agent_cmd,omitempty"`
+	// RemoteImages lists the hosts whose http(s) images and media the review
+	// page loads without a click: "img.shields.io", "*.githubusercontent.com"
+	// (subdomains only), or "*" for any host. Every other remote image shows
+	// a click-to-load placeholder, and the page's Content-Security-Policy
+	// blocks it. Global-only: an agent can write the project config, and
+	// loading a URL it wrote sends whatever the URL encodes to that host.
+	RemoteImages       []string `json:"remote_images,omitempty"`
+	NoIntegrationCheck bool     `json:"no_integration_check,omitempty"`
+	NoUpdateCheck      bool     `json:"no_update_check,omitempty"`
+	AgentCmd           string   `json:"agent_cmd,omitempty"`
 	// PlanApproveMode selects the Claude Code permission mode after a plan-hook
 	// approval. Global-only so a repository cannot weaken a user's permission
 	// policy. Empty leaves Claude Code's current behavior unchanged.
@@ -68,6 +75,12 @@ type Config struct {
 	LiveCookieFile        string            `json:"live_cookie_file,omitempty"`
 	LiveCDPURL            string            `json:"live_cdp_url,omitempty"`
 	Prompts               map[string]string `json:"prompts,omitempty"`
+	// Languages maps file patterns (MatchPattern syntax) to the language Crit
+	// reviews matching files as: "markdown" for a document view, "text" for
+	// no highlighting, or a Shiki grammar name. Global and project maps are
+	// unioned; the project wins for the same pattern. Validated at startup
+	// against the grammars in web/pierre/languages.json.
+	Languages map[string]string `json:"languages,omitempty"`
 	// Hooks are shell commands/scripts executed at the same finish lifecycle
 	// points as prompt templates (on_finish_unresolved / on_finish_approved,
 	// optionally mode-suffixed :files/:diff/:live/:preview). Values use the
@@ -176,6 +189,7 @@ func defaultConfig() generatedConfig {
 		},
 		AutoViewedPatterns:  []string{},
 		DefaultMarkdownView: "",
+		RemoteImages:        []string{},
 		AgentCmd:            "",
 		PlanApproveMode:     "",
 		CleanupOnApprove:    true,
@@ -186,6 +200,7 @@ func defaultConfig() generatedConfig {
 		VCS:                 "",
 		Prompts:             map[string]string{},
 		Hooks:               map[string]string{},
+		Languages:           map[string]string{},
 	}
 }
 
@@ -203,6 +218,7 @@ type generatedConfig struct {
 	IgnorePatterns      []string `json:"ignore_patterns"`
 	AutoViewedPatterns  []string `json:"auto_viewed_patterns"`
 	DefaultMarkdownView string   `json:"default_markdown_view"`
+	RemoteImages        []string `json:"remote_images"`
 	NoIntegrationCheck  bool     `json:"no_integration_check"`
 	NoUpdateCheck       bool     `json:"no_update_check"`
 	DisableStats        bool     `json:"disable_stats"`
@@ -220,6 +236,7 @@ type generatedConfig struct {
 	VCS             string            `json:"vcs"`
 	Prompts         map[string]string `json:"prompts"`
 	Hooks           map[string]string `json:"hooks"`
+	Languages       map[string]string `json:"languages"`
 }
 
 func (c generatedConfig) String() string {
@@ -287,6 +304,7 @@ func LoadConfigFile(path string) (Config, ConfigPresence, error) {
 		fmt.Fprintf(os.Stderr, "Warning: invalid default_markdown_view %q in %s (want \"diff\" or \"document\"); ignoring\n", cfg.DefaultMarkdownView, path)
 		cfg.DefaultMarkdownView = ""
 	}
+	cfg.RemoteImages = normalizeRemoteImages(cfg.RemoteImages, path)
 	return cfg, presence, nil
 }
 
@@ -345,7 +363,9 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	// close_on_approve_after_ms so a project repo cannot force the reviewer's
 	// tab to auto-close — that's a personal preference, not a repo policy;
 	// stale_review_days so a project repo cannot shorten the retention of
-	// every other project's reviews.
+	// every other project's reviews;
+	// remote_images so an agent that writes the project config cannot make the
+	// reviewer's browser fetch URLs it chose (see Config.RemoteImages).
 	// live_cookie/live_cookie_file/live_cdp_url DO merge from project config — common for local
 	// dev auth. Prefer live_cookie_file pointing at a gitignored path (e.g.
 	// .crit/live-cookies.txt) over committing live_cookie inline. live_cdp_url
@@ -359,6 +379,7 @@ func mergeConfigs(global, project Config, projectPresence ConfigPresence) Config
 	merged.DefaultMarkdownView = preferProjectString(project.DefaultMarkdownView, merged.DefaultMarkdownView)
 	mergeProjectPrompts(&merged, project)
 	mergeProjectHooks(&merged, project)
+	mergeProjectLanguages(&merged, project)
 	return merged
 }
 
@@ -389,6 +410,49 @@ func mergePresenceBools(merged, project *Config, presence ConfigPresence) {
 	}
 }
 
+// normalizeRemoteImages lowercases remote_images entries and drops the ones
+// that are not a host name, "*.host", or "*", with a warning naming path.
+// Entries end up in the page's Content-Security-Policy, so nothing else
+// (schemes, paths, spaces, quotes) may pass.
+func normalizeRemoteImages(patterns []string, path string) []string {
+	if len(patterns) == 0 {
+		return patterns
+	}
+	out := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		norm := strings.ToLower(strings.TrimSpace(p))
+		if !ValidRemoteImagePattern(norm) {
+			fmt.Fprintf(os.Stderr, "Warning: invalid remote_images entry %q in %s (want a host such as \"img.shields.io\", \"*.example.com\", or \"*\"); ignoring\n", p, path)
+			continue
+		}
+		out = append(out, norm)
+	}
+	return out
+}
+
+// ValidRemoteImagePattern reports whether p is an allowed remote_images entry:
+// "*", a lowercase host name, or "*." followed by one.
+func ValidRemoteImagePattern(p string) bool {
+	if p == "*" {
+		return true
+	}
+	p = strings.TrimPrefix(p, "*.")
+	if p == "" || len(p) > 253 {
+		return false
+	}
+	for label := range strings.SplitSeq(p, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // validDefaultMarkdownView reports whether v is an allowed
 // default_markdown_view value. Empty means unset (today's behavior).
 func validDefaultMarkdownView(v string) bool {
@@ -410,6 +474,19 @@ func mergeProjectPrompts(merged *Config, project Config) {
 		merged.Prompts = make(map[string]string, len(project.Prompts))
 	}
 	maps.Copy(merged.Prompts, project.Prompts)
+}
+
+// mergeProjectLanguages unions project language patterns onto merged; the
+// project wins for a pattern both files set.
+// It copies into a new map so the global config's map is never written.
+func mergeProjectLanguages(merged *Config, project Config) {
+	if len(project.Languages) == 0 {
+		return
+	}
+	languages := make(map[string]string, len(merged.Languages)+len(project.Languages))
+	maps.Copy(languages, merged.Languages)
+	maps.Copy(languages, project.Languages)
+	merged.Languages = languages
 }
 
 // mergeProjectHooks unions project hook config onto merged (project overrides
@@ -446,6 +523,10 @@ func LoadConfig(projectDir string) Config {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: reading project config: %v\n", err)
 		}
+	}
+
+	if len(project.RemoteImages) > 0 {
+		fmt.Fprintf(os.Stderr, "Warning: remote_images in %s is ignored; set it in %s (global-only)\n", projectConfigPath, GlobalConfigPath())
 	}
 
 	// 3. Merge global + project

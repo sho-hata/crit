@@ -87,6 +87,7 @@
       // Story view: the card is in the chapter pane when its chapter is shown.
       const storyCard = document.querySelector(selector);
       if (!storyCard) return;
+      openStoryFileGroup(storyCard);
       flashCommentRefCard(storyCard);
       storyCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -258,15 +259,17 @@
       return self.renderToken(tokens, idx, options);
     };
   })();
+  // Remote images in comments become click-to-load placeholders
+  // (crit-remote-images.js); the page CSP blocks them otherwise.
   const renderCommentMarkdown = commentMd.render.bind(commentMd);
   commentMd.render = function(src, env) {
     src = window.crit.commentHtml.normalizeCommentMarkdown(src);
-    return window.crit.commentHtml.sanitize(renderCommentMarkdown(src, env));
+    return window.crit.remoteImages.rewriteHtml(window.crit.commentHtml.sanitize(renderCommentMarkdown(src, env)));
   };
   const renderInlineCommentMarkdown = commentMd.renderInline.bind(commentMd);
   commentMd.renderInline = function(src, env) {
     src = window.crit.commentHtml.normalizeCommentMarkdown(src);
-    return window.crit.commentHtml.sanitize(renderInlineCommentMarkdown(src, env));
+    return window.crit.remoteImages.rewriteHtml(window.crit.commentHtml.sanitize(renderInlineCommentMarkdown(src, env)));
   };
 
   // ===== Document Markdown Renderer =====
@@ -385,7 +388,7 @@
     return 'diff';
   }
 
-  let promptTrustConfig = { project_prompts_untrusted: false };
+  let promptChecks;
 
   let uiState = 'reviewing';
   let waitingOpenedAt = 0;
@@ -643,6 +646,7 @@
         oldPath: fi.old_path || '',
         status: fi.status,
         fileType: fi.file_type,
+        lang: fi.lang || '',
         content: '',
         previousContent: '',
         comments: (commentsByPath && commentsByPath[fi.path]) || [],
@@ -656,7 +660,7 @@
         deletions: fi.deletions || 0,
         lazy: true,
         generated: !!fi.generated,
-        fileHash: '',
+        fileHash: fi.file_hash || '',
       };
     });
 
@@ -705,6 +709,7 @@
         path: fi.path,
         status: fi.status,
         fileType: fi.file_type,
+        lang: fi.lang || '',
         content: '',
         previousContent: '',
         diffHunks: [],
@@ -748,6 +753,7 @@
       oldPath: fi.old_path || '',
       status: fi.status,
       fileType: fi.file_type,
+      lang: fi.lang || '',
       content: content,
       previousContent: diffRes.previous_content || '',
       diffHunks: diffRes.hunks || [],
@@ -1123,13 +1129,9 @@
     agentName = configRes.agent_name || 'agent';
 
     applyLspConfig(configRes);
-    promptTrustConfig = {
-      project_prompts_untrusted: !!configRes.project_prompts_untrusted,
-      project_prompt_sources: configRes.project_prompt_sources || [],
-      project_prompt_preview: configRes.project_prompt_preview || '',
-      project_prompt_content_hash: configRes.project_prompt_content_hash || '',
-    };
-    window.crit.shared.applyProjectPromptTrustUI(promptTrustConfig, document.getElementById('finishBtn'));
+    promptChecks = window.crit.shared.setupPromptChecks(configRes, function (cfg) {
+      window.crit.shared.applyProjectPromptTrustUI(cfg, document.getElementById('finishBtn'));
+    });
 
     // Update notifications (Crit release + stale integrations)
     pendingUpdates = [];
@@ -1418,13 +1420,17 @@
     return stack.join('/');
   }
 
+  // Relative images load from /files/ next to the reviewed file. Remote ones
+  // become click-to-load placeholders (crit-remote-images.js) unless their
+  // host is in remote_images; the page CSP blocks them otherwise.
   function rewriteImageSrcs(html, filePath) {
-    return html.replace(/(<img\s[^>]*src=")([^"]+)(")/gi, function(match, pre, src, post) {
+    html = html.replace(/(<img\s[^>]*src=")([^"]+)(")/gi, function(match, pre, src, post) {
       if (/^https?:\/\/|^data:|^\//.test(src)) return match;
       // src comes from serialized HTML and is already escaped; the file path
       // is raw, and a quote in a folder name would end the attribute.
       return pre + '/files/' + resolveImagePath(escapeHtml(filePath || ''), src) + post;
     });
+    return window.crit.remoteImages.rewriteHtml(html);
   }
 
   // Pure rendering helpers live in crit-comment-card-helpers.js so live-mode
@@ -2393,7 +2399,7 @@
     // loadSingleFile returns no comments, so the placeholder keeps its list.
     load: function(file, signal) {
       return loadSingleFile({
-        path: file.path, old_path: file.oldPath, status: file.status, file_type: file.fileType,
+        path: file.path, old_path: file.oldPath, status: file.status, file_type: file.fileType, lang: file.lang,
         additions: file.additions, deletions: file.deletions, generated: file.generated,
       }, currentFileDataScope(), signal).then(function(loaded) {
         if (!loaded || file.viewMode !== 'rendered-diff') return loaded;
@@ -2745,30 +2751,72 @@
   // pulling the list back over the next jump.
   // An element taller than the list is aligned by its top instead, so its
   // start (and the line just above a comment card) stays in view.
+  // Files that mount around the card are measured after it is placed, some
+  // only once their highlighting comes back from the worker pool. Pierre keeps
+  // the top of the viewport still while they resize, which pushes the card
+  // off-center. So the alignment only stops once the list has been quiet for
+  // a while with the card centered (or as close as the list allows).
+  const ALIGN_QUIET_MS = 300;
+  const ALIGN_MAX_MS = 2000;
+  // Any input from the reader ends the alignment, so it never pulls the list
+  // back against them. A key that navigates starts its own jump anyway, and
+  // pointerdown covers clicks and scrollbar drags.
+  const ALIGN_CANCEL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+  const ALIGN_CANCEL_OPTIONS = { capture: true, passive: true };
   function scrollPierreElementIntoView(el, isCurrent) {
     const root = document.getElementById('filesContainer');
     if (!root || !el) return;
     // A rebuild (scope, palette, SSE) does not supersede the jump, so check
     // the card and view are still the ones this alignment started on.
     const view = pierreView;
-    let frames = 0;
+    let cancelled = false;
+    const onInput = function() { cancelled = true; };
+    ALIGN_CANCEL_EVENTS.forEach(function(type) {
+      document.addEventListener(type, onInput, ALIGN_CANCEL_OPTIONS);
+    });
+    // Every exit removes the listeners, so none outlive the loop or the view.
+    const finish = function() {
+      ALIGN_CANCEL_EVENTS.forEach(function(type) {
+        document.removeEventListener(type, onInput, ALIGN_CANCEL_OPTIONS);
+      });
+    };
+    const startedAt = performance.now();
+    let quietSince = startedAt;
+    let lastLayout = '';
     (function align() {
-      if (isCurrent && !isCurrent()) return;
-      if (!el.isConnected || view !== pierreView) return;
+      if ((isCurrent && !isCurrent()) || cancelled) return finish();
+      if (!el.isConnected || view !== pierreView) return finish();
+      const now = performance.now();
       const rootRect = root.getBoundingClientRect();
       const elRect = el.getBoundingClientRect();
       const gap = Math.max(0, (root.clientHeight - elRect.height) / 2);
       const offset = elRect.top - rootRect.top - gap;
-      if (Math.abs(offset) < 2 || frames++ >= 12) {
+      const maxTop = Math.max(0, root.scrollHeight - root.clientHeight);
+      const target = Math.min(maxTop, Math.max(0, root.scrollTop + offset));
+      const layout = root.scrollTop + ':' + root.scrollHeight + ':' + Math.round(elRect.top);
+      if (layout !== lastLayout) {
+        lastLayout = layout;
+        quietSince = now;
+      }
+      // Centered, or as close as the list can get (the top or end of it).
+      if (Math.abs(offset) < 2 || Math.abs(target - root.scrollTop) < 1) {
         // The card now sits away from the file or line Pierre was asked to
         // scroll to. Left pending, that target would be re-applied on the
         // next render (e.g. the next click) and pull the card off-center.
         if (view) view.releaseScroll();
-        return;
+        if (now - quietSince >= ALIGN_QUIET_MS) return finish();
+      } else {
+        // Pierre's own pending scroll target is stale once the card is being
+        // aligned; left set, it would move the list back after each fix.
+        if (view) view.releaseScroll();
+        // Make each layout correction immediate instead of starting
+        // overlapping browser scroll animations during the alignment loop.
+        root.scrollTo({ top: target, behavior: 'instant' });
       }
-      // Make each layout correction immediate instead of starting overlapping
-      // browser scroll animations during the bounded alignment loop.
-      root.scrollTo({ top: root.scrollTop + offset, behavior: 'instant' });
+      if (now - startedAt >= ALIGN_MAX_MS) {
+        if (view) view.releaseScroll();
+        return finish();
+      }
       requestAnimationFrame(align);
     })();
   }
@@ -7361,6 +7409,7 @@
         if (!pane) return;
         const card = pane.querySelector('.comment-card[data-comment-id="' + CSS.escape(commentId) + '"]');
         if (!card) return;
+        openStoryFileGroup(card);
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         flashCommentCard(card);
       };
@@ -7562,9 +7611,7 @@
         unresolvedComments += reviewComments.filter(function(c) { return !c.resolved; }).length;
         unresolvedComments += hiddenUnresolved;
         finishBtn.textContent = unresolvedComments === 0 ? 'Approve' : 'Finish Review';
-        if (!promptTrustConfig.project_prompts_untrusted) {
-          finishBtn.disabled = false;
-        }
+        finishBtn.disabled = false;
         finishBtn.classList.add('btn-primary');
         document.getElementById('waitingEdits').textContent = '';
         waitingOverlay.classList.remove('active');
@@ -7604,15 +7651,7 @@
   async function doFinishReview() {
     return await window.crit.shared.runFinishReview({
       dedup: finishDedup,
-      checkConsent: function () {
-        return window.crit.shared.ensureProjectPromptTrust(promptTrustConfig).then(function (ok) {
-          if (ok) {
-            window.crit.shared.applyProjectPromptTrustUI(promptTrustConfig, document.getElementById('finishBtn'));
-            if (uiState === 'reviewing') setUIState('reviewing');
-          }
-          return ok;
-        });
-      },
+      checkConsent: function () { return promptChecks.confirmTrust(); },
       onApproved: function () { waitingNotApproved = false; setUIState('waiting'); },
       onWaiting: function () { waitingNotApproved = true; setUIState('waiting'); },
       onError: function (err) {
@@ -11217,6 +11256,7 @@
     clone.oldPath = file.oldPath;
     clone.status = file.status;
     clone.fileType = file.fileType;
+    clone.lang = file.lang;
     clone.content = file.content;
     clone.previousContent = file.previousContent;
     clone.comments = file.comments;
@@ -11247,6 +11287,7 @@
       old_path: file.oldPath,
       status: file.status,
       file_type: file.fileType,
+      lang: file.lang,
       additions: file.additions,
       deletions: file.deletions,
     }, currentFileDataScope()).then(function (loaded) {
@@ -12149,6 +12190,13 @@
     if (section.getBoundingClientRect().top < top) section.scrollIntoView({ behavior: 'instant' });
   }
 
+  // A file group marked viewed (or folded by hand) is collapsed. Jumping to
+  // a comment or line inside it opens it first, as the review list does.
+  function openStoryFileGroup(el) {
+    const section = el && el.closest('.crit-story-file-group');
+    if (section && !section.open) section.open = true;
+  }
+
   // toggle_viewed / toggle_collapse in a story chapter (no line focus
   // there): the file group under the mouse, else the one taking up most of
   // the pane. Clicking its Viewed checkbox or header runs the same handlers
@@ -12277,7 +12325,9 @@
                   const pane = document.getElementById('storyPane');
                   if (!pane) return;
                   const group = pane.querySelector('.crit-story-file-group[data-story-file="' + CSS.escape(anchor.filePath) + '"]');
-                  if (group) group.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  if (!group) return;
+                  openStoryFileGroup(group);
+                  group.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 };
                 if (navigated) requestAnimationFrame(locateFile); else locateFile();
                 return Promise.resolve();
@@ -12290,6 +12340,7 @@
                 const pane = document.getElementById('storyPane');
                 if (!pane || !displayAnchor) return;
                 const group = pane.querySelector('.crit-story-file-group[data-story-file="' + CSS.escape(anchor.filePath) + '"]');
+                openStoryFileGroup(group);
                 const el = window.crit.pierreDOM.pierreLineElement(group, displayAnchor.line, displayAnchor.side) ||
                   (side !== 'old' ? pane.querySelector('.line-block[data-file-path="' + CSS.escape(anchor.filePath) + '"][data-end-line="' + anchor.endLine + '"]') : null);
                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });

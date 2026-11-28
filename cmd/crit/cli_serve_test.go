@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/sho-hata/crit/internal/server"
+	"github.com/sho-hata/crit/internal/session"
 	"github.com/sho-hata/crit/internal/testutil"
 )
 
@@ -236,5 +238,32 @@ func TestServeSessionKey_Override(t *testing.T) {
 	sc := &server.DaemonCLIConfig{SessionKeyOverride: "839f3b4cd5d6"}
 	if got := serveSessionKey(sc); got != "839f3b4cd5d6" {
 		t.Errorf("serveSessionKey() = %q", got)
+	}
+}
+
+func TestServeCLIArgs(t *testing.T) {
+	rangeFocus := &session.Focus{Kind: session.FocusRange, BaseSHA: "abc", HeadSHA: "def"}
+	followFocus := &session.Focus{Kind: session.FocusRange, BaseSHA: "abc", HeadSHA: "def", HeadRef: "HEAD"}
+	prFocus := &session.Focus{Kind: session.FocusRange, PRNumber: 42, BaseSHA: "abc", HeadSHA: "def"}
+	tests := []struct {
+		name string
+		sc   *server.DaemonCLIConfig
+		want []string
+	}{
+		{"git mode", &server.DaemonCLIConfig{}, nil},
+		{"files", &server.DaemonCLIConfig{Files: []string{"a.md", "b.md"}}, []string{"a.md", "b.md"}},
+		{"range", &server.DaemonCLIConfig{Focus: rangeFocus}, []string{"range:abc..def"}},
+		{"range following HEAD keeps the ref", &server.DaemonCLIConfig{Focus: followFocus}, []string{"range:abc..HEAD"}},
+		{"pr not recorded", &server.DaemonCLIConfig{Focus: prFocus}, nil},
+		{"live", &server.DaemonCLIConfig{LiveOrigin: "http://localhost:3000"}, []string{"live", "http://localhost:3000"}},
+		{"preview", &server.DaemonCLIConfig{PreviewFile: "/tmp/x.html"}, []string{"preview", "/tmp/x.html"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := serveCLIArgs(tc.sc)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("serveCLIArgs() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

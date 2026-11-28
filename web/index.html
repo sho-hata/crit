@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Crit</title>
+<!-- remote_images allowlist, filled in by the server (internal/server/csp.go). -->
+<meta name="crit-remote-images" content="[]">
 <link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -20,6 +22,8 @@
 <script src="pierre/palettes.js"></script>
 <script src="crit-theme-palette.js"></script>
 <script>window.crit.themePalette.applySaved();</script>
+<!-- Click-to-load placeholders for remote images, in every mode. -->
+<script src="crit-remote-images.js"></script>
 </head>
 <body>
 
@@ -132,6 +136,15 @@
   </div>
 </div>
 
+<section class="prompt-problems" id="promptProblems" aria-label="Finish prompt problems" hidden>
+  <div>
+    <strong>Finish prompt problems</strong>
+    <ul id="promptProblemList" aria-live="polite"></ul>
+    <span id="promptRecheckStatus" role="status"></span>
+  </div>
+  <button type="button" class="btn" id="promptRecheckBtn">Recheck</button>
+</section>
+
 <div id="toc" class="toc toc-hidden">
   <div class="toc-header">
     <span>Contents</span>
@@ -216,6 +229,15 @@
     <div class="pr-panel-body" id="prPanelBody"></div>
   </div>
 </div>
+
+<dialog class="waiting-dialog finish-error-dialog" id="finishErrorDialog" aria-labelledby="finishErrorHeading" aria-describedby="finishErrorMessage">
+  <h3 id="finishErrorHeading">Unable to finish review</h3>
+  <p id="finishErrorMessage"></p>
+  <p>Fix the prompt, then try again.</p>
+  <form method="dialog">
+    <button type="submit" class="btn btn-primary" autofocus>Back to review</button>
+  </form>
+</dialog>
 
 <div class="waiting-overlay" id="waitingOverlay" role="dialog" aria-modal="true" aria-labelledby="waitingHeading">
   <div class="waiting-dialog" id="waitingDialog">
@@ -512,11 +534,12 @@
       // Shiki highlighting for fenced code (comments, documents), then line-block
       // building (buildLineBlocks). Both must load before app.js.
       var chl = document.createElement('script'); chl.src = 'crit-code-highlight.js'; chl.async = false; document.body.appendChild(chl);
-      // Pluggable renderers (registry, fullscreen overlay, built-in mermaid).
-      // Must load before crit-line-blocks.js and app.js.
+      // Pluggable renderers (registry, fullscreen overlay, built-in mermaid
+      // and excalidraw). Must load before crit-line-blocks.js and app.js.
       var rg = document.createElement('script'); rg.src = 'crit-renderers.js'; rg.async = false; document.body.appendChild(rg);
       var dov = document.createElement('script'); dov.src = 'crit-diagram-overlay.js'; dov.async = false; document.body.appendChild(dov);
       var rm = document.createElement('script'); rm.src = 'crit-renderer-mermaid.js'; rm.async = false; document.body.appendChild(rm);
+      var rx = document.createElement('script'); rx.src = 'crit-renderer-excalidraw.js'; rx.async = false; document.body.appendChild(rx);
       var lb = document.createElement('script'); lb.src = 'crit-line-blocks.js'; lb.async = false; document.body.appendChild(lb);
       // Word-level diff computation (pure functions). Must load before app.js.
       var df = document.createElement('script'); df.src = 'crit-diff-renderer.js'; df.async = false; document.body.appendChild(df);

@@ -166,3 +166,72 @@ test('display settings use defaults and reject unsupported persisted values', fu
     }
   }
 });
+
+// Stand-in for window.PierreDiffs.getFiletypeFromFileName: a few entries of
+// Pierre's map, 'text' for anything else, like the real one.
+const pierreDetect = {
+  getFiletypeFromFileName: function(name) {
+    const byName = { '.env': 'dotenv', Dockerfile: 'dockerfile' };
+    if (byName[name]) return byName[name];
+    const ext = name.slice(name.lastIndexOf('.') + 1);
+    return { py: 'python', yaml: 'yaml', go: 'go', h: 'objective-cpp' }[ext] || 'text';
+  },
+};
+
+test('languageOverride keeps the explicit extension overrides', function() {
+  assert.equal(a.languageOverride('lib/page.html.heex'), 'html');
+  assert.equal(a.languageOverride('icons/LOGO.SVG'), 'xml');
+  assert.equal(a.languageOverride('build.gradle', pierreDetect), 'groovy');
+  assert.equal(a.languageOverride('src/main.py', pierreDetect), null);
+  assert.equal(a.languageOverride('Makefile', pierreDetect), null);
+});
+
+test('languageOverride detects the language under a template suffix', function() {
+  assert.equal(a.languageOverride('init/templates/main.py.tmpl', pierreDetect), 'python');
+  assert.equal(a.languageOverride('deploy/values.yaml.tpl', pierreDetect), 'yaml');
+  assert.equal(a.languageOverride('cmd/main.go.template', pierreDetect), 'go');
+  assert.equal(a.languageOverride('.env.example', pierreDetect), 'dotenv');
+  assert.equal(a.languageOverride('docker/Dockerfile.sample', pierreDetect), 'dockerfile');
+  assert.equal(a.languageOverride('config.h.in', pierreDetect), 'objective-cpp');
+  // The suffix matches in any case; the name under it goes to Pierre as is,
+  // and Pierre's detection is case-sensitive (MAIN.PY is plain text there too).
+  assert.equal(a.languageOverride('main.py.TMPL', pierreDetect), 'python');
+  assert.equal(a.languageOverride('MAIN.PY.TMPL', pierreDetect), null);
+  assert.equal(a.languageOverride('assets/logo.svg.tmpl', pierreDetect), 'xml');
+});
+
+test('languageOverride leaves unknown or bare template files alone', function() {
+  assert.equal(a.languageOverride('notes.txt.tmpl', pierreDetect), null);
+  assert.equal(a.languageOverride('header.tmpl', pierreDetect), null);
+  assert.equal(a.languageOverride('.tmpl', pierreDetect), null);
+  assert.equal(a.languageOverride('main.py.tmpl'), null);
+});
+
+test('buildFileContents and buildFileDiff apply the template-suffix language', function() {
+  const calls = [];
+  const P = {
+    getFiletypeFromFileName: pierreDetect.getFiletypeFromFileName,
+    setLanguageOverride: function(item, lang) { calls.push(lang); return Object.assign({}, item, { lang: lang }); },
+    processFile: function(patch, opts) { return { patch: patch, opts: opts }; },
+  };
+  const file = { path: 'templates/main.py.tmpl', status: 'modified', content: 'x = 1\n' };
+  assert.equal(a.buildFileContents(P, file, 'k').lang, 'python');
+  const diff = a.buildFileDiff(P, file, [hunk(1, 0, 1, 1, [['add', 'x = 1']])], 'k');
+  assert.equal(diff.lang, 'python');
+  assert.deepEqual(calls, ['python', 'python']);
+});
+
+test('a file.lang from the languages config wins over detection', function() {
+  const overrides = [];
+  const P = Object.assign({
+    processFile() { return { kind: 'diff' }; },
+    setLanguageOverride(target, lang) { overrides.push(lang); return target; },
+  }, pierreDetect);
+  a.buildFileContents(P, { path: 'app.conf', content: 'a: 1\n', lang: 'yaml' }, 'k1');
+  a.buildFileContents(P, { path: 'icons/logo.svg', content: '<svg/>', lang: 'html' }, 'k2');
+  a.buildFileContents(P, { path: 'icons/logo.svg', content: '<svg/>' }, 'k3');
+  a.buildFileContents(P, { path: 'main.py', content: 'x = 1\n', lang: '' }, 'k4');
+  const hunks = [hunk(1, 1, 1, 1, [['del', 'a: 0'], ['add', 'a: 1']])];
+  a.buildFileDiff(P, { path: 'app.conf', status: 'modified', content: 'a: 1\n', lang: 'yaml' }, hunks, 'k5');
+  assert.deepEqual(overrides, ['yaml', 'html', 'xml', 'yaml']);
+});

@@ -791,6 +791,41 @@ func TestPopulateLazyFile_DiskFallbackFlag(t *testing.T) {
 	}
 }
 
+// Lazy files expose their working-tree hash in the session info; range focus
+// and deleted files must not read disk.
+func TestPopulateLazyFile_ListedHash(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.md")
+	writeFile(t, path, "one\ntwo\n")
+	want := fileHash([]byte("one\ntwo\n"))
+
+	tests := []struct {
+		name         string
+		status       string
+		diskFallback bool
+		want         string
+	}{
+		{"working tree modified", "modified", true, want},
+		{"working tree untracked", "untracked", true, want},
+		{"range focus", "modified", false, ""},
+		{"deleted", "deleted", true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fe := &FileEntry{Path: "a.md", AbsPath: path, Status: tt.status}
+			populateLazyFile(fe, vcs.FileChange{Path: "a.md", Status: tt.status}, nil, tt.diskFallback)
+			if fe.ListedHash != tt.want {
+				t.Errorf("ListedHash = %q, want %q", fe.ListedHash, tt.want)
+			}
+			s := &Session{Files: []*FileEntry{fe}}
+			info := s.GetSessionInfo()
+			if len(info.Files) != 1 || info.Files[0].FileHash != tt.want {
+				t.Errorf("SessionFileInfo.FileHash = %+v, want %q", info.Files, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetFileSnapshot_RangeLazy_RemoteErrorReturnsFalse(t *testing.T) {
 	wantErr := errors.New("fetch failed")
 	var calls int32
@@ -1541,4 +1576,60 @@ func TestWithHeadRefAtTip(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The scoped listing (/api/session?scope=...) is what the page loads, so a
+// lazy file must carry its working-tree hash there too.
+func TestScopedLineCounter_LazyFileHash(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.md"), "one\n")
+	want := fileHash([]byte("one\n"))
+	fc := vcs.FileChange{Path: "a.md", Status: "modified"}
+	numstats := map[string]vcs.NumstatEntry{"a.md": {Additions: 1}}
+
+	t.Run("live all scope, lazy", func(t *testing.T) {
+		snap := &scopedSessionSnapshot{repoRoot: dir}
+		c := scopedLineCounter{snap: snap, liveAll: true, lazyAll: true, numstats: numstats, haveNumstats: true}
+		lazy, _, _, hash := c.count(lazyFileThreshold, fc)
+		if !lazy || hash != want {
+			t.Errorf("lazy=%v hash=%q, want true %q", lazy, hash, want)
+		}
+	})
+	t.Run("live all scope, eager has no hash", func(t *testing.T) {
+		snap := &scopedSessionSnapshot{repoRoot: dir}
+		c := scopedLineCounter{snap: snap, liveAll: true, lazyAll: true, numstats: numstats, haveNumstats: true}
+		lazy, _, _, hash := c.count(0, fc)
+		if lazy || hash != "" {
+			t.Errorf("lazy=%v hash=%q, want false and empty", lazy, hash)
+		}
+	})
+	t.Run("live all scope, lazy reuses the session stub hash", func(t *testing.T) {
+		// SyncWorkingTree re-hashes lazy files just before the listing, so
+		// the stub's hash is current and the file is not read again.
+		stub := fileHash([]byte("synced\n"))
+		snap := &scopedSessionSnapshot{repoRoot: dir, lazyFiles: map[string]lazyStub{"a.md": {hash: stub}}}
+		c := scopedLineCounter{snap: snap, liveAll: true, lazyAll: true, numstats: numstats, haveNumstats: true}
+		lazy, adds, _, hash := c.count(lazyFileThreshold, fc)
+		if !lazy || adds != 1 || hash != stub {
+			t.Errorf("lazy=%v adds=%d hash=%q, want true 1 %q", lazy, adds, hash, stub)
+		}
+	})
+	t.Run("live all scope, eager listed file takes numstat counts", func(t *testing.T) {
+		// Counts come from numstat alone; the file need not exist on disk.
+		snap := &scopedSessionSnapshot{repoRoot: t.TempDir()}
+		ns := map[string]vcs.NumstatEntry{"a.md": {Additions: 4, Deletions: 2}}
+		c := scopedLineCounter{snap: snap, liveAll: true, numstats: ns, haveNumstats: true}
+		lazy, adds, dels, hash := c.count(0, fc)
+		if lazy || adds != 4 || dels != 2 || hash != "" {
+			t.Errorf("lazy=%v adds=%d dels=%d hash=%q, want false 4 2 empty", lazy, adds, dels, hash)
+		}
+	})
+	t.Run("branch scope reuses session lazy stub", func(t *testing.T) {
+		snap := &scopedSessionSnapshot{lazyFiles: map[string]lazyStub{"a.md": {additions: 3, hash: want}}}
+		c := scopedLineCounter{snap: snap, scope: "branch"}
+		lazy, adds, _, hash := c.count(0, fc)
+		if !lazy || adds != 3 || hash != want {
+			t.Errorf("lazy=%v adds=%d hash=%q", lazy, adds, hash)
+		}
+	})
 }

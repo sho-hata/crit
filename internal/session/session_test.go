@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sho-hata/crit/internal/config"
 	"github.com/sho-hata/crit/internal/vcs"
 )
 
@@ -795,20 +796,36 @@ func TestSession_GetSessionInfo(t *testing.T) {
 func TestDetectFileType(t *testing.T) {
 	t.Parallel()
 
+	languages, err := config.CompileLanguages(map[string]string{
+		"*.qmd":        "markdown",
+		"notes/":       "md",
+		"*.md":         "text",
+		"deploy/*.cfg": "yaml",
+	}, []string{"yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
-		path     string
-		expected string
+		path      string
+		languages config.LanguageRules
+		expected  string
 	}{
-		{"plan.md", "markdown"},
-		{"README.MD", "markdown"},
-		{"doc.markdown", "markdown"},
-		{"main.go", "code"},
-		{"server.py", "code"},
-		{"index.html", "code"},
-		{"Makefile", "code"},
+		{"plan.md", config.LanguageRules{}, "markdown"},
+		{"README.MD", config.LanguageRules{}, "markdown"},
+		{"doc.markdown", config.LanguageRules{}, "markdown"},
+		{"main.go", config.LanguageRules{}, "code"},
+		{"server.py", config.LanguageRules{}, "code"},
+		{"index.html", config.LanguageRules{}, "code"},
+		{"Makefile", config.LanguageRules{}, "code"},
+		{"report.qmd", config.LanguageRules{}, "code"},
+		{"report.qmd", languages, "markdown"},
+		{"notes/todo.txt", languages, "markdown"},
+		{"plan.md", languages, "code"},
+		{"deploy/app.cfg", languages, "code"},
+		{"main.go", languages, "code"},
 	}
 	for _, tc := range tests {
-		got := detectFileType(tc.path)
+		got := detectFileType(tc.languages, tc.path)
 		if got != tc.expected {
 			t.Errorf("detectFileType(%q) = %q, want %q", tc.path, got, tc.expected)
 		}
@@ -1876,6 +1893,46 @@ func TestNewSessionFromFiles_UsesRepoRelativePaths(t *testing.T) {
 			t.Errorf("file path %q contains parent hops", f.Path)
 		}
 	}
+}
+
+func TestSetLanguages_ReclassifiesFilesAndSetsLang(t *testing.T) {
+	dir := initTestRepo(t)
+	writeFile(t, filepath.Join(dir, "report.qmd"), "# Report\n")
+	writeFile(t, filepath.Join(dir, "app.conf"), "key: value\n")
+	writeFile(t, filepath.Join(dir, "main.go"), "package main\n")
+	gitT(t, dir, "add", "-A")
+	gitT(t, dir, "commit", "-m", "init")
+
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	sess, err := NewSessionFromFiles([]string{"report.qmd", "app.conf", "main.go"}, nil)
+	if err != nil {
+		t.Fatalf("NewSessionFromFiles: %v", err)
+	}
+	languages, err := config.CompileLanguages(map[string]string{"*.qmd": "markdown", "*.conf": "yaml"}, []string{"yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.SetLanguages(languages)
+
+	want := map[string]struct{ fileType, lang string }{
+		"report.qmd": {"markdown", ""},
+		"app.conf":   {"code", "yaml"},
+		"main.go":    {"code", ""},
+	}
+	for _, fi := range sess.GetSessionInfo().Files {
+		w := want[fi.Path]
+		if fi.FileType != w.fileType || fi.Lang != w.lang {
+			t.Errorf("%s: file_type=%q lang=%q, want %q %q", fi.Path, fi.FileType, fi.Lang, w.fileType, w.lang)
+		}
+	}
+	snap, ok := sess.GetFileSnapshot("app.conf")
+	if !ok || snap["lang"] != "yaml" {
+		t.Errorf("GetFileSnapshot(app.conf) lang = %v, want yaml", snap["lang"])
+	}
+
 }
 
 // TestParseUnifiedDiff_WithANSIColors verifies that ANSI color codes in git diff
@@ -6393,5 +6450,139 @@ func TestComment_DriftedOnRound_OmitWhenZero(t *testing.T) {
 	}
 	if bytes.Contains(b, []byte("drifted_on_round")) {
 		t.Fatalf("zero value should be omitted: %s", b)
+	}
+}
+
+// Regression #1202: a file that is "added" on the branch and was added in the
+// pinned commit must show that commit's diff and content, not the working
+// tree's (HEAD) version of the file.
+func TestGetFileDiffSnapshotScoped_CommitPin_AddedFileUsesCommitContent(t *testing.T) {
+	dir := initTestRepo(t)
+	base := gitT(t, dir, "rev-parse", "HEAD")
+	gitT(t, dir, "checkout", "-b", "feature")
+	commitAt(t, dir, "bar", "bar\n", "add bar")
+	addCommit := gitT(t, dir, "rev-parse", "HEAD")
+	commitAt(t, dir, "bar", "new bar\n", "update bar")
+	updateCommit := gitT(t, dir, "rev-parse", "HEAD")
+
+	newSession := func(baseRef string) *Session {
+		return &Session{
+			Mode:     "git",
+			RepoRoot: dir,
+			BaseRef:  baseRef,
+			VCS:      &vcs.GitVCS{},
+			Files: []*FileEntry{{
+				Path:      "bar",
+				Status:    "added",
+				Content:   "new bar\n",
+				DiffHunks: vcs.FileDiffUnifiedNewFile("new bar\n"),
+			}},
+			subscribers: make(map[chan SSEEvent]struct{}),
+		}
+	}
+
+	tests := []struct {
+		name         string
+		commit       string
+		wantLines    []DiffLine
+		wantContent  string
+		wantPrevious string
+	}{
+		{
+			name:        "commit that adds the file",
+			commit:      addCommit,
+			wantLines:   []DiffLine{{Type: "add", Content: "bar"}},
+			wantContent: "bar\n",
+		},
+		{
+			name:         "commit that modifies the file",
+			commit:       updateCommit,
+			wantLines:    []DiffLine{{Type: "del", Content: "bar"}, {Type: "add", Content: "new bar"}},
+			wantContent:  "new bar\n",
+			wantPrevious: "bar\n",
+		},
+		{
+			name:        "commit range ending at the adding commit",
+			commit:      base + ".." + addCommit,
+			wantLines:   []DiffLine{{Type: "add", Content: "bar"}},
+			wantContent: "bar\n",
+		},
+	}
+	// The base is a SHA after a round, but a branch name ("main") at startup.
+	for _, baseRef := range []string{base, "main"} {
+		s := newSession(baseRef)
+		for _, tt := range tests {
+			t.Run(baseRef+"/"+tt.name, func(t *testing.T) {
+				for _, scope := range []string{"", "branch", "all"} {
+					result, ok := s.GetFileDiffSnapshotScoped("bar", scope, tt.commit, false)
+					if !ok {
+						t.Fatalf("scope %q: expected snapshot", scope)
+					}
+					if got := snapshotDiffLines(result); !slices.Equal(got, tt.wantLines) {
+						t.Fatalf("scope %q: lines = %+v, want %+v", scope, got, tt.wantLines)
+					}
+					if c, _ := result["content"].(string); c != tt.wantContent {
+						t.Errorf("scope %q: content = %q, want %q", scope, c, tt.wantContent)
+					}
+					if p, _ := result["previous_content"].(string); p != tt.wantPrevious {
+						t.Errorf("scope %q: previous_content = %q, want %q", scope, p, tt.wantPrevious)
+					}
+				}
+			})
+		}
+	}
+}
+
+// snapshotDiffLines flattens a file diff snapshot's hunks to type+content.
+func snapshotDiffLines(result map[string]any) []DiffLine {
+	hunks, _ := result["hunks"].([]DiffHunk)
+	var got []DiffLine
+	for _, h := range hunks {
+		for _, l := range h.Lines {
+			got = append(got, DiffLine{Type: l.Type, Content: l.Content})
+		}
+	}
+	return got
+}
+
+// Regression #1202: on a large review the session holds some files as lazy
+// stubs with branch-wide counts. A commit pin must count that commit's
+// change, not reuse the stub.
+func TestGetSessionInfoScoped_CommitPin_LazyFileCountsCommit(t *testing.T) {
+	dir := initTestRepo(t)
+	base := gitT(t, dir, "rev-parse", "HEAD")
+	commitAt(t, dir, "bar", "bar\n", "add bar")
+	commitAt(t, dir, "bar", "new bar\nmore\n", "update bar")
+	updateCommit := gitT(t, dir, "rev-parse", "HEAD")
+
+	s := &Session{
+		Mode:     "git",
+		RepoRoot: dir,
+		BaseRef:  base,
+		VCS:      &vcs.GitVCS{},
+		Files: []*FileEntry{{
+			Path:          "bar",
+			Status:        "added",
+			Lazy:          true,
+			LazyAdditions: 2,
+			ListedHash:    "working-tree-hash",
+			Comments:      []Comment{},
+		}},
+		subscribers: make(map[chan SSEEvent]struct{}),
+	}
+
+	info := s.GetSessionInfoScoped("", updateCommit)
+	if len(info.Files) != 1 {
+		t.Fatalf("files = %+v, want just bar", info.Files)
+	}
+	got := info.Files[0]
+	if got.Additions != 2 || got.Deletions != 1 {
+		t.Errorf("counts = +%d -%d, want +2 -1 (the commit's change)", got.Additions, got.Deletions)
+	}
+	if !got.Lazy {
+		t.Error("a session-lazy file should stay lazy under a commit pin")
+	}
+	if got.FileHash != "" {
+		t.Errorf("file hash = %q, want none (the stub's hash is the working tree's)", got.FileHash)
 	}
 }

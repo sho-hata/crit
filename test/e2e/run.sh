@@ -12,6 +12,7 @@ SINGLE_PORT="${CRIT_TEST_SINGLE_PORT:-3125}"
 MULTI_PORT="${CRIT_TEST_MULTI_PORT:-3127}"
 RANGE_PORT="${CRIT_TEST_RANGE_PORT:-3128}"
 LIVE_PORT="${CRIT_TEST_LIVE_PORT:-3129}"
+PREVIEW_PORT="${CRIT_TEST_PREVIEW_PORT:-3126}"
 PERF_PORT="${CRIT_TEST_PERF_PORT:-3134}"
 HUGE_PORT="${CRIT_TEST_HUGE_PORT:-3136}"
 
@@ -28,11 +29,11 @@ case "$E2E_GROUP" in
 esac
 [ $# -eq 0 ] || E2E_GROUP=all
 START_GIT=1; START_GIT2=1; START_FILE=1; START_SINGLE=1
-START_MULTI=1; START_RANGE=1; START_LIVE=1; START_PERF=1; START_HUGE=1
+START_MULTI=1; START_RANGE=1; START_LIVE=1; START_PREVIEW=1; START_PERF=1; START_HUGE=1
 if [ "$E2E_GROUP" = git ]; then
   START_GIT2=0
   START_FILE=0; START_SINGLE=0; START_MULTI=0; START_RANGE=0; START_LIVE=0
-  START_PERF=0; START_HUGE=0
+  START_PREVIEW=0; START_PERF=0; START_HUGE=0
 elif [ "$E2E_GROUP" = rest ]; then
   # Keeps the GIT_PORT fixture for mobile, which runs no git shard here.
   START_GIT2=0
@@ -96,7 +97,7 @@ fi
 # Kill any stale processes on our test ports before starting fresh (one
 # PowerShell call on Windows, not one per port).
 e2e_kill_ports "$GIT_PORT" "$GIT2_PORT" "$FILE_PORT" "$SINGLE_PORT" "$MULTI_PORT" \
-  "$RANGE_PORT" "$LIVE_PORT" "$PERF_PORT" "$HUGE_PORT"
+  "$RANGE_PORT" "$LIVE_PORT" "$PREVIEW_PORT" "$PERF_PORT" "$HUGE_PORT"
 
 # Start fixture servers in parallel — only the ones this shard's projects
 # need, so a matrix shard doesn't pay for (or contend with) idle servers.
@@ -116,6 +117,7 @@ if [ "$START_SINGLE" = 1 ]; then start_fixture "$SINGLE_PORT" setup-fixtures-sin
 if [ "$START_MULTI" = 1 ]; then start_fixture "$MULTI_PORT" setup-fixtures-multifile.sh "$MULTI_PORT"; fi
 if [ "$START_RANGE" = 1 ]; then start_fixture "$RANGE_PORT" setup-fixtures-range-mode.sh "$RANGE_PORT"; fi
 if [ "$START_LIVE" = 1 ]; then start_fixture "$LIVE_PORT" setup-fixtures-livemode.sh "$LIVE_PORT"; fi
+if [ "$START_PREVIEW" = 1 ]; then start_fixture "$PREVIEW_PORT" setup-fixtures-preview.sh "$PREVIEW_PORT"; fi
 if [ "$START_PERF" = 1 ]; then start_fixture "$PERF_PORT" setup-fixtures-perf.sh "$PERF_PORT"; fi
 if [ "$START_HUGE" = 1 ]; then start_fixture "$HUGE_PORT" setup-fixtures-huge.sh "$HUGE_PORT"; fi
 
@@ -184,6 +186,7 @@ if [ "$START_SINGLE" = 1 ]; then run_project single "$SINGLE_PORT" E2E_ONLY_SERV
 if [ "$START_MULTI" = 1 ]; then run_project multi "$MULTI_PORT" E2E_ONLY_SERVER=multi -- --project=multi-file-mode; fi
 if [ "$START_RANGE" = 1 ]; then run_project range "$RANGE_PORT" E2E_ONLY_SERVER=range -- --project=range-mode; fi
 if [ "$START_LIVE" = 1 ]; then run_project live "$LIVE_PORT" E2E_ONLY_SERVER=live -- --project=live-mode; fi
+if [ "$START_PREVIEW" = 1 ]; then run_project preview "$PREVIEW_PORT" E2E_ONLY_SERVER=preview -- --project=preview-mode; fi
 if [ "$START_PERF" = 1 ]; then run_project perf "$PERF_PORT" E2E_ONLY_SERVER=perf -- --project=perf; fi
 if [ "$START_HUGE" = 1 ]; then run_project huge "$HUGE_PORT" E2E_ONLY_SERVER=huge -- --project=huge; fi
 

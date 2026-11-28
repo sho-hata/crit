@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,36 +29,32 @@ func hookKeyToFilename(key string) string {
 	return strings.ReplaceAll(key, ":", ".") + ".md"
 }
 
-// DiscoverPromptFile loads the first matching conventional prompt file under baseDir/.crit/prompts/.
-func DiscoverPromptFile(baseDir, hook, mode string, layer Layer) (text, sourceLabel string, ok bool) {
-	dir := filepath.Join(baseDir, promptsSubdir)
-	for _, name := range PromptFilenames(hook, mode) {
-		path := filepath.Join(dir, name)
+func discoverPromptTemplate(baseDir, hook, mode string, layer Layer, finish bool) (*resolvedTemplate, *Problem) {
+	specific, generic := ResolveHookKey(hook, mode)
+	keys := []string{specific}
+	if specific != generic {
+		keys = append(keys, generic)
+	}
+	for _, key := range keys {
+		rel := filepath.Join(promptsSubdir, hookKeyToFilename(key))
+		path := filepath.Join(baseDir, rel)
 		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
+		t := &resolvedTemplate{text: string(data), hook: key, source: string(layer) + ":" + filepath.ToSlash(rel), layer: layer}
+		if err == nil {
+			return t, nil
 		}
-		label := string(layer) + ":" + filepath.ToSlash(filepath.Join(promptsSubdir, name))
-		return string(data), label, true
+		if finish {
+			// A missing conventional file is normal. A broken symlink or
+			// an existing file that could not be read is a load problem.
+			if !os.IsNotExist(err) {
+				return nil, t.problem(fmt.Errorf("loading template: %w", err))
+			}
+			if _, statErr := os.Lstat(path); statErr == nil {
+				return nil, t.problem(fmt.Errorf("loading template: %w", err))
+			}
+		}
 	}
-	return "", "", false
-}
-
-// DiscoverPromptFileSpecific loads exactly hook+mode from a conventional
-// prompt file. Pass mode="" to load only the generic hook file.
-func DiscoverPromptFileSpecific(baseDir, hook, mode string, layer Layer) (text, sourceLabel string, ok bool) {
-	key := hook
-	if mode != "" {
-		key, _ = ResolveHookKey(hook, mode)
-	}
-	name := hookKeyToFilename(key)
-	path := filepath.Join(baseDir, promptsSubdir, name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", "", false
-	}
-	label := string(layer) + ":" + filepath.ToSlash(filepath.Join(promptsSubdir, name))
-	return string(data), label, true
+	return nil, nil
 }
 
 // discoveredHookPrefixes are the conventional filename prefixes recognized
