@@ -26,7 +26,7 @@ var commandRegistry = []commandDescriptor{
 	{name: "check", handler: func([]string) { runCheck() }, help: `Usage: crit check
 
 Check installed integrations for missing or stale configuration.`},
-	{name: "pr", handler: runPR, help: `Usage: crit pr [num|url]
+	{name: "pr", handler: runPR, help: `Usage: crit pr <num|url>
 
 Open a GitHub pull request for review.`},
 	{name: "pull", handler: runPull, help: `Usage: crit pull [--session <id>] [--viewed] [--output <dir>] [pr-number]
